@@ -22,12 +22,18 @@ struct LayoutNode {
     order: f32,
     x: f32,
     y: f32,
+    /// True for virtual (dummy) nodes inserted by normalize for long edges.
+    is_virtual: bool,
 }
 
+#[derive(Clone)]
 struct LayoutEdge {
     from: usize,
     to: usize,
     feedback: bool,
+    /// Edge weight for barycenter calculation (Dagre / Mermaid semantics).
+    /// Main edges = 4, feedback edges = 1.
+    weight: f32,
 }
 
 /// Run layered auto-layout and write positions into `graph.nodes`.
@@ -43,13 +49,20 @@ pub fn layout_graph(graph: &mut FlowGraph, options: &LayoutOptions) {
 
     mark_feedback_edges(&mut edges, nodes.len());
     assign_ranks(&mut nodes, &edges);
+    // Dagre normalize: split long edges (rank span > 1) with virtual dummy nodes.
+    // This makes barycenter crossing reduction aware of intermediate edge paths.
+    normalize_long_edges(&mut nodes, &mut edges);
     order_nodes(&mut nodes, &edges, options.ordering_iterations);
     assign_coordinates(&mut nodes, options);
     align_to_flow(&mut nodes, &edges, options);
     resolve_overlaps(&mut nodes, options.node_spacing);
     place_loop_body_children(&mut nodes, graph, options.node_spacing);
 
+    // Only write positions for real nodes (skip virtual dummies).
     for node in &nodes {
+        if node.is_virtual {
+            continue;
+        }
         if let Some(n) = graph.nodes.get_mut(node.id) {
             n.position = Point::new(node.x, node.y);
         }
@@ -70,6 +83,7 @@ fn build_layout_graph(graph: &FlowGraph) -> (Vec<LayoutNode>, Vec<LayoutEdge>) {
             order: 0.0,
             x: 0.0,
             y: 0.0,
+            is_virtual: false,
         });
     }
 
@@ -99,6 +113,7 @@ fn build_layout_graph(graph: &FlowGraph) -> (Vec<LayoutNode>, Vec<LayoutEdge>) {
                 from,
                 to,
                 feedback: is_continue,
+                weight: if is_continue { 1.0 } else { 4.0 },
             });
         }
     }
@@ -174,6 +189,75 @@ fn assign_ranks(nodes: &mut [LayoutNode], edges: &[LayoutEdge]) {
     }
 }
 
+/// Dagre `normalize.run` — split edges spanning multiple ranks into single-rank
+/// segments connected by virtual (dummy) nodes. This is critical for barycenter
+/// crossing reduction to correctly account for long edge paths.
+///
+/// For an edge from rank 0 to rank 3, we insert 2 virtual nodes at ranks 1 and 2,
+/// and replace the original edge with 3 single-rank edges.
+fn normalize_long_edges(nodes: &mut Vec<LayoutNode>, edges: &mut Vec<LayoutEdge>) {
+    // Collect edges that span more than 1 rank (non-feedback only).
+    let mut long_edges: Vec<usize> = Vec::new();
+    for (idx, e) in edges.iter().enumerate() {
+        if e.feedback {
+            continue;
+        }
+        let span = nodes[e.to].rank - nodes[e.from].rank;
+        if span > 1 {
+            long_edges.push(idx);
+        }
+    }
+
+    if long_edges.is_empty() {
+        return;
+    }
+
+    // Process in reverse order so earlier indices remain valid during removal.
+    long_edges.sort_unstable_by(|a, b| b.cmp(a));
+
+    for edge_idx in long_edges {
+        let e = edges[edge_idx].clone();
+        let from_rank = nodes[e.from].rank;
+        let to_rank = nodes[e.to].rank;
+        let weight = e.weight;
+
+        // Remove the original long edge.
+        edges.remove(edge_idx);
+
+        // Insert virtual nodes for each intermediate rank.
+        let mut prev_node = e.from;
+        for rank in (from_rank + 1)..to_rank {
+            let virtual_idx = nodes.len();
+            // Virtual nodes use a small default size (Dagre uses 0×0 for dummies,
+            // but we use a small size to avoid division issues in coordinate assignment).
+            nodes.push(LayoutNode {
+                id: NodeId::default(), // Virtual nodes have no real NodeId.
+                width: 10.0,
+                height: 10.0,
+                rank,
+                order: 0.0,
+                x: 0.0,
+                y: 0.0,
+                is_virtual: true,
+            });
+            edges.push(LayoutEdge {
+                from: prev_node,
+                to: virtual_idx,
+                feedback: false,
+                weight,
+            });
+            prev_node = virtual_idx;
+        }
+        // Final segment from last virtual to target.
+        edges.push(LayoutEdge {
+            from: prev_node,
+            to: e.to,
+            feedback: false,
+            weight,
+        });
+    }
+}
+
 fn layers(nodes: &[LayoutNode]) -> HashMap<i32, Vec<usize>> {
     let mut map: HashMap<i32, Vec<usize>> = HashMap::new();
     for (i, node) in nodes.iter().enumerate() {
@@ -216,8 +300,8 @@ fn order_nodes(nodes: &mut [LayoutNode], edges: &[LayoutEdge], iterations: u32) 
             }
             let mut sorted = layer;
             sorted.sort_by(|&a, &b| {
-                let ba = barycenter(a, &out_adj, nodes);
-                let bb = barycenter(b, &out_adj, nodes);
+                let ba = weighted_barycenter(a, &out_adj, edges, nodes);
+                let bb = weighted_barycenter(b, &out_adj, edges, nodes);
                 ba.partial_cmp(&bb).unwrap_or(std::cmp::Ordering::Equal)
             });
             for (pos, idx) in sorted.iter().enumerate() {
@@ -237,8 +321,8 @@ fn order_nodes(nodes: &mut [LayoutNode], edges: &[LayoutEdge], iterations: u32) 
             }
             let mut sorted = layer;
             sorted.sort_by(|&a, &b| {
-                let ba = barycenter(a, &in_adj, nodes);
-                let bb = barycenter(b, &in_adj, nodes);
+                let ba = weighted_barycenter(a, &in_adj, edges, nodes);
+                let bb = weighted_barycenter(b, &in_adj, edges, nodes);
                 ba.partial_cmp(&bb).unwrap_or(std::cmp::Ordering::Equal)
             });
             for (pos, idx) in sorted.iter().enumerate() {
@@ -248,13 +332,38 @@ fn order_nodes(nodes: &mut [LayoutNode], edges: &[LayoutEdge], iterations: u32) 
     }
 }
 
-fn barycenter(node: usize, neighbors: &[Vec<usize>], nodes: &[LayoutNode]) -> f32 {
+/// Dagre barycenter: `Σ(weight(e) × order(u)) / Σ(weight(e))`.
+fn weighted_barycenter(
+    node: usize,
+    neighbors: &[Vec<usize>],
+    edges: &[LayoutEdge],
+    nodes: &[LayoutNode],
+) -> f32 {
     let neigh = &neighbors[node];
     if neigh.is_empty() {
         return nodes[node].order;
     }
-    let sum = neigh.iter().map(|&i| nodes[i].order).sum::<f32>();
-    sum / neigh.len() as f32
+    let mut weight_sum = 0.0f32;
+    let mut weighted_order_sum = 0.0f32;
+    for &neighbor_idx in neigh {
+        // Find the edge connecting node -> neighbor_idx (or reverse for in_adj)
+        let edge_weight = edges
+            .iter()
+            .find(|e| {
+                !e.feedback
+                    && ((e.from == node && e.to == neighbor_idx)
+                        || (e.to == node && e.from == neighbor_idx))
+            })
+            .map(|e| e.weight)
+            .unwrap_or(1.0);
+        weight_sum += edge_weight;
+        weighted_order_sum += edge_weight * nodes[neighbor_idx].order;
+    }
+    if weight_sum > 0.0 {
+        weighted_order_sum / weight_sum
+    } else {
+        nodes[node].order
+    }
 }
 
 fn assign_coordinates(nodes: &mut [LayoutNode], options: &LayoutOptions) {

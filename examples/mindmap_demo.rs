@@ -1,5 +1,6 @@
-//! Mind-map / flowchart read-only demo ? Mermaid `graph TB` orchestrator workflow.
+//! Mind-map demo — loads `mindmap-1.0` JSON with bidirectional tree layout.
 
+use rust_agent_flow::mindmap_document_json;
 use rust_agent_flow_gpui::MindMapView;
 use gpui::*;
 
@@ -16,7 +17,7 @@ fn main() {
                         app,
                     ))),
                     titlebar: Some(TitlebarOptions {
-                        title: Some(SharedString::from("rust-agent-flow ? ????")),
+                        title: Some(SharedString::from("rust-agent-flow · 思维导图")),
                         appears_transparent: false,
                         ..Default::default()
                     }),
@@ -24,7 +25,7 @@ fn main() {
                     ..Default::default()
                 },
                 |_window, app| {
-                    app.new(|_cx| MindMapView::orchestrator_demo())
+                    app.new(|_cx| MindMapView::from_text(mindmap_document_json()))
                 },
             )
             .expect("failed to open window");

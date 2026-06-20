@@ -105,6 +105,7 @@ pub fn document_needs_layout(doc: &FlowDocument) -> bool {
 /// Import document into runtime graph.
 pub fn graph_from_document(doc: &FlowDocument, types: &FlowTypeRegistry) -> FlowGraph {
     let mut graph = FlowGraph::new(doc.name.clone());
+    graph.is_mindmap = doc.version.starts_with("mindmap");
     let mut node_map: HashMap<String, NodeId> = HashMap::new();
     let mut port_map: HashMap<(String, String), PortId> = HashMap::new();
 

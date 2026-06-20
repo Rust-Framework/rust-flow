@@ -23,6 +23,8 @@ pub struct FlowEditorView {
     pub graph: FlowGraph,
     pub viewport: Viewport,
     pub layout_direction: LayoutDirection,
+    /// True when the source document is a `mindmap-1.0` tree (uses bidirectional tree layout).
+    is_mindmap: bool,
     pub interaction: InteractionState,
     pub theme: FlowTheme,
     pub node_registry: FlowNodeRegistry,
@@ -37,6 +39,7 @@ impl FlowEditorView {
             graph,
             viewport: Viewport::default(),
             layout_direction: LayoutDirection::LeftRight,
+            is_mindmap: false,
             interaction: InteractionState::Idle,
             theme: FlowTheme::light(),
             node_registry: FlowNodeRegistry::builtin(),
@@ -57,6 +60,7 @@ impl FlowEditorView {
     pub fn from_document_json(json: &str, types: FlowTypeRegistry) -> Self {
         let layout_direction = mindmap_layout_direction_from_json(json);
         let doc = document_from_any_json(json).unwrap_or_else(|_| FlowDocument::new("Untitled"));
+        let is_mindmap = doc.version.starts_with("mindmap");
         let needs_layout = document_needs_layout(&doc);
         let graph = FlowGraph::from_document(&doc, &types);
         let viewport = doc
@@ -69,6 +73,7 @@ impl FlowEditorView {
             graph,
             viewport,
             layout_direction,
+            is_mindmap,
             interaction: InteractionState::Idle,
             theme: FlowTheme::light(),
             node_registry: FlowNodeRegistry::from_type_registry(types),
@@ -101,10 +106,20 @@ impl FlowEditorView {
     }
 
     pub fn auto_layout_default(&mut self) {
-        self.auto_layout(LayoutOptions {
-            direction: self.layout_direction,
-            ..LayoutOptions::comfortable()
-        });
+        if self.is_mindmap {
+            let options = match self.layout_direction {
+                LayoutDirection::LeftRight => LayoutOptions::mindmap_lr(),
+                LayoutDirection::TopBottom => LayoutOptions::mindmap_tree_tb(),
+            };
+            self.graph.auto_layout_mindmap(&options);
+            self.pending_fit = true;
+            self.try_fit_view_to_content();
+        } else {
+            self.auto_layout(LayoutOptions {
+                direction: self.layout_direction,
+                ..LayoutOptions::comfortable()
+            });
+        }
     }
 
     pub fn set_layout_direction(&mut self, direction: LayoutDirection) {
@@ -162,6 +177,7 @@ impl FlowEditorView {
         let types = builtin_type_registry();
         let json = mindmap_document_json();
         self.layout_direction = mindmap_layout_direction_from_json(json);
+        self.is_mindmap = true;
         let doc = document_from_any_json(json).unwrap_or_else(|_| FlowDocument::new("Mind Map"));
         self.graph = FlowGraph::from_document(&doc, &types);
         self.graph.layout_direction = self.layout_direction;

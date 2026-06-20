@@ -251,6 +251,7 @@ pub enum SmoothStepSegment {
 }
 
 /// Full smooth-step path with rounded corners (React Flow `getSmoothStepPath`).
+/// `step_position` controls bend location (0=source end, 1=target end, 0.5=middle).
 pub fn get_smooth_step_path(
     source_x: f32,
     source_y: f32,
@@ -263,6 +264,35 @@ pub fn get_smooth_step_path(
     center_x: Option<f32>,
     center_y: Option<f32>,
 ) -> Vec<SmoothStepSegment> {
+    get_smooth_step_path_with_step(
+        source_x,
+        source_y,
+        source_side,
+        target_x,
+        target_y,
+        target_side,
+        border_radius,
+        offset,
+        0.5,
+        center_x,
+        center_y,
+    )
+}
+
+/// Full smooth-step path with configurable `step_position` (React Flow compatible).
+pub fn get_smooth_step_path_with_step(
+    source_x: f32,
+    source_y: f32,
+    source_side: PortSide,
+    target_x: f32,
+    target_y: f32,
+    target_side: PortSide,
+    border_radius: f32,
+    offset: f32,
+    step_position: f32,
+    center_x: Option<f32>,
+    center_y: Option<f32>,
+) -> Vec<SmoothStepSegment> {
     let points = get_step_points(
         source_x,
         source_y,
@@ -271,7 +301,7 @@ pub fn get_smooth_step_path(
         target_y,
         target_side,
         offset,
-        0.5,
+        step_position,
         center_x,
         center_y,
     );
@@ -285,7 +315,8 @@ pub fn get_smooth_step_path(
         let a = points[i - 1];
         let b = points[i];
         let c = points[i + 1];
-        let bend_size = distance(a, b)
+        // React Flow `getBend`: bendSize = min(dist(a,b)/2, dist(b,c)/2, size)
+        let bend_size = (distance(a, b) * 0.5)
             .min(distance(b, c) * 0.5)
             .min(border_radius);
 
@@ -349,6 +380,7 @@ fn control_with_curvature(pos: PortSide, x1: f32, y1: f32, x2: f32, y2: f32, c: 
 }
 
 /// Position-aware cubic bezier (React Flow `getBezierPath`).
+/// Returns (from, to, cp1, cp2, label_x, label_y, offset_x, offset_y).
 pub fn get_bezier_path(
     source_x: f32,
     source_y: f32,
@@ -363,6 +395,61 @@ pub fn get_bezier_path(
     let cp1 = control_with_curvature(source_side, source_x, source_y, target_x, target_y, curvature);
     let cp2 = control_with_curvature(target_side, target_x, target_y, source_x, source_y, curvature);
     (from, to, cp1, cp2)
+}
+
+/// React Flow `getBezierEdgeCenter` — cubic bezier midpoint at t=0.5.
+/// center = P0*0.125 + P1*0.375 + P2*0.375 + P3*0.125
+pub fn get_bezier_edge_center(
+    source: Point,
+    source_cp: Point,
+    target_cp: Point,
+    target: Point,
+) -> (f32, f32, f32, f32) {
+    let center_x =
+        source.x * 0.125 + source_cp.x * 0.375 + target_cp.x * 0.375 + target.x * 0.125;
+    let center_y =
+        source.y * 0.125 + source_cp.y * 0.375 + target_cp.y * 0.375 + target.y * 0.125;
+    let offset_x = (center_x - source.x).abs();
+    let offset_y = (center_y - source.y).abs();
+    (center_x, center_y, offset_x, offset_y)
+}
+
+/// React Flow `getEdgeCenter` — straight/step edge midpoint.
+pub fn get_edge_center(source: Point, target: Point) -> (f32, f32, f32, f32) {
+    let x_offset = (target.x - source.x).abs() / 2.0;
+    let y_offset = (target.y - source.y).abs() / 2.0;
+    let center_x = if target.x < source.x {
+        target.x + x_offset
+    } else {
+        target.x - x_offset
+    };
+    let center_y = if target.y < source.y {
+        target.y + y_offset
+    } else {
+        target.y - y_offset
+    };
+    (center_x, center_y, x_offset, y_offset)
+}
+
+/// React Flow SmoothStep label center — midpoint of the longest segment.
+/// Falls back to geometric center when points are degenerate.
+pub fn get_smooth_step_label_center(points: &[Point]) -> Option<(f32, f32)> {
+    if points.len() < 2 {
+        return None;
+    }
+    // Find the longest segment in the polyline
+    let mut max_dist_sq = 0.0f32;
+    let mut best_mid = (points[0].x, points[0].y);
+    for w in points.windows(2) {
+        let dx = w[1].x - w[0].x;
+        let dy = w[1].y - w[0].y;
+        let dist_sq = dx * dx + dy * dy;
+        if dist_sq > max_dist_sq {
+            max_dist_sq = dist_sq;
+            best_mid = ((w[0].x + w[1].x) * 0.5, (w[0].y + w[1].y) * 0.5);
+        }
+    }
+    Some(best_mid)
 }
 
 #[cfg(test)]

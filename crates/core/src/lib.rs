@@ -21,7 +21,8 @@ pub use auto_layout::{layout_graph, LayoutDirection, LayoutOptions};
 pub use edge::{EdgeShape, EdgeStroke, FlowEdge};
 pub use geometry::{
     build_edge_path, bezier_control_points, catmull_rom_segments, edge_path_endpoints,
-    edge_stroke_dash, get_bezier_path, get_smooth_step_path, get_step_points, handle_position,
+    edge_stroke_dash, get_bezier_path, get_bezier_edge_center, get_edge_center,
+    get_smooth_step_path, get_smooth_step_label_center, get_step_points, handle_position,
     hit_node_at, hit_port_at, BezierPath, CatmullSegment, EdgePath, SmoothStepSegment,
     PORT_HIT_RADIUS, DEFAULT_BORDER_RADIUS, DEFAULT_CURVATURE, DEFAULT_OFFSET,
 };

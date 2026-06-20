@@ -19,6 +19,9 @@ pub struct FlowGraph {
     pub layout_direction: LayoutDirection,
     /// Dagre orthogonal routes (world space); populated by Mermaid layout.
     pub dagre_edge_routes: Vec<Option<crate::dagre_route::DagreEdgeRoute>>,
+    /// True when the source document is a `mindmap-1.0` tree.
+    /// Triggers mind map specific bezier curves during edge resolution.
+    pub is_mindmap: bool,
 }
 
 impl FlowGraph {

@@ -1,4 +1,4 @@
-//! Read-only mind-map / flowchart view — compact TB layout, no node dragging.
+//! Read-only mind-map / flowchart view — compact layout, no node dragging.
 
 use std::cell::Cell;
 use std::sync::Arc;
@@ -7,6 +7,7 @@ use rust_agent_flow::{
     apply_flow_orientation, builtin_type_registry, document_from_any_json,
     document_needs_layout, FlowDocument, FlowGraph, LayoutDirection, LayoutOptions, Point as CorePoint,
     SceneFrame, Size as CoreSize, Viewport, mermaid_layout_direction, mermaid_to_flow_document,
+    mindmap_layout_direction_from_json,
 };
 use gpui::*;
 use gpui::prelude::FluentBuilder;
@@ -22,6 +23,8 @@ pub struct MindMapView {
     pub viewport: Viewport,
     pub theme: FlowTheme,
     pub node_registry: FlowNodeRegistry,
+    /// True when the source document is a `mindmap-1.0` tree (uses bidirectional tree layout).
+    is_mindmap: bool,
     interaction: InteractionState,
     viewport_origin: Arc<Cell<CorePoint>>,
     viewport_screen_size: Arc<Cell<CoreSize>>,
@@ -34,20 +37,28 @@ impl MindMapView {
         let needs_layout = document_needs_layout(doc);
         let graph = FlowGraph::from_document(doc, &types);
         let viewport = Viewport::default();
+        let is_mindmap = doc.version.starts_with("mindmap");
 
         let mut view = Self {
             graph,
             viewport,
             theme: FlowTheme::light(),
             node_registry: FlowNodeRegistry::mindmap(),
+            is_mindmap,
             interaction: InteractionState::Idle,
             viewport_origin: Arc::new(Cell::new(CorePoint::default())),
             viewport_screen_size: Arc::new(Cell::new(Viewport::default().screen_size)),
             pending_fit: false,
         };
 
-        view.graph.layout_direction = LayoutDirection::TopBottom;
-        apply_flow_orientation(&mut view.graph, LayoutDirection::TopBottom);
+        // Mind maps default to LR (bidirectional tree); flowcharts default to TB.
+        let dir = if is_mindmap {
+            LayoutDirection::LeftRight
+        } else {
+            LayoutDirection::TopBottom
+        };
+        view.graph.layout_direction = dir;
+        apply_flow_orientation(&mut view.graph, dir);
 
         if needs_layout {
             view.auto_layout();
@@ -65,8 +76,16 @@ impl MindMapView {
             document_from_any_json(text).unwrap_or_else(|_| FlowDocument::new("Mind Map"))
         };
         let mut view = Self::from_document(&doc);
+
         if trimmed.starts_with("graph ") || trimmed.starts_with("flowchart ") {
+            // Mermaid flowchart — respect declared direction (TB/LR).
             let dir = mermaid_layout_direction(text);
+            view.graph.layout_direction = dir;
+            apply_flow_orientation(&mut view.graph, dir);
+            view.auto_layout();
+        } else if view.is_mindmap {
+            // Mind map JSON — respect `layoutDirection` field (LR default, TB optional).
+            let dir = mindmap_layout_direction_from_json(trimmed);
             view.graph.layout_direction = dir;
             apply_flow_orientation(&mut view.graph, dir);
             view.auto_layout();
@@ -80,7 +99,15 @@ impl MindMapView {
     }
 
     pub fn auto_layout(&mut self) {
-        self.graph.auto_layout_mermaid(&LayoutOptions::mermaid_flowchart_tb());
+        if self.is_mindmap {
+            let options = match self.graph.layout_direction {
+                LayoutDirection::LeftRight => LayoutOptions::mindmap_lr(),
+                LayoutDirection::TopBottom => LayoutOptions::mindmap_tree_tb(),
+            };
+            self.graph.auto_layout_mindmap(&options);
+        } else {
+            self.graph.auto_layout_mermaid(&LayoutOptions::mermaid_flowchart_tb());
+        }
         self.pending_fit = true;
         self.try_fit_view_to_content();
     }

@@ -36,21 +36,36 @@ pub fn layout_graph_mermaid(graph: &mut FlowGraph, options: &LayoutOptions) {
 }
 
 /// Edges that close a cycle (target can reach source without using this edge).
+///
+/// Uses a pre-built adjacency list for O(V + E) per reachability check,
+/// avoiding the O(V * E²) cost of scanning all edges per BFS node.
 pub fn detect_feedback_edges(graph: &FlowGraph, skip_nodes: &HashSet<NodeId>) -> HashSet<(NodeId, NodeId)> {
     let mut feedback = HashSet::new();
 
+    // Build adjacency list once: node → [(from_port, to_port, target_node)]
+    let mut adj: HashMap<NodeId, Vec<(crate::id::PortId, crate::id::PortId, NodeId)>> = HashMap::new();
+    let mut edge_list: Vec<(NodeId, NodeId, crate::id::PortId, crate::id::PortId)> = Vec::new();
+
     for edge in &graph.edges {
-        let from_port = graph.ports.get(edge.from_port);
-        let to_port = graph.ports.get(edge.to_port);
-        if from_port.is_none() || to_port.is_none() {
-            continue;
-        }
-        let from = from_port.unwrap().node;
-        let to = to_port.unwrap().node;
+        let from_port = match graph.ports.get(edge.from_port) {
+            Some(p) => p,
+            None => continue,
+        };
+        let to_port = match graph.ports.get(edge.to_port) {
+            Some(p) => p,
+            None => continue,
+        };
+        let from = from_port.node;
+        let to = to_port.node;
         if from == to || skip_nodes.contains(&from) || skip_nodes.contains(&to) {
             continue;
         }
-        if can_reach(graph, to, from, skip_nodes, edge.from_port, edge.to_port) {
+        adj.entry(from).or_default().push((edge.from_port, edge.to_port, to));
+        edge_list.push((from, to, edge.from_port, edge.to_port));
+    }
+
+    for (from, to, blocked_from, blocked_to) in edge_list {
+        if can_reach_adj(&adj, to, from, skip_nodes, blocked_from, blocked_to) {
             feedback.insert((from, to));
         }
     }
@@ -58,8 +73,9 @@ pub fn detect_feedback_edges(graph: &FlowGraph, skip_nodes: &HashSet<NodeId>) ->
     feedback
 }
 
-fn can_reach(
-    graph: &FlowGraph,
+/// BFS reachability using pre-built adjacency list.
+fn can_reach_adj(
+    adj: &HashMap<NodeId, Vec<(crate::id::PortId, crate::id::PortId, NodeId)>>,
     start: NodeId,
     goal: NodeId,
     skip_nodes: &HashSet<NodeId>,
@@ -73,19 +89,14 @@ fn can_reach(
         if n == goal {
             return true;
         }
-        for e in &graph.edges {
-            if e.from_port == blocked_from && e.to_port == blocked_to {
+        let neighbors = match adj.get(&n) {
+            Some(v) => v,
+            None => continue,
+        };
+        for &(fp, tp, next) in neighbors {
+            if fp == blocked_from && tp == blocked_to {
                 continue;
             }
-            let from_p = graph.ports.get(e.from_port);
-            let to_p = graph.ports.get(e.to_port);
-            if from_p.is_none() || to_p.is_none() {
-                continue;
-            }
-            if from_p.unwrap().node != n {
-                continue;
-            }
-            let next = to_p.unwrap().node;
             if skip_nodes.contains(&next) || seen.contains(&next) {
                 continue;
             }
@@ -395,5 +406,48 @@ graph TB
         let (rx, _) = pos(&graph, "R");
         let mid = (tx + rx) * 0.5;
         assert!((dx - mid).abs() < 40.0, "D at {dx} vs T/R mid {mid}");
+    }
+
+    /// Full pipeline test: verify orchestrator Mermaid produces Dagre polyline edges (not bezier).
+    #[test]
+    fn mermaid_orchestrator_full_pipeline() {
+        use crate::SceneFrame;
+        use crate::viewport::Viewport;
+
+        let graph = layout_orchestrator();
+
+        // Verify is_mindmap is false
+        assert!(!graph.is_mindmap, "orchestrator should NOT be mindmap");
+
+        // Verify dagre_edge_routes are populated
+        let route_count = graph.dagre_edge_routes.iter().filter(|r| r.is_some()).count();
+        assert!(route_count >= 10, "expected >=10 dagre routes, got {route_count}");
+
+        // Resolve scene frame and check edge path types
+        let viewport = Viewport::default();
+        let frame = SceneFrame::resolve(&graph, &viewport);
+
+        let mut bezier_count = 0;
+        let mut polyline_count = 0;
+        for edge in &frame.edges {
+            match &edge.path {
+                crate::EdgePath::Bezier(_) => bezier_count += 1,
+                crate::EdgePath::Polyline(_) => polyline_count += 1,
+                _ => {}
+            }
+        }
+
+        println!(
+            "Orchestrator edge paths: {} polylines (Dagre), {} beziers",
+            polyline_count, bezier_count
+        );
+
+        // Most edges should be Dagre polylines
+        assert!(
+            polyline_count > bezier_count,
+            "expected mostly polyline edges, got {} polylines vs {} beziers",
+            polyline_count,
+            bezier_count
+        );
     }
 }

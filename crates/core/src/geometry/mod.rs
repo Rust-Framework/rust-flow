@@ -5,7 +5,10 @@ mod hit;
 mod smoothstep;
 mod xyflow;
 
-pub use bezier::{bezier_control_points, BezierPath};
+pub use bezier::{
+    bezier_control_points, mindmap_lr_bezier, mindmap_main_bezier, mindmap_sub_bezier,
+    mindmap_tb_bezier, BezierPath,
+};
 pub use catmull::{catmull_rom_segments, CatmullSegment};
 pub use dagre_path::{
     arrival_side, departure_side, edge_path_from_dagre, label_pos_from_dagre,
@@ -14,8 +17,9 @@ pub use dagre_path::{
 pub use hit::{hit_node_at, hit_port_at, PORT_HIT_RADIUS};
 pub use smoothstep::smoothstep_points;
 pub use xyflow::{
-    get_bezier_path, get_smooth_step_path, get_step_points, handle_position, SmoothStepSegment,
-    DEFAULT_BORDER_RADIUS, DEFAULT_CURVATURE, DEFAULT_OFFSET,
+    get_bezier_path, get_bezier_edge_center, get_edge_center, get_smooth_step_path,
+    get_smooth_step_path_with_step, get_smooth_step_label_center, get_step_points,
+    handle_position, SmoothStepSegment, DEFAULT_BORDER_RADIUS, DEFAULT_CURVATURE, DEFAULT_OFFSET,
 };
 
 use crate::edge::{EdgeShape, EdgeStroke};

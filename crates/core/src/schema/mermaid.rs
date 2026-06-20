@@ -1,9 +1,8 @@
-//! Mermaid flowchart text → [`FlowDocument`] (mind-map / read-only view).
+//! Mermaid flowchart text → [`FlowDocument`] (flowchart / DAG layout).
 
 use std::collections::HashMap;
 
 use crate::auto_layout::LayoutDirection;
-use crate::node_layout::mindmap_node_size;
 use crate::schema::document::{
     FlowDocument, FlowDocumentEdge, FlowDocumentNode, FlowDocumentPosition,
 };
@@ -46,7 +45,7 @@ pub fn mermaid_to_flow_document(text: &str) -> Result<FlowDocument, String> {
 
     let nodes: Vec<FlowDocumentNode> = labels
         .iter()
-        .map(|(id, label)| mindmap_flow_node(id, label, layout_order.get(id).copied()))
+        .map(|(id, label)| mermaid_flow_node(id, label, layout_order.get(id).copied()))
         .collect();
 
     let flow_edges: Vec<FlowDocumentEdge> = edges
@@ -71,7 +70,7 @@ pub fn mermaid_to_flow_document(text: &str) -> Result<FlowDocument, String> {
         .unwrap_or_else(|| "Mind Map".into());
 
     Ok(FlowDocument {
-        version: "mindmap-1.0".into(),
+        version: "flowchart-1.0".into(),
         name: title,
         nodes,
         edges: flow_edges,
@@ -188,9 +187,10 @@ fn collect_inline_labels(line: &str, labels: &mut HashMap<String, String>) {
     }
 }
 
-fn mindmap_flow_node(id: &str, label: &str, layout_order: Option<u64>) -> FlowDocumentNode {
-    let size = mindmap_node_size(label);
-    let mut data = serde_json::json!({ "label": label, "mindmap": true });
+fn mermaid_flow_node(id: &str, label: &str, layout_order: Option<u64>) -> FlowDocumentNode {
+    use crate::node_layout::common_node_size;
+    let size = common_node_size(label);
+    let mut data = serde_json::json!({ "label": label });
     if let Some(order) = layout_order {
         data["layout_order"] = serde_json::json!(order);
     }

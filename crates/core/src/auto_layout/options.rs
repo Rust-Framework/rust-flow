@@ -58,6 +58,29 @@ impl LayoutOptions {
         Self::mermaid_flowchart_tb()
     }
 
+    /// Mind map bidirectional LR layout — root centered, children split left/right.
+    /// Tuned between jsmind (hspace=30, vspace=20) and mind-elixir (HGap=65, VGap=25).
+    pub fn mindmap_lr() -> Self {
+        Self {
+            direction: LayoutDirection::LeftRight,
+            node_spacing: 24.0,
+            rank_spacing: 80.0,
+            margin: 40.0,
+            ordering_iterations: 1,
+        }
+    }
+
+    /// Mind map top-down tree layout (compact vertical tree).
+    pub fn mindmap_tree_tb() -> Self {
+        Self {
+            direction: LayoutDirection::TopBottom,
+            node_spacing: 20.0,
+            rank_spacing: 60.0,
+            margin: 20.0,
+            ordering_iterations: 1,
+        }
+    }
+
     /// Mermaid flowchart defaults (`nodeSpacing` / `rankSpacing` 50, margin 8).
     pub fn mermaid_flowchart_tb() -> Self {
         Self {
