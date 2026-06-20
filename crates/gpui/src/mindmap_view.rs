@@ -67,7 +67,7 @@ impl MindMapView {
         view
     }
 
-    /// Load from Mermaid `graph TB` text or `mindmap-1.0` JSON.
+    /// Load from Mermaid `graph TB` text or `mindmap-1.0` / `flowchart-1.0` JSON.
     pub fn from_text(text: &str) -> Self {
         let trimmed = text.trim();
         let doc = if trimmed.starts_with("graph ") || trimmed.starts_with("flowchart ") {
@@ -88,6 +88,11 @@ impl MindMapView {
             let dir = mindmap_layout_direction_from_json(trimmed);
             view.graph.layout_direction = dir;
             apply_flow_orientation(&mut view.graph, dir);
+            view.auto_layout();
+        } else {
+            // Flowchart JSON (`flowchart-1.0`) — use Dagre hierarchical layout.
+            view.graph.layout_direction = LayoutDirection::TopBottom;
+            apply_flow_orientation(&mut view.graph, LayoutDirection::TopBottom);
             view.auto_layout();
         }
         view

@@ -221,4 +221,81 @@ mod tests {
         assert_eq!(doc.edges[0].source, "1");
         assert_eq!(doc.edges[0].target, "2");
     }
+
+    #[test]
+    fn load_orchestrator_mindmap_json() {
+        let json = include_str!("../../../../schemas/orchestrator.mindmap.json");
+        let doc = document_from_any_json(json).unwrap();
+        assert!(doc.version.starts_with("mindmap"));
+        assert!(doc.nodes.len() >= 7, "should have at least 7 nodes");
+    }
+
+    #[test]
+    fn load_orchestrator_flowchart_json() {
+        let json = include_str!("../../../../schemas/orchestrator.flowchart.json");
+        let doc = document_from_any_json(json).unwrap();
+        assert!(doc.version.starts_with("flowchart") || doc.version == "1.0");
+        assert_eq!(doc.nodes.len(), 9);
+        assert_eq!(doc.edges.len(), 11);
+        // 验证反馈边存在
+        let feedback_edges = doc.edges.iter()
+            .filter(|e| e.label.as_deref() == Some("FAIL") || e.label.as_deref() == Some("阻塞项"))
+            .count();
+        assert_eq!(feedback_edges, 2, "should have 2 feedback edges");
+    }
+
+    /// Full pipeline: load flowchart JSON → build graph → layout → resolve scene → check edge paths.
+    #[test]
+    fn orchestrator_flowchart_full_pipeline() {
+        use crate::FlowGraph;
+        use crate::SceneFrame;
+        use crate::viewport::Viewport;
+        use crate::builtin_type_registry;
+
+        let json = include_str!("../../../../schemas/orchestrator.flowchart.json");
+        let doc = document_from_any_json(json).unwrap();
+        let types = builtin_type_registry();
+        let mut graph = FlowGraph::from_document(&doc, &types);
+
+        println!("\n=== Flowchart JSON Pipeline ===");
+        println!("version: {}", doc.version);
+        println!("is_mindmap: {}", graph.is_mindmap);
+        println!("nodes: {}, edges: {}", graph.nodes.len(), graph.edges.len());
+
+        // Apply TB orientation + Mermaid layout
+        use crate::{apply_flow_orientation, LayoutDirection};
+        apply_flow_orientation(&mut graph, LayoutDirection::TopBottom);
+        graph.auto_layout_mermaid(&crate::LayoutOptions::mermaid_flowchart_tb());
+
+        // Check Dagre routes
+        let route_count = graph.dagre_edge_routes.iter().filter(|r| r.is_some()).count();
+        println!("dagre_edge_routes populated: {}/{}", route_count, graph.dagre_edge_routes.len());
+
+        // Resolve scene frame
+        let viewport = Viewport::default();
+        let frame = SceneFrame::resolve(&graph, &viewport);
+
+        let mut bezier_count = 0;
+        let mut polyline_count = 0;
+        for edge in &frame.edges {
+            match &edge.path {
+                crate::EdgePath::Bezier(_) => bezier_count += 1,
+                crate::EdgePath::Polyline(pts) => {
+                    polyline_count += 1;
+                    println!("  Polyline edge: {} points", pts.len());
+                }
+                _ => {}
+            }
+        }
+
+        println!("Edge path types: {} polylines, {} beziers",
+            polyline_count, bezier_count);
+
+        // Most edges should be Dagre polylines
+        assert!(
+            polyline_count >= 8,
+            "expected >=8 polyline edges, got {} polylines / {} beziers",
+            polyline_count, bezier_count
+        );
+    }
 }

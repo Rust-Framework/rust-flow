@@ -17,7 +17,7 @@ pub mod scene;
 pub mod schema;
 pub mod viewport;
 
-pub use auto_layout::{layout_graph, LayoutDirection, LayoutOptions};
+pub use auto_layout::{layout_graph, layout_graph_mermaid_v2, LayoutDirection, LayoutOptions, MermaidLayoutConfig};
 pub use edge::{EdgeShape, EdgeStroke, FlowEdge};
 pub use geometry::{
     build_edge_path, bezier_control_points, catmull_rom_segments, edge_path_endpoints,

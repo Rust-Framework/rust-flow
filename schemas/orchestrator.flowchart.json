@@ -1,0 +1,162 @@
+{
+  "version": "flowchart-1.0",
+  "name": "Orchestrator 工作流",
+  "nodes": [
+    {
+      "id": "U",
+      "type": "common",
+      "position": { "x": 0, "y": 0 },
+      "data": { "label": "用户任务" },
+      "width": 180,
+      "height": 40
+    },
+    {
+      "id": "O",
+      "type": "common",
+      "position": { "x": 0, "y": 0 },
+      "data": { "label": "Orchestrator 主编排" },
+      "width": 200,
+      "height": 40
+    },
+    {
+      "id": "P",
+      "type": "common",
+      "position": { "x": 0, "y": 0 },
+      "data": { "label": "planner 规划" },
+      "width": 160,
+      "height": 40
+    },
+    {
+      "id": "E",
+      "type": "common",
+      "position": { "x": 0, "y": 0 },
+      "data": { "label": "explorer 探索" },
+      "width": 160,
+      "height": 40
+    },
+    {
+      "id": "CA",
+      "type": "common",
+      "position": { "x": 0, "y": 0 },
+      "data": { "label": "coder-alpha 并行 A" },
+      "width": 180,
+      "height": 40
+    },
+    {
+      "id": "CB",
+      "type": "common",
+      "position": { "x": 0, "y": 0 },
+      "data": { "label": "coder-beta 并行 B" },
+      "width": 180,
+      "height": 40
+    },
+    {
+      "id": "T",
+      "type": "common",
+      "position": { "x": 0, "y": 0 },
+      "data": { "label": "tester 验证" },
+      "width": 160,
+      "height": 40
+    },
+    {
+      "id": "R",
+      "type": "common",
+      "position": { "x": 0, "y": 0 },
+      "data": { "label": "reviewer 审查" },
+      "width": 160,
+      "height": 40
+    },
+    {
+      "id": "D",
+      "type": "common",
+      "position": { "x": 0, "y": 0 },
+      "data": { "label": "交付" },
+      "width": 140,
+      "height": 40
+    }
+  ],
+  "edges": [
+    {
+      "id": "e_U_O",
+      "source": "U",
+      "target": "O",
+      "sourceHandle": "out",
+      "targetHandle": "in"
+    },
+    {
+      "id": "e_O_P",
+      "source": "O",
+      "target": "P",
+      "sourceHandle": "out",
+      "targetHandle": "in"
+    },
+    {
+      "id": "e_O_E",
+      "source": "O",
+      "target": "E",
+      "sourceHandle": "out",
+      "targetHandle": "in"
+    },
+    {
+      "id": "e_O_CA",
+      "source": "O",
+      "target": "CA",
+      "sourceHandle": "out",
+      "targetHandle": "in"
+    },
+    {
+      "id": "e_O_CB",
+      "source": "O",
+      "target": "CB",
+      "sourceHandle": "out",
+      "targetHandle": "in"
+    },
+    {
+      "id": "e_O_T",
+      "source": "O",
+      "target": "T",
+      "sourceHandle": "out",
+      "targetHandle": "in"
+    },
+    {
+      "id": "e_O_R",
+      "source": "O",
+      "target": "R",
+      "sourceHandle": "out",
+      "targetHandle": "in"
+    },
+    {
+      "id": "e_T_O_FAIL",
+      "source": "T",
+      "target": "O",
+      "sourceHandle": "out",
+      "targetHandle": "in",
+      "label": "FAIL"
+    },
+    {
+      "id": "e_R_O_BLOCK",
+      "source": "R",
+      "target": "O",
+      "sourceHandle": "out",
+      "targetHandle": "in",
+      "label": "阻塞项"
+    },
+    {
+      "id": "e_T_D_PASS",
+      "source": "T",
+      "target": "D",
+      "sourceHandle": "out",
+      "targetHandle": "in",
+      "label": "PASS"
+    },
+    {
+      "id": "e_R_D_PASS",
+      "source": "R",
+      "target": "D",
+      "sourceHandle": "out",
+      "targetHandle": "in",
+      "label": "通过"
+    }
+  ],
+  "viewport": { "x": 0, "y": 0, "zoom": 1.0 }
+}

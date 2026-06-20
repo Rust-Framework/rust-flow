@@ -1,0 +1,58 @@
+{
+  "version": "mindmap-1.0",
+  "title": "Orchestrator 工作流",
+  "layoutDirection": "LR",
+  "root": {
+    "id": "O",
+    "label": "Orchestrator 主编排",
+    "children": [
+      {
+        "id": "U",
+        "label": "用户任务",
+        "children": []
+      },
+      {
+        "id": "P",
+        "label": "planner 规划",
+        "children": []
+      },
+      {
+        "id": "E",
+        "label": "explorer 探索",
+        "children": []
+      },
+      {
+        "id": "CA",
+        "label": "coder-alpha 并行 A",
+        "children": []
+      },
+      {
+        "id": "CB",
+        "label": "coder-beta 并行 B",
+        "children": []
+      },
+      {
+        "id": "T",
+        "label": "tester 验证",
+        "children": [
+          {
+            "id": "D_from_T_PASS",
+            "label": "交付 (PASS)",
+            "children": []
+          }
+        ]
+      },
+      {
+        "id": "R",
+        "label": "reviewer 审查",
+        "children": [
+          {
+            "id": "D_from_R",
+            "label": "交付 (通过)",
+            "children": []
+          }
+        ]
+      }
+    ]
+  }
+}
