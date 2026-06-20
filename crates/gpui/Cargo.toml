@@ -1,0 +1,32 @@
+[package]
+name = "rust-agent-flow-gpui"
+version = "0.1.0"
+edition = "2021"
+description = "GPUI workflow editor components for rust-agent-flow"
+license = "MIT"
+
+[lib]
+name = "rust_agent_flow_gpui"
+path = "src/lib.rs"
+
+[[example]]
+name = "minimal_demo"
+path = "../../examples/minimal_demo.rs"
+required-features = ["demo"]
+
+[[example]]
+name = "mindmap_demo"
+path = "../../examples/mindmap_demo.rs"
+required-features = ["demo"]
+
+[features]
+default = []
+demo = ["dep:gpui_platform", "dep:gpui-component-assets"]
+
+[dependencies]
+rust-agent-flow = { workspace = true }
+gpui = { workspace = true }
+gpui-component = { workspace = true }
+gpui_platform = { workspace = true, optional = true }
+gpui-component-assets = { workspace = true, optional = true }
+serde_json = "1"

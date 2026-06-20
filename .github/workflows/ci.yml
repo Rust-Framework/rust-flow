@@ -1,0 +1,28 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: rust-agent-flow tests (including regression)
+        run: cargo test -p rust-agent-flow
+
+      - name: rust-agent-flow-gpui unit tests
+        run: cargo test -p rust-agent-flow-gpui --lib
+
+      - name: Check demo example
+        run: cargo check -p rust-agent-flow-gpui --example minimal_demo --features demo

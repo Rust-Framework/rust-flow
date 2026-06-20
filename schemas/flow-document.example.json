@@ -1,0 +1,33 @@
+{
+  "version": "1.0",
+  "name": "Data Pipeline (Closed Loop)",
+  "_comment": "Full demo lives in demo.flow.json — this file mirrors the same schema format.",
+  "nodes": [
+    {
+      "id": "start",
+      "type": "common",
+      "position": { "x": 40, "y": 200 },
+      "data": { "label": "Start", "expression": "init_session()" },
+      "width": 200,
+      "height": 41
+    },
+    {
+      "id": "end",
+      "type": "common",
+      "position": { "x": 1340, "y": 200 },
+      "data": { "label": "End", "expression": "session.close()" },
+      "width": 200,
+      "height": 41
+    }
+  ],
+  "edges": [
+    {
+      "id": "e_end_start",
+      "source": "end",
+      "target": "start",
+      "sourceHandle": "out",
+      "targetHandle": "in"
+    }
+  ],
+  "viewport": { "x": 0, "y": 0, "zoom": 0.9 }
+}
