@@ -29,7 +29,7 @@
 use gpui::{div, px, AnyElement, IntoElement, ParentElement, Styled};
 use gpui_component::StyledExt;
 use rust_agent_flow::{
-    Node, NodeSchema, PointF, PortDirection, PortId, PortSide, PortSpec, SizeF,
+    LayoutDirection, Node, NodeSchema, PointF, PortDirection, PortId, PortSide, PortSpec, SizeF,
 };
 
 use crate::node::{NodeViewCtx, IFlowNode};
@@ -58,8 +58,10 @@ impl ConditionNode {
         Self {
             schema: NodeSchema::new("condition", "Condition")
                 .with_size(SizeF::new(220.0, 108.0)) // 36 + 36*2
-                .with_port(PortSpec::new("in", PortDirection::In, PortSide::Left))
-                .with_port(PortSpec::new("else", PortDirection::Out, PortSide::Right))
+                // In/Else 用 Auto：横向布局 → 左/右，纵向布局 → 上/下
+                .with_port(PortSpec::new("in", PortDirection::In, PortSide::Auto))
+                .with_port(PortSpec::new("else", PortDirection::Out, PortSide::Auto))
+                // 条件项出口始终在右侧
                 .with_port(PortSpec::new("if_0", PortDirection::Out, PortSide::Right))
                 .with_port(PortSpec::new("if_1", PortDirection::Out, PortSide::Right)),
         }
@@ -109,6 +111,7 @@ impl IFlowNode for ConditionNode {
         let item_h = item_height(node) * s;
         let conditions = get_conditions(node);
         let label = label_of(node);
+        let layout = ctx.layout;
 
         let (port_size, port_outer, port_outer_half) = port_sizes(s);
         let border_color = if ctx.selected {
@@ -180,27 +183,54 @@ impl IFlowNode for ConditionNode {
         );
 
         // 端口（在边框之后，绘制在边框之上）
-        // In 端口（标题栏左侧中心）— 蓝色
-        container = container.child(make_port(
-            -port_outer_half,
-            title_h * 0.5 - port_outer_half,
-            port_outer,
-            port_size,
-            gpui::rgb(0xc7d2fe),
-            gpui::rgb(0x6366f1),
-        ));
+        // 位置与 port_position() 保持一致：横向 In 左 / Else 右；纵向 In 上 / Else 下
+        let mid_x = w * 0.5;
+        match layout {
+            LayoutDirection::Horizontal => {
+                // In 端口（标题栏左侧中心）— 蓝色
+                container = container.child(make_port(
+                    -port_outer_half,
+                    title_h * 0.5 - port_outer_half,
+                    port_outer,
+                    port_size,
+                    gpui::rgb(0xc7d2fe),
+                    gpui::rgb(0x6366f1),
+                ));
 
-        // Else 端口（标题栏右侧中心）— 灰色（兜底）
-        container = container.child(make_port(
-            w - port_outer_half,
-            title_h * 0.5 - port_outer_half,
-            port_outer,
-            port_size,
-            gpui::rgb(0xe2e8f0),
-            gpui::rgb(0x64748b),
-        ));
+                // Else 端口（标题栏右侧中心）— 灰色（兜底）
+                container = container.child(make_port(
+                    w - port_outer_half,
+                    title_h * 0.5 - port_outer_half,
+                    port_outer,
+                    port_size,
+                    gpui::rgb(0xe2e8f0),
+                    gpui::rgb(0x64748b),
+                ));
+            }
+            LayoutDirection::Vertical => {
+                // In 端口（标题栏顶部中心）— 蓝色
+                container = container.child(make_port(
+                    mid_x - port_outer_half,
+                    -port_outer_half,
+                    port_outer,
+                    port_size,
+                    gpui::rgb(0xc7d2fe),
+                    gpui::rgb(0x6366f1),
+                ));
 
-        // if_i 端口（条件项右侧中心）— 橙色
+                // Else 端口（节点底部中心）— 灰色（兜底）
+                container = container.child(make_port(
+                    mid_x - port_outer_half,
+                    h - port_outer_half,
+                    port_outer,
+                    port_size,
+                    gpui::rgb(0xe2e8f0),
+                    gpui::rgb(0x64748b),
+                ));
+            }
+        }
+
+        // if_i 端口（条件项右侧中心）— 橙色，始终在右侧
         for (i, _cond) in conditions.iter().enumerate() {
             let port_y = title_h + item_h * (i as f32 + 0.5) - port_outer_half;
             container = container.child(make_port(
@@ -224,18 +254,37 @@ impl IFlowNode for ConditionNode {
         &self.schema
     }
 
-    fn port_position(&self, node: &Node, port_id: &PortId) -> Option<PointF> {
+    fn port_position(
+        &self,
+        node: &Node,
+        port_id: &PortId,
+        layout: LayoutDirection,
+    ) -> Option<PointF> {
         let item_h = item_height(node);
         let left = node.position.x;
         let right = node.position.x + node.size.w;
+        let top = node.position.y;
+        let bottom = node.position.y + node.size.h;
+        let mid_x = node.position.x + node.size.w * 0.5;
         let title_mid_y = node.position.y + TITLE_H * 0.5;
 
         match port_id.as_str() {
-            "in" => Some(PointF::new(left, title_mid_y)),
-            "else" => Some(PointF::new(right, title_mid_y)),
+            "in" => match layout {
+                // 横向：In 在标题栏左侧中心
+                LayoutDirection::Horizontal => Some(PointF::new(left, title_mid_y)),
+                // 纵向：In 在标题栏顶部中心
+                LayoutDirection::Vertical => Some(PointF::new(mid_x, top)),
+            },
+            "else" => match layout {
+                // 横向：Else 在标题栏右侧中心
+                LayoutDirection::Horizontal => Some(PointF::new(right, title_mid_y)),
+                // 纵向：Else 在节点底部中心
+                LayoutDirection::Vertical => Some(PointF::new(mid_x, bottom)),
+            },
             pid if pid.starts_with("if_") => {
                 let idx: usize = pid[3..].parse().ok()?;
                 let y = node.position.y + TITLE_H + item_h * (idx as f32 + 0.5);
+                // 条件项出口始终在右侧（无论方向）
                 Some(PointF::new(right, y))
             }
             _ => None,

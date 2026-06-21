@@ -5,7 +5,7 @@
 //! 特殊节点（如条件分支、循环）可覆写 `port_position` 精确控制端口位置。
 
 use gpui::{AnyElement, App, Window};
-use rust_agent_flow::{Node, NodeSchema, PortId, PointF};
+use rust_agent_flow::{LayoutDirection, Node, NodeSchema, PortId, PointF};
 
 /// 节点渲染上下文，提供给 [`IFlowNode`] 方法使用。
 ///
@@ -16,6 +16,8 @@ pub struct NodeViewCtx<'a> {
     pub selected: bool,
     /// 当前视口缩放比例，节点内部元素应按此缩放。
     pub scale: f32,
+    /// 当前布局方向（横向/纵向），节点渲染端口位置应与此一致。
+    pub layout: LayoutDirection,
 }
 
 /// 节点扩展接口（策略模式）。
@@ -46,8 +48,17 @@ pub trait IFlowNode: Send + Sync {
     /// 特殊节点（如条件分支的多出口、循环节点的循环回环端口）覆写此方法
     /// 以精确控制每个端口的位置，使连线端点与视觉端口对齐。
     ///
+    /// **方向感知**：`layout` 参数指示当前布局方向（Horizontal/Vertical），
+    /// 端口位置应根据方向调整。例如 Condition 节点的 In 端口在横向布局下
+    /// 位于左侧，在纵向布局下位于顶部。
+    ///
     /// 位置计算应基于 `node.position` + `node.size` + 端口在节点内的相对偏移。
-    fn port_position(&self, _node: &Node, _port_id: &PortId) -> Option<PointF> {
+    fn port_position(
+        &self,
+        _node: &Node,
+        _port_id: &PortId,
+        _layout: LayoutDirection,
+    ) -> Option<PointF> {
         None
     }
 }

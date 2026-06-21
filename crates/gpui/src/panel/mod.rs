@@ -37,6 +37,7 @@ impl RenderOnce for PanelView {
                 cx,
                 selected: true,
                 scale: 1.0,
+                layout: rust_agent_flow::LayoutDirection::Horizontal,
             };
             flow_node.get_panel(&self.node, &mut ctx)
         } else {

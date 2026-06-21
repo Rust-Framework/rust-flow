@@ -38,7 +38,24 @@ impl FlowGraph {
             kind: kind.into(),
             data,
             position: crate::geometry::PointF::zero(),
-            size: crate::geometry::SizeF::new(180.0, 80.0),
+            size: crate::geometry::SizeF::new(180.0, 35.0),
+        })
+    }
+
+    /// 添加节点并指定尺寸（用于 Condition/Loop 等结构化节点）。
+    pub fn add_node_with_size(
+        &mut self,
+        kind: impl Into<NodeKind>,
+        data: NodeData,
+        size: crate::geometry::SizeF,
+    ) -> NodeId {
+        self.version = self.version.wrapping_add(1);
+        self.nodes.insert_with_key(|key| Node {
+            id: key,
+            kind: kind.into(),
+            data,
+            position: crate::geometry::PointF::zero(),
+            size,
         })
     }
 

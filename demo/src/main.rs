@@ -52,13 +52,18 @@ fn main() {
 fn build_agent_flow() -> FlowGraph {
     let mut graph = FlowGraph::new();
 
-    // 节点
-    let start = graph.add_node("start", serde_json::json!({ "label": "Start" }));
-    let planner = graph.add_node(
+    // 节点（尺寸与 schema default_size 对齐）
+    let start = graph.add_node_with_size(
+        "start",
+        serde_json::json!({ "label": "Start" }),
+        SizeF::new(120.0, 35.0),
+    );
+    let planner = graph.add_node_with_size(
         "action",
         serde_json::json!({ "label": "Planner", "desc": "规划下一步" }),
+        SizeF::new(180.0, 35.0),
     );
-    let condition = graph.add_node(
+    let condition = graph.add_node_with_size(
         "condition",
         serde_json::json!({
             "label": "Check",
@@ -67,32 +72,38 @@ fn build_agent_flow() -> FlowGraph {
                 { "id": "if_1", "label": "user.is_admin" }
             ]
         }),
+        SizeF::new(220.0, 108.0),
     );
-    let search = graph.add_node(
+    let search = graph.add_node_with_size(
         "action",
         serde_json::json!({ "label": "Search", "desc": "检索知识库" }),
+        SizeF::new(180.0, 35.0),
     );
-    let tool = graph.add_node(
+    let tool = graph.add_node_with_size(
         "action",
         serde_json::json!({ "label": "ToolCall", "desc": "调用外部工具" }),
+        SizeF::new(180.0, 35.0),
     );
-    let loop_node = graph.add_node(
+    let loop_node = graph.add_node_with_size(
         "loop",
         serde_json::json!({ "label": "Loop", "desc": "For each item" }),
+        SizeF::new(220.0, 80.0),
     );
-    let process = graph.add_node(
+    let process = graph.add_node_with_size(
         "action",
         serde_json::json!({ "label": "Process", "desc": "处理当前项" }),
+        SizeF::new(180.0, 35.0),
     );
-    let summarize = graph.add_node(
+    let summarize = graph.add_node_with_size(
         "action",
         serde_json::json!({ "label": "Summarize", "desc": "汇总结果" }),
+        SizeF::new(180.0, 35.0),
     );
-    let end = graph.add_node("end", serde_json::json!({ "label": "End" }));
-
-    // 设置节点尺寸（Condition/Loop 需要匹配 schema 中的 default_size）
-    set_size(&mut graph, condition, SizeF::new(220.0, 108.0));
-    set_size(&mut graph, loop_node, SizeF::new(220.0, 80.0));
+    let end = graph.add_node_with_size(
+        "end",
+        serde_json::json!({ "label": "End" }),
+        SizeF::new(120.0, 35.0),
+    );
 
     // 布局：左→右，条件分支上下展开，循环体在 Loop 右侧
     set_position(&mut graph, start, 80.0, 240.0);
@@ -132,12 +143,6 @@ fn build_agent_flow() -> FlowGraph {
 fn set_position(graph: &mut FlowGraph, id: rust_agent_flow::NodeId, x: f32, y: f32) {
     if let Some(node) = graph.node_mut(id) {
         node.position = PointF::new(x, y);
-    }
-}
-
-fn set_size(graph: &mut FlowGraph, id: rust_agent_flow::NodeId, size: SizeF) {
-    if let Some(node) = graph.node_mut(id) {
-        node.size = size;
     }
 }
 

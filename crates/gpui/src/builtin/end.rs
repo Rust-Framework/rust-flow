@@ -22,7 +22,7 @@ impl EndNode {
     pub fn new() -> Self {
         Self {
             schema: NodeSchema::new("end", "End")
-                .with_size(SizeF::new(120.0, 60.0))
+                .with_size(SizeF::new(120.0, 35.0))
                 .with_port(PortSpec::new("in", PortDirection::In, PortSide::Auto)),
         }
     }

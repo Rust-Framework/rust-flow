@@ -106,7 +106,10 @@ impl FlowEditorView {
         let selected = self.selected;
         let registry = &self.registry;
         let s = self.scale();
-        let vertical = self.layout_direction == LayoutDirection::Vertical;
+        let layout = match self.layout_direction {
+            LayoutDirection::Horizontal => rust_agent_flow::LayoutDirection::Horizontal,
+            LayoutDirection::Vertical => rust_agent_flow::LayoutDirection::Vertical,
+        };
 
         self.graph
             .nodes()
@@ -120,7 +123,7 @@ impl FlowEditorView {
                     .with_flow_node_opt(flow_node)
                     .selected(is_selected)
                     .with_scale(s)
-                    .with_vertical(vertical);
+                    .with_layout(layout);
 
                 div()
                     .absolute()

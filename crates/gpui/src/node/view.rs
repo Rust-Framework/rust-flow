@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use gpui::{AnyElement, App, IntoElement, ParentElement, RenderOnce, Styled, Window, px};
 use gpui_component::StyledExt;
-use rust_agent_flow::Node;
+use rust_agent_flow::{LayoutDirection, Node};
 
 use super::{IFlowNode, NodeViewCtx};
 
@@ -216,6 +216,8 @@ pub struct NodeView {
     pub scale: f32,
     /// 垂直布局（端口在 top/bottom 而非 left/right）。
     pub vertical: bool,
+    /// 布局方向。
+    pub layout: LayoutDirection,
 }
 
 impl NodeView {
@@ -226,6 +228,7 @@ impl NodeView {
             selected: false,
             scale: 1.0,
             vertical: false,
+            layout: LayoutDirection::Horizontal,
         }
     }
 
@@ -236,6 +239,12 @@ impl NodeView {
 
     pub fn with_vertical(mut self, vertical: bool) -> Self {
         self.vertical = vertical;
+        self
+    }
+
+    pub fn with_layout(mut self, layout: LayoutDirection) -> Self {
+        self.layout = layout;
+        self.vertical = layout == LayoutDirection::Vertical;
         self
     }
 
@@ -258,6 +267,7 @@ impl RenderOnce for NodeView {
                 cx,
                 selected: self.selected,
                 scale: self.scale,
+                layout: self.layout,
             };
             flow_node.get_view(&self.node, &mut ctx)
         } else {
