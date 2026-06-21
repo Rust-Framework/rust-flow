@@ -228,7 +228,7 @@ impl NodeView {
             selected: false,
             scale: 1.0,
             vertical: false,
-            layout: LayoutDirection::Horizontal,
+            layout: LayoutDirection::Vertical,
         }
     }
 

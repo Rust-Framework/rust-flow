@@ -71,7 +71,7 @@ impl FlowEditorView {
             registry: Arc::new(registry),
             selected: None,
             default_edge_type: EdgeType::SmoothStep,
-            layout_direction: LayoutDirection::Horizontal,
+            layout_direction: LayoutDirection::Vertical,
             show_grid: true,
         }
     }
