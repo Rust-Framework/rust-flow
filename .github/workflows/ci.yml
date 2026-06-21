@@ -18,6 +18,12 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
+      - name: Install system dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libx11-dev libxi-dev libgl1-mesa-dev libasound2-dev libfontconfig1-dev libfreetype6-dev libssl-dev pkg-config
+
       - name: rust-agent-flow tests (including regression)
         run: cargo test -p rust-agent-flow
 
