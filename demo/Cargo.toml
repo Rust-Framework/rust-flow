@@ -1,0 +1,18 @@
+[package]
+name = "rust-agent-flow-demo"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Demo application for rust-agent-flow GPUI designer."
+
+[[bin]]
+name = "rust-agent-flow-demo"
+path = "src/main.rs"
+
+[dependencies]
+rust-agent-flow = { workspace = true }
+rust-agent-flow-gpui = { path = "../crates/gpui" }
+gpui = { workspace = true }
+gpui_platform = { workspace = true }
+gpui-component = { workspace = true }
+serde_json = "1"
