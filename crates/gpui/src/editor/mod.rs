@@ -4,5 +4,5 @@ mod flow_editor;
 mod interaction;
 mod viewport;
 
-pub use flow_editor::FlowEditorView;
+pub use flow_editor::{FlowEditorView, LayoutDirection};
 pub use interaction::InteractionState;

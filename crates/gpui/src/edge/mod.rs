@@ -3,4 +3,4 @@
 mod edge_view;
 
 pub use edge_view::EdgeView;
-pub(crate) use edge_view::paint_edge;
+pub(crate) use edge_view::paint_edge_scaled;

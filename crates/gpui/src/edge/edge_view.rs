@@ -111,6 +111,9 @@ pub(crate) fn paint_arrow(points: &[PointF], window: &mut Window) {
 
 /// 统一边渲染入口：计算路径点 + 绘制折线 + 绘制箭头。
 /// 供 EdgeView::into_element 和 FlowEditorView::render_edges 共用。
+///
+/// **注意**：此函数接收**屏幕坐标**（已通过 viewport.to_screen 转换），
+/// 用于旧版逐元素缩放方案。新代码应使用 [`paint_edge_scaled`]。
 pub(crate) fn paint_edge(
     src: PointF,
     dst: PointF,
@@ -123,7 +126,31 @@ pub(crate) fn paint_edge(
         EdgeType::Straight => straight_path(src, dst),
         EdgeType::Bezier => bezier_path(src, dst, src_side, dst_side, 0.5),
         EdgeType::Step => step_path(src, dst, src_side, dst_side),
-        EdgeType::SmoothStep => smoothstep_path(src, dst, src_side, dst_side, 8.0),
+        EdgeType::SmoothStep => smoothstep_path(src, dst, src_side, dst_side, 12.0),
+    };
+    let is_bezier = edge_type == EdgeType::Bezier && points.len() == 4;
+    paint_polyline(&points, is_bezier, window);
+    paint_arrow(&points, window);
+}
+
+/// 使用逻辑坐标绘制边（不预转换到屏幕空间）。
+///
+/// 与 [`paint_edge`] 不同，此函数接收逻辑坐标，由外层容器统一
+/// 通过 transform-scale 缩放，确保线宽、箭头等所有视觉属性
+/// 随缩放比例均匀变化。
+pub(crate) fn paint_edge_scaled(
+    src: PointF,
+    dst: PointF,
+    src_side: PortSide,
+    dst_side: PortSide,
+    edge_type: EdgeType,
+    window: &mut Window,
+) {
+    let points = match edge_type {
+        EdgeType::Straight => straight_path(src, dst),
+        EdgeType::Bezier => bezier_path(src, dst, src_side, dst_side, 0.5),
+        EdgeType::Step => step_path(src, dst, src_side, dst_side),
+        EdgeType::SmoothStep => smoothstep_path(src, dst, src_side, dst_side, 12.0),
     };
     let is_bezier = edge_type == EdgeType::Bezier && points.len() == 4;
     paint_polyline(&points, is_bezier, window);

@@ -5,7 +5,7 @@
 //! 展示一个 Agent 编排场景：
 //! - Start → Planner（规划）→ 分支到 Search / ToolCall 两个 Action
 //! - 两条分支汇合到 Summarize → End
-//! - 4 种连线算法分别在不同边上展示
+//! - 全部使用正交圆角折线（SmoothStep）连线
 //!
 //! 交互：
 //! - 中键拖拽：平移视口
@@ -66,13 +66,13 @@ fn build_agent_flow() -> FlowGraph {
     set_position(&mut graph, summarize, 880.0, 200.0);
     set_position(&mut graph, end, 1160.0, 200.0);
 
-    // 边：4 种算法各展示一次
-    add_edge(&mut graph, start, planner, EdgeType::Bezier);
+    // 边：全部使用正交圆角折线（SmoothStep）
+    add_edge(&mut graph, start, planner, EdgeType::SmoothStep);
     add_edge(&mut graph, planner, search, EdgeType::SmoothStep);
     add_edge(&mut graph, planner, tool, EdgeType::SmoothStep);
-    add_edge(&mut graph, search, summarize, EdgeType::Step);
-    add_edge(&mut graph, tool, summarize, EdgeType::Step);
-    add_edge(&mut graph, summarize, end, EdgeType::Straight);
+    add_edge(&mut graph, search, summarize, EdgeType::SmoothStep);
+    add_edge(&mut graph, tool, summarize, EdgeType::SmoothStep);
+    add_edge(&mut graph, summarize, end, EdgeType::SmoothStep);
 
     graph
 }

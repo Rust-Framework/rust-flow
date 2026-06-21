@@ -1,14 +1,20 @@
-//! Edge path generation: 4 algorithms ported from ReactFlow.
+//! Edge path generation: algorithms ported from ReactFlow (@xyflow/xyflow).
 //!
 //! All functions return `Vec<PointF>`:
-//! - `straight_path` / `step_path` / `smoothstep_path` → polyline points.
-//! - `bezier_path` → exactly 4 points `[P0, ctrl1, ctrl2, P3]` (cubic Bézier);
-//!   the renderer uses `curve_to` when `EdgeType::Bezier`.
+//! - `straight_path` → 2 points.
+//! - `bezier_path` → exactly 4 points `[P0, ctrl1, ctrl2, P3]` (cubic Bézier).
+//! - `step_path` / `smoothstep_path` → polyline points.
+//!   `smoothstep_path` replaces each interior corner with sampled **quadratic**
+//!   Bézier curve points (porting ReactFlow's `getBend` which uses SVG `Q` command).
 //!
 //! `loop_back_path` → polyline for loop-node back-edges (U-shape routing).
 
 use crate::geometry::PointF;
 use crate::graph::PortSide;
+
+// ---------------------------------------------------------------------------
+// Helpers shared by step / smoothstep (ported from ReactFlow)
+// ---------------------------------------------------------------------------
 
 /// Unit vector pointing outward from a node for the given side.
 fn outward(side: PortSide) -> PointF {
@@ -20,6 +26,277 @@ fn outward(side: PortSide) -> PointF {
         PortSide::Auto => PointF::new(1.0, 0.0),
     }
 }
+
+/// Determine the dominant routing direction between source-gap and target-gap.
+///
+/// Ported from ReactFlow `getDirection` in `smoothstep-edge.ts`.
+fn rf_direction(source: PointF, _source_pos: PortSide, target: PointF) -> PointF {
+    // For horizontal handles, direction depends on relative X.
+    // For vertical handles, direction depends on relative Y.
+    if source.x != target.x {
+        if source.x < target.x {
+            PointF::new(1.0, 0.0)
+        } else {
+            PointF::new(-1.0, 0.0)
+        }
+    } else if source.y < target.y {
+        PointF::new(0.0, 1.0)
+    } else {
+        PointF::new(0.0, -1.0)
+    }
+}
+
+/// Compute orthogonal routing waypoints.
+///
+/// Direct port of ReactFlow `getPoints()` from `smoothstep-edge.ts`.
+/// Handles:
+/// - Opposite handle positions (Right→Left): S-curve with 2 bends
+/// - Same-side positions (Right→Right / Left→Left): L-shape or adjusted
+/// - Mixed positions (Right→Bottom etc.): L-shape through one corner
+/// - Gap-offset prevention when points would overlap
+fn rf_get_points(
+    src: PointF,
+    src_side: PortSide,
+    dst: PointF,
+    dst_side: PortSide,
+    offset: f32,
+) -> Vec<PointF> {
+    let src_dir = outward(src_side);
+    let dst_dir = outward(dst_side);
+
+    let src_gapped = PointF::new(src.x + src_dir.x * offset, src.y + src_dir.y * offset);
+    let dst_gapped = PointF::new(dst.x + dst_dir.x * offset, dst.y + dst_dir.y * offset);
+
+    let dir = rf_direction(src_gapped, src_side, dst_gapped);
+    let dir_is_x = dir.x != 0.0; // primary axis
+
+    // Helper: extract the primary-axis component of a direction vector.
+    let primary = |d: PointF| -> f32 {
+        if dir_is_x { d.x } else { d.y }
+    };
+
+    let src_d = primary(src_dir);
+    let dst_d = primary(dst_dir);
+    let curr_d = primary(dir);
+
+    // Compute midpoint(s) based on handle positions.
+    let mid_points: Vec<PointF> =
+    // ── Case 1: opposite handle positions (product ≈ -1) ──
+    if (src_d * dst_d).abs() > 0.999 && src_d * dst_d < 0.0 {
+        let (cx, cy) = if dir_is_x {
+            (
+                src_gapped.x + (dst_gapped.x - src_gapped.x) * 0.5,
+                (src_gapped.y + dst_gapped.y) * 0.5,
+            )
+        } else {
+            (
+                (src_gapped.x + dst_gapped.x) * 0.5,
+                src_gapped.y + (dst_gapped.y - src_gapped.y) * 0.5,
+            )
+        };
+
+        let v_split = [PointF::new(cx, src_gapped.y), PointF::new(cx, dst_gapped.y)];
+        let h_split = [PointF::new(src_gapped.x, cy), PointF::new(dst_gapped.x, cy)];
+
+        if src_d == curr_d {
+            if dir_is_x { v_split.to_vec() } else { h_split.to_vec() }
+        } else {
+            if dir_is_x { h_split.to_vec() } else { v_split.to_vec() }
+        }
+    }
+    // ── Case 2: same-direction or mixed handle positions ──
+    else {
+        let source_target = PointF::new(src_gapped.x, dst_gapped.y);
+        let target_source = PointF::new(dst_gapped.x, src_gapped.y);
+
+        if dir_is_x {
+            // Primary axis = X
+            let mut mp = if (src_dir.x - curr_d).abs() < 0.001 {
+                vec![target_source]
+            } else {
+                vec![source_target]
+            };
+
+            // Same-position special case
+            if src_side == dst_side {
+                let diff = (src.x - dst.x).abs();
+                if diff <= offset && diff > 0.001 {
+                    mp = if (src_dir.x - curr_d).abs() < 0.001 {
+                        vec![source_target]
+                    } else {
+                        vec![target_source]
+                    };
+                }
+            }
+
+            // Mixed-position flip logic (e.g., Right→Bottom)
+            if src_side != dst_side {
+                let is_same_y = (src_dir.y - dst_dir.y).abs() < 0.001;
+                let src_gt_opp = src_gapped.y > dst_gapped.y;
+                let src_lt_opp = src_gapped.y < dst_gapped.y;
+
+                let should_flip = (src_dir.x > 0.0
+                    && ((!is_same_y && src_gt_opp) || (is_same_y && src_lt_opp)))
+                    || (src_dir.x <= 0.0
+                        && ((!is_same_y && src_lt_opp) || (is_same_y && src_gt_opp)));
+
+                if should_flip {
+                    mp = vec![source_target];
+                }
+            }
+
+            mp
+        } else {
+            // Primary axis = Y
+            let mut mp = if (src_dir.y - curr_d).abs() < 0.001 {
+                vec![source_target]
+            } else {
+                vec![target_source]
+            };
+
+            // Same-position special case
+            if src_side == dst_side {
+                let diff = (src.y - dst.y).abs();
+                if diff <= offset && diff > 0.001 {
+                    mp = if (src_dir.y - curr_d).abs() < 0.001 {
+                        vec![target_source]
+                    } else {
+                        vec![source_target]
+                    };
+                }
+            }
+
+            // Mixed-position flip logic
+            if src_side != dst_side {
+                let is_same_x = (src_dir.x - dst_dir.x).abs() < 0.001;
+                let src_gt_opp = src_gapped.x > dst_gapped.x;
+                let src_lt_opp = src_gapped.x < dst_gapped.x;
+
+                let should_flip = (src_dir.y > 0.0
+                    && ((!is_same_x && src_gt_opp) || (is_same_x && src_lt_opp)))
+                    || (src_dir.y <= 0.0
+                        && ((!is_same_x && src_lt_opp) || (is_same_x && src_gt_opp)));
+
+                if should_flip {
+                    mp = vec![target_source];
+                }
+            }
+
+            mp
+        }
+    };
+
+    // Assemble final path: [src, gapped_src?, …mid…, gapped_dst?, dst]
+    let mut result = Vec::with_capacity(4 + mid_points.len());
+    result.push(src);
+
+    // Add gapped source only if it differs from the first midpoint (or there are no midpoints)
+    let add_src_gap = mid_points.is_empty()
+        || ((src_gapped.x - mid_points[0].x).abs() > 0.01
+            || (src_gapped.y - mid_points[0].y).abs() > 0.01);
+    if add_src_gap {
+        result.push(src_gapped);
+    }
+
+    result.extend_from_slice(&mid_points);
+
+    // Add gapped target only if it differs from the last midpoint
+    let add_dst_gap = mid_points.is_empty()
+        || ((dst_gapped.x - mid_points[mid_points.len() - 1].x).abs() > 0.01
+            || (dst_gapped.y - mid_points[mid_points.len() - 1].y).abs() > 0.01);
+    if add_dst_gap {
+        result.push(dst_gapped);
+    }
+
+    result.push(dst);
+    result
+}
+
+/// Replace a sharp corner (`a → b → c`) with sampled quadratic-Bézier points.
+///
+/// This is a direct port of ReactFlow's `getBend()` from `smoothstep-edge.ts`.
+/// ReactFlow emits an SVG `Q` (quadratic Bézier) command; here we sample the
+/// curve into polyline points so the existing canvas renderer can consume them.
+///
+/// The control point is always at the corner vertex `b`.  The bend goes from
+/// a point `bend_size` away along segment `(a→b)` to a point `bend_size` away
+/// along segment `(b→c)`, rounding the turn.
+fn rf_get_bend(a: PointF, b: PointF, c: PointF, size: f32) -> Vec<PointF> {
+    let d_ab = a.distance_to(b);
+    let d_bc = b.distance_to(c);
+    let bend_size = size.min(d_ab * 0.5).min(d_bc * 0.5);
+
+    // Collinear → no bend needed.
+    if ((a.x - b.x).abs() < 0.001 && (b.x - c.x).abs() < 0.001)
+        || ((a.y - b.y).abs() < 0.001 && (b.y - c.y).abs() < 0.001)
+    {
+        return vec![b];
+    }
+
+    const SAMPLES: u32 = 8; // points per bend (matches visual smoothness)
+    let mut out = Vec::with_capacity(SAMPLES as usize + 2);
+
+    // Determine orientation: is the incoming segment (a→b) horizontal?
+    let horiz_in = (a.y - b.y).abs() < (a.x - b.x).abs();
+
+    if horiz_in {
+        // Incoming horizontal, outgoing vertical.
+        //   a ---[start]--→ [ctrl=b] ↓ [end]
+        //                  ╲       │
+        //                   ╲      │
+        //                    ╲     │
+        //                     c ←──┘
+        let x_dir = if a.x < c.x { -1.0 } else { 1.0 };
+        let y_dir = if a.y < c.y { 1.0 } else { -1.0 };
+
+        let start = PointF::new(b.x + bend_size * x_dir, b.y);
+        let ctrl = b;
+        let end = PointF::new(b.x, b.y + bend_size * y_dir);
+
+        out.push(start);
+        for i in 1..SAMPLES {
+            let t = i as f32 / SAMPLES as f32;
+            let u = 1.0 - t;
+            out.push(PointF::new(
+                u * u * start.x + 2.0 * u * t * ctrl.x + t * t * end.x,
+                u * u * start.y + 2.0 * u * t * ctrl.y + t * t * end.y,
+            ));
+        }
+        out.push(end);
+    } else {
+        // Incoming vertical, outgoing horizontal.
+        //   a
+        //   │
+        //   │  [start]
+        //   │    ╲
+        //   │     ╲  [ctrl=b] ——→ [end]
+        //   │      ╲            │
+        //   └───────c ←────────┘
+        let x_dir = if a.x < c.x { 1.0 } else { -1.0 };
+        let y_dir = if a.y < c.y { -1.0 } else { 1.0 };
+
+        let start = PointF::new(b.x, b.y + bend_size * y_dir);
+        let ctrl = b;
+        let end = PointF::new(b.x + bend_size * x_dir, b.y);
+
+        out.push(start);
+        for i in 1..SAMPLES {
+            let t = i as f32 / SAMPLES as f32;
+            let u = 1.0 - t;
+            out.push(PointF::new(
+                u * u * start.x + 2.0 * u * t * ctrl.x + t * t * end.x,
+                u * u * start.y + 2.0 * u * t * ctrl.y + t * t * end.y,
+            ));
+        }
+        out.push(end);
+    }
+
+    out
+}
+
+// ---------------------------------------------------------------------------
+// Public API
+// ---------------------------------------------------------------------------
 
 /// Bézier control-point offset (ported from ReactFlow `calculateControlOffset`).
 ///
@@ -34,18 +311,14 @@ fn control_offset(distance: f32, curvature: f32) -> f32 {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Straight
-// ---------------------------------------------------------------------------
+// ---- Straight ----
 
 /// Straight line: `[src, dst]`.
 pub fn straight_path(src: PointF, dst: PointF) -> Vec<PointF> {
     vec![src, dst]
 }
 
-// ---------------------------------------------------------------------------
-// Bézier (cubic)
-// ---------------------------------------------------------------------------
+// ---- Bézier (cubic) ----
 
 /// Cubic Bézier path. Returns `[P0, ctrl1, ctrl2, P3]`.
 ///
@@ -64,8 +337,6 @@ pub fn bezier_path(
 }
 
 /// Compute one Bézier control point.
-/// `point` is the endpoint, `other` is the opposite endpoint.
-/// `is_source` distinguishes source (distance = other - point) vs target.
 fn bezier_control(
     point: PointF,
     other: PointF,
@@ -74,94 +345,37 @@ fn bezier_control(
     curvature: f32,
 ) -> PointF {
     let dir = outward(side);
-    // distance from `point` towards `other` along the side's axis
     let distance = if side.is_horizontal() {
-        if is_source {
-            other.x - point.x
-        } else {
-            point.x - other.x
-        }
+        if is_source { other.x - point.x } else { point.x - other.x }
     } else {
-        if is_source {
-            other.y - point.y
-        } else {
-            point.y - other.y
-        }
+        if is_source { other.y - point.y } else { point.y - other.y }
     };
     let offset = control_offset(distance, curvature);
     PointF::new(point.x + dir.x * offset, point.y + dir.y * offset)
 }
 
-// ---------------------------------------------------------------------------
-// Step / SmoothStep (orthogonal)
-// ---------------------------------------------------------------------------
-
-/// Orthogonal corner points shared by `step_path` and `smoothstep_path`.
-///
-/// Exits `src` along `src_side` by `offset`, enters `dst` along `dst_side`,
-/// connecting with at most 2 bends.
-fn orthogonal_points(
-    src: PointF,
-    dst: PointF,
-    src_side: PortSide,
-    dst_side: PortSide,
-    offset: f32,
-) -> Vec<PointF> {
-    let src_out = outward(src_side);
-    let dst_out = outward(dst_side);
-    // Exit source and approach target along their outward directions.
-    let p1 = PointF::new(src.x + src_out.x * offset, src.y + src_out.y * offset);
-    let p2 = PointF::new(dst.x + dst_out.x * offset, dst.y + dst_out.y * offset);
-
-    let src_h = src_side.is_horizontal();
-    let dst_h = dst_side.is_horizontal();
-
-    let mut pts = vec![src, p1];
-
-    if src_h == dst_h {
-        // Both horizontal or both vertical: S-curve with a mid bend.
-        if src_h {
-            // Horizontal: bend at mid-x.
-            let mid_x = (p1.x + p2.x) * 0.5;
-            pts.push(PointF::new(mid_x, p1.y));
-            pts.push(PointF::new(mid_x, p2.y));
-        } else {
-            // Vertical: bend at mid-y.
-            let mid_y = (p1.y + p2.y) * 0.5;
-            pts.push(PointF::new(p1.x, mid_y));
-            pts.push(PointF::new(p2.x, mid_y));
-        }
-    } else {
-        // Mixed (one horizontal, one vertical): L-shape through one corner.
-        if src_h {
-            // Source exits horizontally, target enters vertically.
-            // Go from p1 horizontally to p2.x, then vertically to p2.
-            pts.push(PointF::new(p2.x, p1.y));
-        } else {
-            // Source exits vertically, target enters horizontally.
-            pts.push(PointF::new(p1.x, p2.y));
-        }
-    }
-
-    pts.push(p2);
-    pts.push(dst);
-    pts
-}
+// ---- Step (sharp orthogonal) ----
 
 /// Step path: orthogonal with sharp 90° corners.
+///
+/// Uses ReactFlow's `getPoints()` routing algorithm with zero border radius.
 pub fn step_path(
     src: PointF,
     dst: PointF,
     src_side: PortSide,
     dst_side: PortSide,
 ) -> Vec<PointF> {
-    orthogonal_points(src, dst, src_side, dst_side, 20.0)
+    rf_get_points(src, src_side, dst, dst_side, 20.0)
 }
+
+// ---- SmoothStep (rounded orthogonal) ----
 
 /// SmoothStep path: orthogonal with rounded corners.
 ///
-/// Computes the same corner points as `step_path`, then replaces each interior
-/// corner with sampled arc points of radius `border_radius`.
+/// Uses ReactFlow's `getPoints()` for routing + `getBend()` for each corner.
+/// Each interior corner is replaced by a sampled quadratic Bézier curve whose
+/// control point sits at the corner vertex — exactly matching ReactFlow's SVG
+/// `Q` command output.
 pub fn smoothstep_path(
     src: PointF,
     dst: PointF,
@@ -169,74 +383,22 @@ pub fn smoothstep_path(
     dst_side: PortSide,
     border_radius: f32,
 ) -> Vec<PointF> {
-    let raw = orthogonal_points(src, dst, src_side, dst_side, 20.0);
-    round_corners(&raw, border_radius)
-}
+    let raw = rf_get_points(src, src_side, dst, dst_side, 20.0);
 
-/// Replace sharp corners in a polyline with sampled arc points.
-fn round_corners(points: &[PointF], radius: f32) -> Vec<PointF> {
-    if points.len() < 3 || radius <= 0.0 {
-        return points.to_vec();
+    // Apply getBend to every interior point (indices 1..len-1).
+    if raw.len() < 3 || border_radius <= 0.0 {
+        return raw;
     }
-    let mut result = vec![points[0]];
-    for i in 1..points.len() - 1 {
-        let prev = points[i - 1];
-        let curr = points[i];
-        let next = points[i + 1];
 
-        let d_prev = curr.distance_to(prev);
-        let d_next = curr.distance_to(next);
-        // Clamp radius to half the shorter adjacent segment.
-        let r = radius.min(d_prev * 0.5).min(d_next * 0.5);
-        if r < 1.0 {
-            result.push(curr);
-            continue;
-        }
+    let mut result = Vec::with_capacity(raw.len() * 10);
+    result.push(raw[0]);
 
-        // Tangent points on each segment at distance r from the corner.
-        let t_prev = r / d_prev;
-        let t_next = r / d_next;
-        let p_in = curr.lerp(prev, t_prev);
-        let p_out = curr.lerp(next, t_next);
-
-        // Arc centre = corner + r * (unit_to_prev + unit_to_next).
-        // For 90° corners this places the centre at distance r from both tangents.
-        let unit_prev = PointF::new(
-            (prev.x - curr.x) / d_prev,
-            (prev.y - curr.y) / d_prev,
-        );
-        let unit_next = PointF::new(
-            (next.x - curr.x) / d_next,
-            (next.y - curr.y) / d_next,
-        );
-        let center = PointF::new(
-            curr.x + r * (unit_prev.x + unit_next.x),
-            curr.y + r * (unit_prev.y + unit_next.y),
-        );
-
-        let start_ang = (p_in.y - center.y).atan2(p_in.x - center.x);
-        let end_ang = (p_out.y - center.y).atan2(p_out.x - center.x);
-        let mut delta = end_ang - start_ang;
-        if delta > std::f32::consts::PI {
-            delta -= 2.0 * std::f32::consts::PI;
-        }
-        if delta < -std::f32::consts::PI {
-            delta += 2.0 * std::f32::consts::PI;
-        }
-
-        result.push(p_in);
-        let n = 6;
-        for j in 1..n {
-            let t = j as f32 / n as f32;
-            let ang = start_ang + delta * t;
-            result.push(PointF::new(
-                center.x + r * ang.cos(),
-                center.y + r * ang.sin(),
-            ));
-        }
-        result.push(p_out);
+    for i in 1..raw.len() - 1 {
+        let bend_pts = rf_get_bend(raw[i - 1], raw[i], raw[i + 1], border_radius);
+        result.extend_from_slice(&bend_pts);
     }
-    result.push(*points.last().unwrap());
+
+    result.push(*raw.last().unwrap());
     result
 }
 
