@@ -2,9 +2,12 @@
 //!
 //! The default `DagreLayout` implementation (behind the `dagre` feature) wraps
 //! the `mermaid-dagre` crate — a 1:1 Rust port of JS dagre.
+//!
+//! A dependency-free [`SimpleLayout`] is always available as a fallback.
 
 #[cfg(feature = "dagre")]
 pub mod dagre;
+pub mod simple;
 
 use crate::geometry::PointF;
 use crate::graph::{FlowGraph, NodeId};
@@ -28,3 +31,5 @@ pub struct LayoutResult {
 pub trait LayoutEngine: Send + Sync {
     fn layout(&self, graph: &FlowGraph, direction: LayoutDirection) -> LayoutResult;
 }
+
+pub use simple::SimpleLayout;

@@ -36,6 +36,7 @@ impl RenderOnce for PanelView {
                 window,
                 cx,
                 selected: true,
+                scale: 1.0,
             };
             flow_node.get_panel(&self.node, &mut ctx)
         } else {

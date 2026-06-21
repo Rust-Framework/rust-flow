@@ -14,6 +14,8 @@ pub struct NodeViewCtx<'a> {
     pub window: &'a mut Window,
     pub cx: &'a mut App,
     pub selected: bool,
+    /// 当前视口缩放比例，节点内部元素应按此缩放。
+    pub scale: f32,
 }
 
 /// 节点扩展接口（策略模式）。

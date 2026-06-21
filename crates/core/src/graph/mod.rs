@@ -91,6 +91,11 @@ impl FlowGraph {
         self.edges.values()
     }
 
+    pub fn edges_mut(&mut self) -> impl Iterator<Item = &mut Edge> {
+        self.version = self.version.wrapping_add(1);
+        self.edges.values_mut()
+    }
+
     pub fn edge_ids(&self) -> impl Iterator<Item = EdgeId> + '_ {
         self.edges.keys()
     }

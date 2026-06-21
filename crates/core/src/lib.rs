@@ -16,7 +16,7 @@ pub mod viewport;
 
 pub use geometry::{PointF, RectF, SizeF};
 pub use graph::{Edge, EdgeId, EdgeKind, EdgeType, FlowGraph, Node, NodeData, NodeId, NodeKind, PortDirection, PortId, PortSide};
-pub use layout::{LayoutDirection, LayoutEngine, LayoutResult};
+pub use layout::{LayoutDirection, LayoutEngine, LayoutResult, SimpleLayout};
 pub use schema::{NodeSchema, PortSpec};
 pub use viewport::Viewport;
 

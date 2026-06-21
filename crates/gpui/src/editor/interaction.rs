@@ -9,9 +9,12 @@ use rust_agent_flow::{NodeId, PortId, PointF};
 pub enum InteractionState {
     /// 空闲：无交互进行中。
     Idle,
-    /// 平移视口：记录鼠标起点和视口 offset 起点。
+    /// 平移视口：记录鼠标起点（**屏幕坐标**）和视口 offset 起点。
+    ///
+    /// 使用屏幕坐标而非逻辑坐标，避免平移过程中 viewport.offset 变化
+    /// 导致的逻辑坐标反馈抖动（参考 ReactFlow 成熟方案）。
     Panning {
-        start: PointF,
+        start_screen: PointF,
         origin: PointF,
     },
     /// 拖拽节点：记录节点 id、鼠标起点（逻辑坐标）、节点 position 起点。

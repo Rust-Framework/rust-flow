@@ -2,6 +2,12 @@
 //!
 //! 支持 4 种连线算法（bezier/straight/step/smoothstep）+ 箭头。
 //! 路径计算委托给 core 层 [`edge_path`] 函数，此处仅负责 GPUI 绘制。
+//!
+//! ## 缩放方案
+//!
+//! 所有绘制函数接收**逻辑坐标**，通过 `PathBuilder::scale` + `translate`
+//! 统一变换到屏幕空间。这样路径几何（含 step gap、smoothstep 圆角半径）
+//! 自动随缩放变化，仅需手动缩放线宽（`stroke_width * scale`）。
 
 use gpui::{canvas, px, IntoElement, PathBuilder, Point, Pixels, Window};
 use rust_agent_flow::{
@@ -41,7 +47,17 @@ impl EdgeView {
         canvas(
             |bounds, _window, _cx| bounds.size,
             move |_bounds, _size, window, _cx| {
-                paint_edge(src, dst, src_side, dst_side, edge_type, window);
+                // EdgeView 独立使用时默认 1:1 无偏移。
+                paint_edge_scaled(
+                    src,
+                    dst,
+                    src_side,
+                    dst_side,
+                    edge_type,
+                    1.0,
+                    Point::new(px(0.0), px(0.0)),
+                    window,
+                );
             },
         )
     }
@@ -53,11 +69,22 @@ fn to_px(p: PointF) -> Point<Pixels> {
 }
 
 /// 绘制折线（或贝塞尔曲线）。
-pub(crate) fn paint_polyline(points: &[PointF], is_bezier: bool, window: &mut Window) {
+///
+/// `points` 为**逻辑坐标**，通过 `scale` + `offset` 变换到屏幕空间。
+/// 线宽随 `scale` 缩放，确保缩放时视觉比例一致。
+pub(crate) fn paint_polyline(
+    points: &[PointF],
+    is_bezier: bool,
+    scale: f32,
+    offset: Point<Pixels>,
+    window: &mut Window,
+) {
     if points.len() < 2 {
         return;
     }
-    let mut path = PathBuilder::stroke(px(1.5));
+    let mut path = PathBuilder::stroke(px(1.5 * scale));
+    path.scale(scale);
+    path.translate(offset);
     path.move_to(to_px(points[0]));
     if is_bezier {
         // 三次贝塞尔：cubic_bezier_to(to, control_a, control_b)
@@ -73,7 +100,14 @@ pub(crate) fn paint_polyline(points: &[PointF], is_bezier: bool, window: &mut Wi
 }
 
 /// 绘制箭头（在 dst 点画三角形，方向由最后一段决定）。
-pub(crate) fn paint_arrow(points: &[PointF], window: &mut Window) {
+///
+/// `points` 为**逻辑坐标**，箭头尺寸（8.0 逻辑单位）随 `scale` 自动缩放。
+pub(crate) fn paint_arrow(
+    points: &[PointF],
+    scale: f32,
+    offset: Point<Pixels>,
+    window: &mut Window,
+) {
     if points.len() < 2 {
         return;
     }
@@ -89,6 +123,7 @@ pub(crate) fn paint_arrow(points: &[PointF], window: &mut Window) {
     let ux = dx / len;
     let uy = dy / len;
 
+    // 箭头尺寸为逻辑单位，PathBuilder::scale 会自动缩放到屏幕空间。
     let size = 8.0;
     let left = PointF::new(
         tip.x - ux * size - uy * size * 0.5,
@@ -100,6 +135,8 @@ pub(crate) fn paint_arrow(points: &[PointF], window: &mut Window) {
     );
 
     let mut path = PathBuilder::fill();
+    path.scale(scale);
+    path.translate(offset);
     path.move_to(to_px(tip));
     path.line_to(to_px(left));
     path.line_to(to_px(right));
@@ -110,40 +147,23 @@ pub(crate) fn paint_arrow(points: &[PointF], window: &mut Window) {
 }
 
 /// 统一边渲染入口：计算路径点 + 绘制折线 + 绘制箭头。
-/// 供 EdgeView::into_element 和 FlowEditorView::render_edges 共用。
 ///
-/// **注意**：此函数接收**屏幕坐标**（已通过 viewport.to_screen 转换），
-/// 用于旧版逐元素缩放方案。新代码应使用 [`paint_edge_scaled`]。
-pub(crate) fn paint_edge(
-    src: PointF,
-    dst: PointF,
-    src_side: PortSide,
-    dst_side: PortSide,
-    edge_type: EdgeType,
-    window: &mut Window,
-) {
-    let points = match edge_type {
-        EdgeType::Straight => straight_path(src, dst),
-        EdgeType::Bezier => bezier_path(src, dst, src_side, dst_side, 0.5),
-        EdgeType::Step => step_path(src, dst, src_side, dst_side),
-        EdgeType::SmoothStep => smoothstep_path(src, dst, src_side, dst_side, 12.0),
-    };
-    let is_bezier = edge_type == EdgeType::Bezier && points.len() == 4;
-    paint_polyline(&points, is_bezier, window);
-    paint_arrow(&points, window);
-}
-
-/// 使用逻辑坐标绘制边（不预转换到屏幕空间）。
+/// **坐标空间**：`src`/`dst` 为**逻辑坐标**，由 `scale` + `offset`
+/// 通过 PathBuilder 变换统一映射到屏幕空间。
 ///
-/// 与 [`paint_edge`] 不同，此函数接收逻辑坐标，由外层容器统一
-/// 通过 transform-scale 缩放，确保线宽、箭头等所有视觉属性
-/// 随缩放比例均匀变化。
+/// - `scale`：视口缩放比例
+/// - `offset`：屏幕偏移 = `viewport.offset + canvas bounds.origin`
+///
+/// 路径几何（含 step 的 20px gap、smoothstep 的 12px 圆角）在逻辑空间
+/// 计算，随 `scale` 自动缩放，确保缩放时连线与节点保持几何一致。
 pub(crate) fn paint_edge_scaled(
     src: PointF,
     dst: PointF,
     src_side: PortSide,
     dst_side: PortSide,
     edge_type: EdgeType,
+    scale: f32,
+    offset: Point<Pixels>,
     window: &mut Window,
 ) {
     let points = match edge_type {
@@ -153,6 +173,6 @@ pub(crate) fn paint_edge_scaled(
         EdgeType::SmoothStep => smoothstep_path(src, dst, src_side, dst_side, 12.0),
     };
     let is_bezier = edge_type == EdgeType::Bezier && points.len() == 4;
-    paint_polyline(&points, is_bezier, window);
-    paint_arrow(&points, window);
+    paint_polyline(&points, is_bezier, scale, offset, window);
+    paint_arrow(&points, scale, offset, window);
 }

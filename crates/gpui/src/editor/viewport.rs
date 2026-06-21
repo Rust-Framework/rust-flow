@@ -21,17 +21,19 @@ pub fn handle_zoom(viewport: Viewport, mouse_logical: PointF, delta: f32) -> Vie
 
 /// 处理平移拖拽，返回新的 offset。
 ///
-/// `origin` 为视口 offset 起点，`start` 为鼠标按下起点（逻辑坐标），
-/// `current` 为当前鼠标位置（逻辑坐标）。
+/// **成熟方案（ReactFlow / tldraw）**：纯屏幕空间 delta 直接加到 pan offset。
+/// - `origin`：鼠标按下时的视口 offset（屏幕空间）
+/// - `start_screen`：鼠标按下位置（屏幕坐标）
+/// - `current_screen`：鼠标当前位置（屏幕坐标）
 ///
-/// 注意：平移在屏幕空间更直观，但此处统一用逻辑坐标。
-/// 实际实现中，鼠标移动 delta 在屏幕空间，需转换为逻辑空间 delta 后应用到 offset。
-pub fn handle_pan(origin: PointF, start: PointF, current: PointF) -> PointF {
-    // offset 是逻辑原点在屏幕空间的偏移。
-    // 鼠标在屏幕空间移动 (current - start)（逻辑坐标差，但平移不涉及缩放变换）。
-    // 新 offset = origin + (current - start)
+/// 数学：`new_offset = origin + (current_screen - start_screen)`
+/// 鼠标移动多少像素，画布跟随多少像素，实现 1:1 平移。
+///
+/// 注意：不能用逻辑坐标做 delta，因为平移过程中 viewport.offset 持续变化，
+/// 会导致 `to_logical(current)` 产生反馈抖动。
+pub fn handle_pan(origin: PointF, start_screen: PointF, current_screen: PointF) -> PointF {
     PointF::new(
-        origin.x + (current.x - start.x),
-        origin.y + (current.y - start.y),
+        origin.x + (current_screen.x - start_screen.x),
+        origin.y + (current_screen.y - start_screen.y),
     )
 }
