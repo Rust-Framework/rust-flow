@@ -11,6 +11,199 @@ use rust_agent_flow::Node;
 
 use super::{IFlowNode, NodeViewCtx};
 
+/// 节点视觉配置：供 [`render_node_card`] 使用，描述节点卡片的外观和端口。
+#[derive(Clone)]
+pub struct NodeVisual {
+    /// 主标签（如 "Start"、"Planner"）。
+    pub label: String,
+    /// 可选副标题（如 "规划下一步动作"）。
+    pub desc: Option<String>,
+    /// 背景色。
+    pub bg: gpui::Rgba,
+    /// 边框色（未选中）。
+    pub border: gpui::Rgba,
+    /// 选中边框色。
+    pub border_selected: gpui::Rgba,
+    /// 标签文字色。
+    pub text: gpui::Rgba,
+    /// 副标题文字色。
+    pub subtext: gpui::Rgba,
+    /// 是否显示入端口。
+    pub show_in: bool,
+    /// 是否显示出端口。
+    pub show_out: bool,
+    /// 入端口圆点色。
+    pub in_color: gpui::Rgba,
+    /// 出端口圆点色。
+    pub out_color: gpui::Rgba,
+    /// 是否为药丸形（圆角更大，用于 Start/End）。
+    pub pill: bool,
+}
+
+impl NodeVisual {
+    /// 创建默认白色卡片配置（Action 风格）。
+    pub fn card(label: impl Into<String>) -> Self {
+        Self {
+            label: label.into(),
+            desc: None,
+            bg: gpui::rgb(0xffffff),
+            border: gpui::rgb(0xe2e8f0),
+            border_selected: gpui::rgb(0x6366f1),
+            text: gpui::rgb(0x1e293b),
+            subtext: gpui::rgb(0x64748b),
+            show_in: true,
+            show_out: true,
+            in_color: gpui::rgb(0x6366f1),
+            out_color: gpui::rgb(0x22c55e),
+            pill: false,
+        }
+    }
+}
+
+/// 渲染节点卡片（body + 端口）。
+///
+/// **z-index 关键**：端口作为 body 的**后续兄弟**（而非 body 的子元素），
+/// 确保端口绘制在节点边框之上，避免边框穿过端口圆圈。
+///
+/// - `w` / `h`：屏幕像素尺寸（已乘 scale）
+/// - `scale`：视口缩放
+/// - `vertical`：垂直布局（端口在 top/bottom）
+/// - `selected`：是否选中
+pub fn render_node_card(
+    visual: &NodeVisual,
+    w: f32,
+    h: f32,
+    scale: f32,
+    vertical: bool,
+    selected: bool,
+) -> AnyElement {
+    let s = scale;
+
+    // 端口尺寸（随缩放）
+    let port_size = 6.0 * s;
+    let port_outer = (port_size + 4.0) * s;
+    let port_outer_half = port_outer * 0.5;
+
+    let font_size = 14.0 * s;
+    let desc_size = 11.0 * s;
+
+    let border_color = if selected {
+        visual.border_selected
+    } else {
+        visual.border
+    };
+
+    // 端口位置：圆心在节点边缘上（半内半外）
+    let (in_port_left, in_port_top, out_port_left, out_port_top) = if vertical {
+        (
+            w * 0.5 - port_outer_half,
+            -port_outer_half,
+            w * 0.5 - port_outer_half,
+            h - port_outer_half,
+        )
+    } else {
+        (
+            -port_outer_half,
+            h * 0.5 - port_outer_half,
+            w - port_outer_half,
+            h * 0.5 - port_outer_half,
+        )
+    };
+
+    // 构造端口 div 的辅助闭包
+    let make_port = |left: f32, top: f32, ring_color: gpui::Rgba, dot_color: gpui::Rgba| {
+        gpui::div()
+            .absolute()
+            .left(px(left))
+            .top(px(top))
+            .w(px(port_outer))
+            .h(px(port_outer))
+            .rounded_full()
+            .bg(gpui::white())
+            .border_1()
+            .border_color(ring_color)
+            .flex()
+            .items_center()
+            .justify_center()
+            .child(
+                gpui::div()
+                    .w(px(port_size))
+                    .h(px(port_size))
+                    .rounded_full()
+                    .bg(dot_color),
+            )
+    };
+
+    // 外层容器：relative，body 和端口都是其子元素。
+    // 端口在 body 之后 → 绘制在边框之上。
+    let mut container = gpui::div()
+        .relative()
+        .w(px(w))
+        .h(px(h));
+
+    // Body（带边框和背景）
+    let mut body = gpui::div()
+        .absolute()
+        .top_0()
+        .left_0()
+        .w(px(w))
+        .h(px(h))
+        .bg(visual.bg)
+        .border_1()
+        .border_color(border_color)
+        .shadow_lg()
+        .flex()
+        .items_center()
+        .justify_center();
+
+    if visual.pill {
+        body = body.rounded_full();
+    } else {
+        body = body.rounded_lg();
+    }
+
+    // 内容：标签 + 可选副标题
+    let mut content = gpui::div().flex().flex_col().items_center().gap(px(2.0 * s));
+    content = content.child(
+        gpui::div()
+            .text_size(px(font_size))
+            .font_semibold()
+            .text_color(visual.text)
+            .child(visual.label.clone()),
+    );
+    if let Some(desc) = &visual.desc {
+        content = content.child(
+            gpui::div()
+                .text_size(px(desc_size))
+                .text_color(visual.subtext)
+                .child(desc.clone()),
+        );
+    }
+    body = body.child(content);
+
+    container = container.child(body);
+
+    // 端口（在 body 之后，绘制在边框之上）
+    if visual.show_in {
+        container = container.child(make_port(
+            in_port_left,
+            in_port_top,
+            gpui::rgb(0xc7d2fe),
+            visual.in_color,
+        ));
+    }
+    if visual.show_out {
+        container = container.child(make_port(
+            out_port_left,
+            out_port_top,
+            gpui::rgb(0xbbf7d0),
+            visual.out_color,
+        ));
+    }
+
+    container.into_any_element()
+}
+
 /// 节点视图组件。
 ///
 /// `flow_node` 为 `None` 时使用 fallback 渲染（显示 kind 文字），
@@ -83,7 +276,6 @@ impl IntoElement for NodeView {
 
 impl NodeView {
     fn render_fallback(self) -> AnyElement {
-        // 优先从 data.label 取标签，否则用 kind。
         let label = self
             .node
             .data
@@ -91,112 +283,30 @@ impl NodeView {
             .and_then(|v| v.as_str())
             .unwrap_or(&self.node.kind)
             .to_string();
-        let border_color = if self.selected {
-            gpui::rgb(0x6366f1)
-        } else {
-            gpui::rgb(0xe2e8f0)
+        let desc = self
+            .node
+            .data
+            .get("desc")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+
+        let visual = NodeVisual {
+            label,
+            desc,
+            bg: gpui::rgb(0xffffff),
+            border: gpui::rgb(0xe2e8f0),
+            border_selected: gpui::rgb(0x6366f1),
+            text: gpui::rgb(0x1e293b),
+            subtext: gpui::rgb(0x64748b),
+            show_in: true,
+            show_out: true,
+            in_color: gpui::rgb(0x6366f1),
+            out_color: gpui::rgb(0x22c55e),
+            pill: false,
         };
 
-        // 所有尺寸乘以缩放比例
-        let s = self.scale;
-        let w = self.node.size.w * s;
-        let h = self.node.size.h * s;
-
-        // 端点样式参数（全部随缩放）
-        let port_size = 6.0 * s;           // 内圆
-        let port_in_color = gpui::rgb(0x6366f1);
-        let port_out_color = gpui::rgb(0x22c55e);
-        let port_outer = (port_size + 4.0) * s;   // 外环
-        let port_outer_half = port_outer * 0.5;
-
-        // 字体大小随缩放（基础 14px）
-        let font_size = 14.0 * s;
-        let vertical = self.vertical;
-
-        // 端口位置参数：端口完全在节点外部，避免裁剪
-        let (in_port_left, in_port_top, out_port_left, out_port_top) = if vertical {
-            // 垂直布局：入端口在 top 外部中点，出端口在 bottom 外部中点
-            (
-                w * 0.5 - port_outer_half,
-                -port_outer,
-                w * 0.5 - port_outer_half,
-                h,
-            )
-        } else {
-            // 水平布局：入端口在 left 外部中点，出端口在 right 外部中点
-            (
-                -port_outer,
-                h * 0.5 - port_outer_half,
-                w,
-                h * 0.5 - port_outer_half,
-            )
-        };
-
-        gpui::div()
-            .w(px(w))
-            .h(px(h))
-            .bg(gpui::white())
-            .border_1()
-            .border_color(border_color)
-            .rounded_lg()
-            .shadow_lg()
-            .flex()
-            .items_center()
-            .justify_center()
-            .relative()
-            .child(
-                gpui::div()
-                    .text_size(px(font_size))
-                    .font_bold()
-                    .text_color(gpui::rgb(0x1e293b))
-                    .child(label),
-            )
-            // 入端口 — 水平在左边缘中点 / 垂直在顶边缘中点
-            .child(
-                gpui::div()
-                    .absolute()
-                    .left(px(in_port_left))
-                    .top(px(in_port_top))
-                    .w(px(port_outer))
-                    .h(px(port_outer))
-                    .rounded_full()
-                    .bg(gpui::white())
-                    .border_1()
-                    .border_color(gpui::rgb(0xc7d2fe))
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .child(
-                        gpui::div()
-                            .w(px(port_size))
-                            .h(px(port_size))
-                            .rounded_full()
-                            .bg(port_in_color),
-                    ),
-            )
-            // 出端口 — 水平在右边缘中点 / 垂直在底边缘中点
-            .child(
-                gpui::div()
-                    .absolute()
-                    .left(px(out_port_left))
-                    .top(px(out_port_top))
-                    .w(px(port_outer))
-                    .h(px(port_outer))
-                    .rounded_full()
-                    .bg(gpui::white())
-                    .border_1()
-                    .border_color(gpui::rgb(0xbbf7d0))
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .child(
-                        gpui::div()
-                            .w(px(port_size))
-                            .h(px(port_size))
-                            .rounded_full()
-                            .bg(port_out_color),
-                    ),
-            )
-            .into_any_element()
+        let w = self.node.size.w * self.scale;
+        let h = self.node.size.h * self.scale;
+        render_node_card(&visual, w, h, self.scale, self.vertical, self.selected)
     }
 }

@@ -6,4 +6,4 @@ mod view;
 
 pub use flow_node::{IFlowNode, NodeViewCtx};
 pub use registry::NodeRegistry;
-pub use view::NodeView;
+pub use view::{render_node_card, NodeView, NodeVisual};

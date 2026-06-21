@@ -2,10 +2,10 @@
 //!
 //! 每个 [`NodeKind`] 对应一个 [`IFlowNode`] 实现，提供节点卡片视图和属性面板。
 //! 普通节点只需实现 `kind`/`get_view`/`get_panel`/`schema`；
-//! 特殊节点（如条件分支）可覆写 `resolve_port` 精确控制端口位置。
+//! 特殊节点（如条件分支、循环）可覆写 `port_position` 精确控制端口位置。
 
 use gpui::{AnyElement, App, Window};
-use rust_agent_flow::{Node, NodeSchema, PortId, PointF, RectF};
+use rust_agent_flow::{Node, NodeSchema, PortId, PointF};
 
 /// 节点渲染上下文，提供给 [`IFlowNode`] 方法使用。
 ///
@@ -24,7 +24,7 @@ pub struct NodeViewCtx<'a> {
 /// - [`get_view`](Self::get_view)：画布上的节点卡片布局
 /// - [`get_panel`](Self::get_panel)：选中时右侧属性面板布局
 /// - [`schema`](Self::schema)：端口定义、默认尺寸
-/// - [`resolve_port`](Self::resolve_port)：自定义端口位置（可选）
+/// - [`port_position`](Self::port_position)：自定义端口位置（可选）
 pub trait IFlowNode: Send + Sync {
     /// 节点 kind 标识，用于注册表匹配。
     fn kind(&self) -> &str;
@@ -38,13 +38,16 @@ pub trait IFlowNode: Send + Sync {
     /// 节点 Schema（端口定义、默认尺寸等）。
     fn schema(&self) -> &NodeSchema;
 
-    /// 自定义端口位置计算（可选）。
+    /// 自定义端口位置计算（可选，不依赖渲染上下文）。
     ///
-    /// 默认返回 `None`，表示用框架统一算法（[`resolve_endpoints`]）。
-    /// 特殊节点（如条件分支）覆写此方法以精确控制端口位置。
+    /// 返回端口圆心在**逻辑坐标**（节点 position 为左上角原点的绝对坐标）下的位置。
+    /// 默认返回 `None`，表示用框架统一算法（按 side 计算节点边缘中点）。
     ///
-    /// [`resolve_endpoints`]: rust_agent_flow::resolve_endpoints
-    fn resolve_port(&self, _port: &PortId, _bounds: RectF, _ctx: &mut NodeViewCtx) -> Option<PointF> {
+    /// 特殊节点（如条件分支的多出口、循环节点的循环回环端口）覆写此方法
+    /// 以精确控制每个端口的位置，使连线端点与视觉端口对齐。
+    ///
+    /// 位置计算应基于 `node.position` + `node.size` + 端口在节点内的相对偏移。
+    fn port_position(&self, _node: &Node, _port_id: &PortId) -> Option<PointF> {
         None
     }
 }
