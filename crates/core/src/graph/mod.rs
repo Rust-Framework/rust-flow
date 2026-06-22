@@ -126,6 +126,67 @@ impl FlowGraph {
     pub fn in_edges(&self, node: NodeId) -> impl Iterator<Item = &Edge> {
         self.edges.values().filter(move |e| e.target == node)
     }
+
+    /// Collect all Loop nodes and their associated body node groups.
+    ///
+    /// For each Loop node (identified by having a `loop_body` outgoing edge),
+    /// BFS-expand the body group along forward edges, excluding:
+    /// - `loop_in` back-edges (`target_port == "loop_in"`)
+    /// - Edges back to the Loop node itself (e.g. `done`)
+    /// - Edges to `done` targets of the same Loop node (prevents absorbing
+    ///   the exit node into the body group)
+    ///
+    /// This is the single source of truth for loop body group computation,
+    /// shared by the dagre layout post-processing and the rendering layer.
+    pub fn loop_body_groups(
+        &self,
+    ) -> std::collections::HashMap<NodeId, std::collections::HashSet<NodeId>> {
+        use std::collections::{HashMap, HashSet, VecDeque};
+
+        let mut groups: HashMap<NodeId, HashSet<NodeId>> = HashMap::new();
+
+        // Step 1: Find all loop_body edges, grouped by source (Loop node).
+        for edge in self.edges() {
+            if edge.source_port.as_deref() == Some("loop_body") {
+                groups.entry(edge.source).or_default().insert(edge.target);
+            }
+        }
+
+        // Step 2: BFS-expand each body group along forward edges.
+        for (loop_node, body_nodes) in groups.iter_mut() {
+            // Pre-compute done targets of this Loop node to exclude from body group.
+            let done_targets: HashSet<NodeId> = self
+                .edges()
+                .filter(|e| {
+                    e.source == *loop_node && e.source_port.as_deref() == Some("done")
+                })
+                .map(|e| e.target)
+                .collect();
+
+            let mut queue: VecDeque<NodeId> = body_nodes.iter().copied().collect();
+            while let Some(nid) = queue.pop_front() {
+                for edge in self.out_edges(nid) {
+                    // Skip back-edges (to loop_in)
+                    if edge.target_port.as_deref() == Some("loop_in") {
+                        continue;
+                    }
+                    // Skip edges back to the Loop node (e.g. done)
+                    if edge.target == *loop_node {
+                        continue;
+                    }
+                    // Skip edges to done targets (prevents absorbing exit nodes)
+                    if done_targets.contains(&edge.target) {
+                        continue;
+                    }
+                    if body_nodes.insert(edge.target) {
+                        queue.push_back(edge.target);
+                    }
+                }
+            }
+        }
+
+        groups
+    }
 }
 
 #[cfg(test)]

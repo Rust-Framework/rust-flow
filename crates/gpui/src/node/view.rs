@@ -34,27 +34,36 @@ pub struct NodeVisual {
     pub show_out: bool,
     /// 入端口圆点色。
     pub in_color: gpui::Rgba,
+    /// 入端口外环色。
+    pub in_ring: gpui::Rgba,
     /// 出端口圆点色。
     pub out_color: gpui::Rgba,
+    /// 出端口外环色。
+    pub out_ring: gpui::Rgba,
+    /// 端口圆圈背景色（dot 外的底色）。
+    pub port_bg: gpui::Rgba,
     /// 是否为药丸形（圆角更大，用于 Start/End）。
     pub pill: bool,
 }
 
 impl NodeVisual {
-    /// 创建默认白色卡片配置（Action 风格）。
-    pub fn card(label: impl Into<String>) -> Self {
+    /// 创建默认白色卡片配置（Action 风格），颜色取自主题。
+    pub fn card(label: impl Into<String>, theme: &crate::theme::Theme) -> Self {
         Self {
             label: label.into(),
             desc: None,
-            bg: gpui::rgb(0xffffff),
-            border: gpui::rgb(0xe2e8f0),
-            border_selected: gpui::rgb(0x6366f1),
-            text: gpui::rgb(0x1e293b),
-            subtext: gpui::rgb(0x64748b),
+            bg: theme.node_bg,
+            border: theme.node_border,
+            border_selected: theme.node_border_selected,
+            text: theme.node_text,
+            subtext: theme.node_subtext,
             show_in: true,
             show_out: true,
-            in_color: gpui::rgb(0x6366f1),
-            out_color: gpui::rgb(0x22c55e),
+            in_color: theme.node_in_dot,
+            in_ring: theme.node_in_ring,
+            out_color: theme.node_out_dot,
+            out_ring: theme.node_out_ring,
+            port_bg: theme.port_bg,
             pill: false,
         }
     }
@@ -119,7 +128,7 @@ pub fn render_node_card(
             .w(px(port_outer))
             .h(px(port_outer))
             .rounded_full()
-            .bg(gpui::white())
+            .bg(visual.port_bg)
             .border_1()
             .border_color(ring_color)
             .flex()
@@ -188,7 +197,7 @@ pub fn render_node_card(
         container = container.child(make_port(
             in_port_left,
             in_port_top,
-            gpui::rgb(0xc7d2fe),
+            visual.in_ring,
             visual.in_color,
         ));
     }
@@ -196,7 +205,7 @@ pub fn render_node_card(
         container = container.child(make_port(
             out_port_left,
             out_port_top,
-            gpui::rgb(0xbbf7d0),
+            visual.out_ring,
             visual.out_color,
         ));
     }
@@ -220,6 +229,8 @@ pub struct NodeView {
     pub layout: LayoutDirection,
     /// 循环体模式：强制端口纵向渲染（上进下出），覆盖 layout 方向。
     pub body_mode: bool,
+    /// 主题颜色配置。
+    pub theme: crate::theme::Theme,
 }
 
 impl NodeView {
@@ -232,6 +243,7 @@ impl NodeView {
             vertical: false,
             layout: LayoutDirection::Horizontal,
             body_mode: false,
+            theme: crate::theme::Theme::default(),
         }
     }
 
@@ -269,6 +281,11 @@ impl NodeView {
         }
         self
     }
+
+    pub fn with_theme(mut self, theme: crate::theme::Theme) -> Self {
+        self.theme = theme;
+        self
+    }
 }
 
 impl RenderOnce for NodeView {
@@ -280,6 +297,7 @@ impl RenderOnce for NodeView {
                 selected: self.selected,
                 scale: self.scale,
                 layout: self.layout,
+                theme: self.theme,
             };
             flow_node.get_view(&self.node, &mut ctx)
         } else {
@@ -312,18 +330,22 @@ impl NodeView {
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
 
+        let t = &self.theme;
         let visual = NodeVisual {
             label,
             desc,
-            bg: gpui::rgb(0xffffff),
-            border: gpui::rgb(0xe2e8f0),
-            border_selected: gpui::rgb(0x6366f1),
-            text: gpui::rgb(0x1e293b),
-            subtext: gpui::rgb(0x64748b),
+            bg: t.node_bg,
+            border: t.node_border,
+            border_selected: t.node_border_selected,
+            text: t.node_text,
+            subtext: t.node_subtext,
             show_in: true,
             show_out: true,
-            in_color: gpui::rgb(0x6366f1),
-            out_color: gpui::rgb(0x22c55e),
+            in_color: t.node_in_dot,
+            in_ring: t.node_in_ring,
+            out_color: t.node_out_dot,
+            out_ring: t.node_out_ring,
+            port_bg: t.port_bg,
             pill: false,
         };
 

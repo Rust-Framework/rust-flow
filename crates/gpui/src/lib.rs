@@ -8,10 +8,12 @@ pub mod editor;
 pub mod edge;
 pub mod node;
 pub mod panel;
+pub mod theme;
 
 pub use editor::FlowEditorView;
 pub use edge::EdgeView;
 pub use node::{IFlowNode, NodeRegistry, NodeView, NodeViewCtx};
+pub use theme::Theme;
 
 /// 初始化 GPUI 组件库（必须在打开窗口前调用）。
 ///

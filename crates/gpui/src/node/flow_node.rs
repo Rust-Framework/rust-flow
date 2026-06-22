@@ -5,11 +5,14 @@
 //! 特殊节点（如条件分支、循环）可覆写 `port_position` 精确控制端口位置。
 
 use gpui::{AnyElement, App, Window};
-use rust_agent_flow::{LayoutDirection, Node, NodeSchema, PortId, PointF};
+use rust_agent_flow::{LayoutDirection, Node, NodeSchema, PortId, PointF, SizeF};
+
+use crate::theme::Theme;
 
 /// 节点渲染上下文，提供给 [`IFlowNode`] 方法使用。
 ///
 /// 持有 GPUI 的 `Window` 和 `App` 引用，供节点实现调用 GPUI API 构建界面。
+/// `theme` 提供当前主题颜色，节点渲染应从中取色以支持主题切换。
 pub struct NodeViewCtx<'a> {
     pub window: &'a mut Window,
     pub cx: &'a mut App,
@@ -18,6 +21,8 @@ pub struct NodeViewCtx<'a> {
     pub scale: f32,
     /// 当前布局方向（横向/纵向），节点渲染端口位置应与此一致。
     pub layout: LayoutDirection,
+    /// 当前主题颜色配置。
+    pub theme: Theme,
 }
 
 /// 节点扩展接口（策略模式）。
@@ -60,5 +65,22 @@ pub trait IFlowNode: Send + Sync {
         _layout: LayoutDirection,
     ) -> Option<PointF> {
         None
+    }
+
+    /// 节点由内容推导的实际渲染尺寸（可选）。
+    ///
+    /// 返回值用于同步 `node.size`，确保 dagre 布局、命中测试、回环边边界
+    /// 计算使用与实际渲染一致的尺寸。
+    ///
+    /// **默认**：返回 `node.size`（适用于尺寸固定的节点，如 Action/Start/End/Loop）。
+    ///
+    /// **结构化节点应覆写此方法**：当节点数据（如 Condition 的 conditions 数量）
+    /// 影响实际渲染高度时，返回基于数据推导的尺寸。例如 Condition 节点的
+    /// 高度 = `TITLE_H + ITEM_H * n_branches`，随条件项数量变化。
+    ///
+    /// 宽度通常保持 `node.size.w`（由 schema default_size 或创建时指定），
+    /// 仅高度需要根据数据推导。
+    fn content_size(&self, node: &Node) -> SizeF {
+        node.size
     }
 }

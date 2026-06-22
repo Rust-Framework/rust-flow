@@ -9,10 +9,18 @@
 //! 统一变换到屏幕空间。这样路径几何（含 step gap、smoothstep 圆角半径）
 //! 自动随缩放变化，仅需手动缩放线宽（`stroke_width * scale`）。
 
-use gpui::{canvas, px, IntoElement, PathBuilder, Point, Pixels, Window};
+use gpui::{canvas, px, IntoElement, PathBuilder, Point, Pixels, Rgba, Window};
 use rust_agent_flow::{
-    bezier_path, loop_back_path, smoothstep_path, step_path, straight_path, EdgeType, PointF,
-    PortSide, RectF,
+    bezier_path, loop_back_path, round_corners, smoothstep_path, step_path, straight_path, EdgeType,
+    PointF, PortSide, RectF,
+};
+
+/// 默认边颜色（亮色主题下的回退值，实际颜色应由调用方通过参数传入）。
+const EDGE_COLOR_DEFAULT: Rgba = Rgba {
+    r: 0xb1 as f32 / 255.0,
+    g: 0xb1 as f32 / 255.0,
+    b: 0xb7 as f32 / 255.0,
+    a: 1.0,
 };
 
 /// 边视图：持有点位和类型，`into_element` 返回 canvas 元素。
@@ -48,7 +56,7 @@ impl EdgeView {
         canvas(
             |bounds, _window, _cx| bounds.size,
             move |_bounds, _size, window, _cx| {
-                // EdgeView 独立使用时默认 1:1 无偏移。
+                // EdgeView 独立使用时默认 1:1 无偏移，使用默认边色。
                 paint_edge_scaled(
                     src,
                     dst,
@@ -57,6 +65,7 @@ impl EdgeView {
                     edge_type,
                     1.0,
                     Point::new(px(0.0), px(0.0)),
+                    EDGE_COLOR_DEFAULT,
                     window,
                 );
             },
@@ -78,6 +87,7 @@ pub(crate) fn paint_polyline(
     is_bezier: bool,
     scale: f32,
     offset: Point<Pixels>,
+    color: Rgba,
     window: &mut Window,
 ) {
     if points.len() < 2 {
@@ -96,7 +106,7 @@ pub(crate) fn paint_polyline(
         }
     }
     if let Ok(path) = path.build() {
-        window.paint_path(path, gpui::black());
+        window.paint_path(path, color);
     }
 }
 
@@ -107,6 +117,7 @@ pub(crate) fn paint_arrow(
     points: &[PointF],
     scale: f32,
     offset: Point<Pixels>,
+    color: Rgba,
     window: &mut Window,
 ) {
     if points.len() < 2 {
@@ -143,7 +154,7 @@ pub(crate) fn paint_arrow(
     path.line_to(to_px(right));
     path.line_to(to_px(tip));
     if let Ok(path) = path.build() {
-        window.paint_path(path, gpui::black());
+        window.paint_path(path, color);
     }
 }
 
@@ -154,9 +165,11 @@ pub(crate) fn paint_arrow(
 ///
 /// - `scale`：视口缩放比例
 /// - `offset`：屏幕偏移 = `viewport.offset + canvas bounds.origin`
+/// - `color`：边描边色（来自主题）
 ///
 /// 路径几何（含 step 的 20px gap、smoothstep 的 12px 圆角）在逻辑空间
 /// 计算，随 `scale` 自动缩放，确保缩放时连线与节点保持几何一致。
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn paint_edge_scaled(
     src: PointF,
     dst: PointF,
@@ -165,6 +178,7 @@ pub(crate) fn paint_edge_scaled(
     edge_type: EdgeType,
     scale: f32,
     offset: Point<Pixels>,
+    color: Rgba,
     window: &mut Window,
 ) {
     let points = match edge_type {
@@ -174,24 +188,38 @@ pub(crate) fn paint_edge_scaled(
         EdgeType::SmoothStep => smoothstep_path(src, dst, src_side, dst_side, 12.0),
     };
     let is_bezier = edge_type == EdgeType::Bezier && points.len() == 4;
-    paint_polyline(&points, is_bezier, scale, offset, window);
-    paint_arrow(&points, scale, offset, window);
+    paint_polyline(&points, is_bezier, scale, offset, color, window);
+    paint_arrow(&points, scale, offset, color, window);
 }
 
 /// 渲染 Loop 回环边：使用 `loop_back_path` 绕过 Loop 节点下方。
 ///
 /// `node_bounds` 应包含 Loop 节点 + 所有循环体节点的组合边界，
 /// 确保回环路径从最后循环体节点的底部 → 向下 → 向左 → 向上 → 回到 loop_in。
+///
+/// **样式一致性**：当 `edge_type` 为 `SmoothStep` 时，对 `loop_back_path`
+/// 产生的折线应用 `round_corners` 圆角处理，与普通边保持一致的圆角风格。
+///
+/// **颜色区分**：回环边使用 `color` 参数（来自主题的回环边色），与普通边
+/// 的默认色区分，突出循环语义。
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn paint_loop_back_edge(
     src: PointF,
     dst: PointF,
     horizontal: bool,
     node_bounds: RectF,
+    edge_type: EdgeType,
     scale: f32,
     offset: Point<Pixels>,
+    color: Rgba,
     window: &mut Window,
 ) {
-    let points = loop_back_path(src, dst, horizontal, node_bounds);
-    paint_polyline(&points, false, scale, offset, window);
-    paint_arrow(&points, scale, offset, window);
+    let raw = loop_back_path(src, dst, horizontal, node_bounds);
+    // Apply rounded corners for SmoothStep to match the theme.
+    let points = match edge_type {
+        EdgeType::SmoothStep => round_corners(&raw, 12.0),
+        _ => raw,
+    };
+    paint_polyline(&points, false, scale, offset, color, window);
+    paint_arrow(&points, scale, offset, color, window);
 }

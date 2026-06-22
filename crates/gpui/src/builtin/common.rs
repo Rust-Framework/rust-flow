@@ -4,6 +4,8 @@ use gpui::{div, px, AnyElement, IntoElement, ParentElement, Styled};
 use gpui_component::StyledExt;
 use rust_agent_flow::Node;
 
+use crate::theme::Theme;
+
 /// 从 node.data 取 label，缺省回退到 kind。
 pub(crate) fn label_of(node: &Node) -> String {
     node.data
@@ -22,7 +24,9 @@ pub(crate) fn desc_of(node: &Node) -> Option<String> {
 }
 
 /// 渲染简单属性面板：显示 kind + label + desc。
-pub(crate) fn render_simple_panel(node: &Node, kind_label: &str) -> AnyElement {
+///
+/// 颜色取自 `theme`，支持主题切换。
+pub(crate) fn render_simple_panel(node: &Node, kind_label: &str, theme: &Theme) -> AnyElement {
     let label = label_of(node);
     let desc = desc_of(node);
     let mut col = div().flex().flex_col().gap(px(8.0)).p_4();
@@ -31,26 +35,26 @@ pub(crate) fn render_simple_panel(node: &Node, kind_label: &str) -> AnyElement {
         div()
             .text_size(px(16.0))
             .font_semibold()
-            .text_color(gpui::rgb(0x1e293b))
+            .text_color(theme.panel_title_text)
             .child(kind_label.to_string()),
     );
     col = col.child(
         div()
             .text_size(px(13.0))
-            .text_color(gpui::rgb(0x64748b))
+            .text_color(theme.panel_subtext)
             .child(format!("Kind: {}", node.kind)),
     );
     col = col.child(
         div()
             .text_size(px(13.0))
-            .text_color(gpui::rgb(0x1e293b))
+            .text_color(theme.panel_label_text)
             .child(format!("Label: {}", label)),
     );
     if let Some(desc) = desc {
         col = col.child(
             div()
                 .text_size(px(13.0))
-                .text_color(gpui::rgb(0x64748b))
+                .text_color(theme.panel_subtext)
                 .child(format!("Desc: {}", desc)),
         );
     }
@@ -60,7 +64,7 @@ pub(crate) fn render_simple_panel(node: &Node, kind_label: &str) -> AnyElement {
 
 /// 渲染端口圆圈（用于结构化节点的多端口布局）。
 ///
-/// 端口为白底圆环 + 彩色圆点，位于 `(left, top)`（相对父容器左上角，屏幕坐标）。
+/// 端口为 `port_bg` 底色圆环 + 彩色圆点，位于 `(left, top)`（相对父容器左上角，屏幕坐标）。
 /// `port_outer` = 外圆直径，`port_size` = 内圆点直径。
 pub(crate) fn make_port(
     left: f32,
@@ -69,6 +73,7 @@ pub(crate) fn make_port(
     port_size: f32,
     ring_color: gpui::Rgba,
     dot_color: gpui::Rgba,
+    port_bg: gpui::Rgba,
 ) -> AnyElement {
     div()
         .absolute()
@@ -77,7 +82,7 @@ pub(crate) fn make_port(
         .w(px(port_outer))
         .h(px(port_outer))
         .rounded_full()
-        .bg(gpui::white())
+        .bg(port_bg)
         .border_1()
         .border_color(ring_color)
         .flex()

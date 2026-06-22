@@ -370,6 +370,33 @@ pub fn step_path(
 
 // ---- SmoothStep (rounded orthogonal) ----
 
+/// Replace each sharp interior corner of a polyline with sampled quadratic
+/// Bézier points, producing rounded corners.
+///
+/// This is the reusable corner-rounding logic extracted from
+/// [`smoothstep_path`]. It applies [`rf_get_bend`] to every interior point
+/// (indices `1..len-1`) of the input polyline.
+///
+/// - If `points` has fewer than 3 elements or `border_radius <= 0`, the
+///   input is returned unchanged.
+/// - The first and last points are always preserved exactly.
+pub fn round_corners(points: &[PointF], border_radius: f32) -> Vec<PointF> {
+    if points.len() < 3 || border_radius <= 0.0 {
+        return points.to_vec();
+    }
+
+    let mut result = Vec::with_capacity(points.len() * 10);
+    result.push(points[0]);
+
+    for i in 1..points.len() - 1 {
+        let bend_pts = rf_get_bend(points[i - 1], points[i], points[i + 1], border_radius);
+        result.extend_from_slice(&bend_pts);
+    }
+
+    result.push(*points.last().unwrap());
+    result
+}
+
 /// SmoothStep path: orthogonal with rounded corners.
 ///
 /// Uses ReactFlow's `getPoints()` for routing + `getBend()` for each corner.
@@ -384,62 +411,65 @@ pub fn smoothstep_path(
     border_radius: f32,
 ) -> Vec<PointF> {
     let raw = rf_get_points(src, src_side, dst, dst_side, 20.0);
-
-    // Apply getBend to every interior point (indices 1..len-1).
-    if raw.len() < 3 || border_radius <= 0.0 {
-        return raw;
-    }
-
-    let mut result = Vec::with_capacity(raw.len() * 10);
-    result.push(raw[0]);
-
-    for i in 1..raw.len() - 1 {
-        let bend_pts = rf_get_bend(raw[i - 1], raw[i], raw[i + 1], border_radius);
-        result.extend_from_slice(&bend_pts);
-    }
-
-    result.push(*raw.last().unwrap());
-    result
+    round_corners(&raw, border_radius)
 }
 
 // ---------------------------------------------------------------------------
 // Loop-back (U-shape)
 // ---------------------------------------------------------------------------
 
-/// Loop-back path: U-shape routing **below** `node_bounds` for loop nodes.
+/// Loop back-edge routing: orthogonal U-shape path from the last loop body
+/// node back to the Loop node's `loop_in` port.
 ///
-/// Always routes below the node (regardless of main layout direction):
-/// `src → right → down → left → up → dst`
+/// **Horizontal layout** (5-point path, routes BELOW the body group):
+/// `src → (src.x, bottom_y) → (approach_x, bottom_y) → (approach_x, dst.y) → dst`
+/// Goes DOWN → LEFT → UP → RIGHT, clearing all nodes below.
+///
+/// **Vertical layout** (4-point path, routes to the LEFT of the body group):
+/// `src → (left_x, src.y) → (left_x, dst.y) → dst`
+/// Goes LEFT → UP → RIGHT, avoiding the `done` edge which goes straight DOWN
+/// from the Loop node's bottom center. Routing left (instead of below) prevents
+/// the back-edge's horizontal segment from crossing the done edge.
 ///
 /// `node_bounds` should include the loop body area (Loop node + all loop body
-/// nodes), so the path clears everything when routing below.
-///
-/// **Design rationale**: the loop body chain is always vertical (top-in /
-/// bottom-out), arranged downward from `loop_body` (right side of Loop node).
-/// The back-edge from the last loop body node's bottom port must go down,
-/// around, and back up to `loop_in` (left side of Loop node), never crossing
-/// through the node.
+/// nodes), so the path clears everything when routing around.
 pub fn loop_back_path(
     src: PointF,
     dst: PointF,
-    _horizontal: bool, // ignored — always route below
+    horizontal: bool,
     node_bounds: crate::geometry::RectF,
 ) -> Vec<PointF> {
-    let margin = 40.0;
-    // bottom_y must be below both the node bounds and the source point
-    // (source is the last loop body node's bottom port, which may be below
-    // the Loop node itself).
-    let bottom_y = node_bounds.bottom().max(src.y) + margin;
-    let right_x = src.x + margin;
-    let left_x = dst.x - margin;
-    vec![
-        src,
-        PointF::new(right_x, src.y),
-        PointF::new(right_x, bottom_y),
-        PointF::new(left_x, bottom_y),
-        PointF::new(left_x, dst.y),
-        dst,
-    ]
+    // approach_offset must exceed border_radius (12) + arrow_size (8) = 20.
+    // Using 30 gives a 18px final segment after rounding, ample for the arrow.
+    let approach_offset = 30.0;
+
+    if horizontal {
+        // Horizontal: DOWN → LEFT → UP → RIGHT (5-point U-shape below body group)
+        let bottom_margin = 40.0;
+        // bottom_y must be below both the node bounds and the source point
+        let bottom_y = node_bounds.bottom().max(src.y) + bottom_margin;
+        let approach_x = dst.x - approach_offset;
+        vec![
+            src,
+            PointF::new(src.x, bottom_y),
+            PointF::new(approach_x, bottom_y),
+            PointF::new(approach_x, dst.y),
+            dst,
+        ]
+    } else {
+        // Vertical: LEFT → UP → RIGHT (4-point U-shape on left side)
+        // Routes LEFT of the body group to avoid crossing the done edge
+        // (which goes straight DOWN from the Loop node's bottom center).
+        let left_margin = 40.0;
+        // left_x must be left of both the body group and the loop_in port (dst)
+        let left_x = node_bounds.left().min(dst.x) - left_margin - approach_offset;
+        vec![
+            src,
+            PointF::new(left_x, src.y),
+            PointF::new(left_x, dst.y),
+            dst,
+        ]
+    }
 }
 
 #[cfg(test)]
@@ -509,27 +539,42 @@ mod tests {
     }
 
     #[test]
-    fn loop_back_always_routes_below() {
+    fn loop_back_horizontal_routes_below() {
         let bounds = crate::geometry::RectF::new(
             PointF::new(100.0, 100.0),
             crate::geometry::SizeF::new(180.0, 80.0),
         );
-        // Test both horizontal=true and horizontal=false — both must route below.
-        for horizontal in [true, false] {
-            let pts = loop_back_path(
-                PointF::new(300.0, 140.0),
-                PointF::new(100.0, 140.0),
-                horizontal,
-                bounds,
-            );
-            // The bottom routing segment must be below the node.
-            let bottom = bounds.bottom();
-            let has_below = pts.iter().any(|p| p.y >= bottom);
-            assert!(has_below, "U-shape must route below the node (horizontal={horizontal})");
-            // Endpoints preserved.
-            assert_eq!(*pts.first().unwrap(), PointF::new(300.0, 140.0));
-            assert_eq!(*pts.last().unwrap(), PointF::new(100.0, 140.0));
-        }
+        // Horizontal layout: path must route BELOW the node bounds.
+        let pts = loop_back_path(
+            PointF::new(300.0, 140.0),
+            PointF::new(100.0, 140.0),
+            true,
+            bounds,
+        );
+        let bottom = bounds.bottom();
+        let has_below = pts.iter().any(|p| p.y >= bottom);
+        assert!(has_below, "horizontal U-shape must route below the node");
+        // Endpoints preserved.
+        assert_eq!(*pts.first().unwrap(), PointF::new(300.0, 140.0));
+        assert_eq!(*pts.last().unwrap(), PointF::new(100.0, 140.0));
+    }
+
+    #[test]
+    fn loop_back_vertical_routes_left() {
+        let bounds = crate::geometry::RectF::new(
+            PointF::new(100.0, 100.0),
+            crate::geometry::SizeF::new(180.0, 80.0), // left=100, right=280
+        );
+        // Vertical layout: path must route to the LEFT of the node bounds.
+        let src = PointF::new(190.0, 300.0);
+        let dst = PointF::new(100.0, 140.0);
+        let pts = loop_back_path(src, dst, false, bounds);
+        let left = bounds.left().min(dst.x);
+        let has_left = pts.iter().any(|p| p.x <= left);
+        assert!(has_left, "vertical U-shape must route to the left of the node");
+        // Endpoints preserved.
+        assert_eq!(*pts.first().unwrap(), src);
+        assert_eq!(*pts.last().unwrap(), dst);
     }
 
     #[test]
@@ -544,5 +589,75 @@ mod tests {
         let pts = loop_back_path(src, PointF::new(100.0, 140.0), true, bounds);
         let max_y = pts.iter().map(|p| p.y).fold(0.0f32, f32::max);
         assert!(max_y > src.y, "path must go below the source point");
+    }
+
+    #[test]
+    fn loop_back_horizontal_has_no_right_detour() {
+        // Horizontal layout: src is to the right of all nodes.
+        // Path should go straight down — no rightward detour.
+        let bounds = crate::geometry::RectF::new(
+            PointF::new(100.0, 100.0),
+            crate::geometry::SizeF::new(180.0, 80.0),
+        );
+        let src = PointF::new(400.0, 140.0); // right of bounds (right=280)
+        let pts = loop_back_path(src, PointF::new(100.0, 140.0), true, bounds);
+        // 5 points: src, (src.x, bottom_y), (left_x, bottom_y), (left_x, dst.y), dst
+        assert_eq!(pts.len(), 5, "horizontal path should have 5 points (no right detour)");
+        // Second point should be directly below src (same x).
+        assert_eq!(pts[1].x, src.x, "second point should be directly below src");
+    }
+
+    #[test]
+    fn loop_back_vertical_uses_4_point_left_route() {
+        // Vertical layout: path routes LEFT → UP → RIGHT (4-point U-shape).
+        // left_x = min(bounds.left, dst.x) - left_margin - approach_offset
+        //        = min(100, 100) - 40 - 30 = 30
+        let bounds = crate::geometry::RectF::new(
+            PointF::new(100.0, 100.0),
+            crate::geometry::SizeF::new(180.0, 80.0), // left=100
+        );
+        let src = PointF::new(190.0, 300.0); // body bottom, inside Loop's x range
+        let dst = PointF::new(100.0, 140.0); // loop_in port on left side
+        let pts = loop_back_path(src, dst, false, bounds);
+        // 4 points: src, (left_x, src.y), (left_x, dst.y), dst
+        assert_eq!(pts.len(), 4, "vertical path should have 4 points (left→up→right)");
+        // Second point should be directly left of src (same y) — "left" segment.
+        assert_eq!(pts[1].y, src.y, "second point should be at same y as src");
+        // left_x = 100 - 40 - 30 = 30
+        assert_eq!(pts[1].x, 30.0, "second point x should be left of bounds");
+        // Third point should be at left_x, dst.y — "up" segment.
+        assert_eq!(pts[2].x, pts[1].x, "third point x should equal left_x");
+        assert_eq!(pts[2].y, dst.y, "third point y should equal dst.y");
+    }
+
+    #[test]
+    fn round_corners_preserves_endpoints_and_adds_points() {
+        // L-shape polyline: (0,0) → (100,0) → (100,100)
+        let raw = vec![PointF::new(0.0, 0.0), PointF::new(100.0, 0.0), PointF::new(100.0, 100.0)];
+        let rounded = round_corners(&raw, 12.0);
+        // Endpoints preserved.
+        assert_eq!(*rounded.first().unwrap(), PointF::new(0.0, 0.0));
+        assert_eq!(*rounded.last().unwrap(), PointF::new(100.0, 100.0));
+        // Rounded version has more points than raw (bend sampling).
+        assert!(rounded.len() > raw.len(), "rounded should have more points");
+    }
+
+    #[test]
+    fn round_corners_passthrough_for_short_polyline() {
+        // 2-point polyline → returned unchanged (no interior corners).
+        let raw = vec![PointF::new(0.0, 0.0), PointF::new(10.0, 10.0)];
+        let rounded = round_corners(&raw, 12.0);
+        assert_eq!(rounded, raw);
+    }
+
+    #[test]
+    fn round_corners_passthrough_for_zero_radius() {
+        let raw = vec![
+            PointF::new(0.0, 0.0),
+            PointF::new(100.0, 0.0),
+            PointF::new(100.0, 100.0),
+        ];
+        let rounded = round_corners(&raw, 0.0);
+        assert_eq!(rounded, raw);
     }
 }

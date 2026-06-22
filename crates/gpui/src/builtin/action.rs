@@ -35,18 +35,22 @@ impl IFlowNode for ActionNode {
     }
 
     fn get_view(&self, node: &Node, ctx: &mut NodeViewCtx) -> AnyElement {
+        let t = &ctx.theme;
         let visual = NodeVisual {
             label: label_of(node),
             desc: desc_of(node),
-            bg: gpui::rgb(0xffffff),
-            border: gpui::rgb(0xe2e8f0),
-            border_selected: gpui::rgb(0x6366f1),
-            text: gpui::rgb(0x1e293b),
-            subtext: gpui::rgb(0x64748b),
+            bg: t.node_bg,
+            border: t.node_border,
+            border_selected: t.node_border_selected,
+            text: t.node_text,
+            subtext: t.node_subtext,
             show_in: true,
             show_out: true,
-            in_color: gpui::rgb(0x6366f1),
-            out_color: gpui::rgb(0x22c55e),
+            in_color: t.node_in_dot,
+            in_ring: t.node_in_ring,
+            out_color: t.node_out_dot,
+            out_ring: t.node_out_ring,
+            port_bg: t.port_bg,
             pill: false,
         };
         let w = node.size.w * ctx.scale;
@@ -55,8 +59,8 @@ impl IFlowNode for ActionNode {
         render_node_card(&visual, w, h, ctx.scale, vertical, ctx.selected)
     }
 
-    fn get_panel(&self, node: &Node, _ctx: &mut NodeViewCtx) -> AnyElement {
-        render_simple_panel(node, "Action 节点")
+    fn get_panel(&self, node: &Node, ctx: &mut NodeViewCtx) -> AnyElement {
+        render_simple_panel(node, "Action 节点", &ctx.theme)
     }
 
     fn schema(&self) -> &NodeSchema {

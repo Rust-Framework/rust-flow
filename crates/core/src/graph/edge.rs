@@ -9,9 +9,10 @@ new_key_type! {
 }
 
 /// The path algorithm used to render an edge.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
 pub enum EdgeType {
     /// Cubic Bézier curve (default, free-flowing).
+    #[default]
     Bezier,
     /// Straight line between endpoints.
     Straight,
@@ -21,25 +22,14 @@ pub enum EdgeType {
     SmoothStep,
 }
 
-impl Default for EdgeType {
-    fn default() -> Self {
-        Self::Bezier
-    }
-}
-
 /// Semantic kind of an edge.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
 pub enum EdgeKind {
     /// A normal connection.
+    #[default]
     Normal,
     /// A loop-back edge (used by loop nodes to return to the loop head).
     LoopBack,
-}
-
-impl Default for EdgeKind {
-    fn default() -> Self {
-        Self::Normal
-    }
 }
 
 /// A directed edge connecting two nodes (optionally via specific ports).

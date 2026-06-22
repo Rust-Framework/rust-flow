@@ -45,6 +45,11 @@ use super::common::{desc_of, label_of, make_port, port_sizes, render_simple_pane
 /// 标题栏高度（逻辑坐标）。
 const TITLE_H: f32 = 36.0;
 
+/// 循环条件区域高度（逻辑坐标，固定值，不随节点尺寸拉伸）。
+///
+/// 节点总高度 = `TITLE_H + BODY_H`（由内容推导，非输入）。
+const BODY_H: f32 = 44.0;
+
 /// Loop 节点：循环体，结构化布局。
 ///
 /// - 纵向：标题栏 In(顶) + Done(底)，循环条件区 LoopBody(右) + LoopIn(左)
@@ -63,7 +68,7 @@ impl LoopNode {
     pub fn new() -> Self {
         Self {
             schema: NodeSchema::new("loop", "Loop")
-                .with_size(SizeF::new(220.0, 80.0)) // 36 + 44
+                .with_size(SizeF::new(220.0, TITLE_H + BODY_H))
                 // 所有端口 side 设为 Auto，实际 side 由 port_position 位置自动推导
                 // 主线 In→Done：纵向→上/下，横向→左/右（随方向变化）
                 // 循环体支线 LoopBody/LoopIn：两个方向均为 右/左（固定，向下绕圈回环）
@@ -83,19 +88,21 @@ impl IFlowNode for LoopNode {
     fn get_view(&self, node: &Node, ctx: &mut NodeViewCtx) -> AnyElement {
         let s = ctx.scale;
         let w = node.size.w * s;
-        let h = node.size.h * s;
+        // 使用固定高度，而非 node.size.h（保证内部布局独立性）
+        let h = (TITLE_H + BODY_H) * s;
         let title_h = TITLE_H * s;
-        let body_h = (node.size.h - TITLE_H) * s;
+        let body_h = BODY_H * s;
         let layout = ctx.layout;
+        let t = &ctx.theme;
 
         let label = label_of(node);
         let desc = desc_of(node).unwrap_or_else(|| "For each item".to_string());
 
         let (port_size, port_outer, port_outer_half) = port_sizes(s);
         let border_color = if ctx.selected {
-            gpui::rgb(0x3b82f6)
+            t.loop_border_selected
         } else {
-            gpui::rgb(0x93c5fd)
+            t.loop_border
         };
 
         // 外层容器（不使用 overflow_hidden，避免裁剪半外露的端口圆圈）
@@ -175,6 +182,7 @@ impl IFlowNode for LoopNode {
         let done_dot = gpui::rgb(0x64748b);
         let body_ring = gpui::rgb(0xbfdbfe);
         let body_dot = gpui::rgb(0x3b82f6);
+        let port_bg = gpui::rgb(0xffffff);
 
         match layout {
             LayoutDirection::Horizontal => {
@@ -186,6 +194,7 @@ impl IFlowNode for LoopNode {
                     port_size,
                     in_ring,
                     in_dot,
+                    port_bg,
                 ));
                 container = container.child(make_port(
                     right - port_outer_half,
@@ -194,6 +203,7 @@ impl IFlowNode for LoopNode {
                     port_size,
                     done_ring,
                     done_dot,
+                    port_bg,
                 ));
                 // 循环体支线：LoopBody 右 / LoopIn 左（循环条件区域中心 Y），向下绕圈回环
                 container = container.child(make_port(
@@ -203,6 +213,7 @@ impl IFlowNode for LoopNode {
                     port_size,
                     body_ring,
                     body_dot,
+                    port_bg,
                 ));
                 container = container.child(make_port(
                     left - port_outer_half,
@@ -211,6 +222,7 @@ impl IFlowNode for LoopNode {
                     port_size,
                     body_ring,
                     body_dot,
+                    port_bg,
                 ));
             }
             LayoutDirection::Vertical => {
@@ -222,6 +234,7 @@ impl IFlowNode for LoopNode {
                     port_size,
                     in_ring,
                     in_dot,
+                    port_bg,
                 ));
                 container = container.child(make_port(
                     mid_x - port_outer_half,
@@ -230,15 +243,19 @@ impl IFlowNode for LoopNode {
                     port_size,
                     done_ring,
                     done_dot,
+                    port_bg,
                 ));
-                // 循环体支线：LoopBody 右 / LoopIn 左（循环条件区域中心 Y），绕一圈回环
+                // 循环体支线：LoopBody 底部偏左（w*0.25），LoopIn 左侧
+                // LoopBody 与 Done 都在底部，错开位置避免重叠
+                let body_port_x = w * 0.25;
                 container = container.child(make_port(
-                    right - port_outer_half,
-                    body_mid_y - port_outer_half,
+                    body_port_x - port_outer_half,
+                    bottom - port_outer_half,
                     port_outer,
                     port_size,
                     body_ring,
                     body_dot,
+                    port_bg,
                 ));
                 container = container.child(make_port(
                     left - port_outer_half,
@@ -247,6 +264,7 @@ impl IFlowNode for LoopNode {
                     port_size,
                     body_ring,
                     body_dot,
+                    port_bg,
                 ));
             }
         }
@@ -254,8 +272,8 @@ impl IFlowNode for LoopNode {
         container.into_any_element()
     }
 
-    fn get_panel(&self, node: &Node, _ctx: &mut NodeViewCtx) -> AnyElement {
-        render_simple_panel(node, "Loop 节点（循环）")
+    fn get_panel(&self, node: &Node, ctx: &mut NodeViewCtx) -> AnyElement {
+        render_simple_panel(node, "Loop 节点（循环）", &ctx.theme)
     }
 
     fn schema(&self) -> &NodeSchema {
@@ -271,10 +289,11 @@ impl IFlowNode for LoopNode {
         let left = node.position.x;
         let right = node.position.x + node.size.w;
         let top = node.position.y;
-        let bottom = node.position.y + node.size.h;
+        // 使用固定高度，保证端口位置与实际渲染高度一致
+        let bottom = node.position.y + TITLE_H + BODY_H;
         let mid_x = node.position.x + node.size.w * 0.5;
         let title_mid_y = node.position.y + TITLE_H * 0.5;
-        let body_mid_y = node.position.y + TITLE_H + (node.size.h - TITLE_H) * 0.5;
+        let body_mid_y = node.position.y + TITLE_H + BODY_H * 0.5;
 
         match port_id.as_str() {
             // 主线 In→Done：纵向上进下出，横向左进右出
@@ -286,10 +305,15 @@ impl IFlowNode for LoopNode {
                 LayoutDirection::Horizontal => Some(PointF::new(right, title_mid_y)),
                 LayoutDirection::Vertical => Some(PointF::new(mid_x, bottom)),
             },
-            // 循环体主支线：两个方向固定为右出左入，向下绕圈回环
-            // 纵向：LoopBody 右 / LoopIn 左
-            // 横向：LoopBody 右 / LoopIn 左（与纵向一致）
-            "loop_body" => Some(PointF::new(right, body_mid_y)),
+            // 循环体支线：
+            // - 纵向：LoopBody 底部偏左（w*0.25），与 Done（mid_x）错开；LoopIn 左侧入
+            // - 横向：LoopBody 右侧出；LoopIn 左侧入（回环边从下绕回）
+            "loop_body" => match layout {
+                LayoutDirection::Horizontal => Some(PointF::new(right, body_mid_y)),
+                LayoutDirection::Vertical => {
+                    Some(PointF::new(node.position.x + node.size.w * 0.25, bottom))
+                }
+            },
             "loop_in" => Some(PointF::new(left, body_mid_y)),
             _ => None,
         }

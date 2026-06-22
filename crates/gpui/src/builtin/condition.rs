@@ -1,20 +1,24 @@
 //! Condition 节点：条件分支，结构化布局。
 //!
 //! **设计语义**：
-//! - 标题栏：In 入口 + Else 兜底出口（横向 Else 在右 / 纵向 Else 不在标题栏）
-//! - 条件项行：每个 If 条件对应一个出口
+//! - 标题栏：In 入口（仅输入，无输出）
+//! - 条件项行：if_0, if_1, ..., else（else 为最后一行兜底）
 //!
 //! **横向布局**：左进右出
 //! - In 在标题栏左侧中心
-//! - Else 在标题栏右侧中心（垂直居中）
 //! - if_i 在每个条件项行的右侧中心
-//! - 下一个节点左进右出（由 Auto side 自动推导）
+//! - else 在最后一行（兜底）的右侧中心
 //!
 //! **纵向布局**：上进下出
 //! - In 在标题栏顶部中心
-//! - 所有分支出口（else, if_0, if_1, ...）由底部出去，沿宽度均匀分布，不重叠
-//! - else 为最左侧出口端点
-//! - 下一个节点上进下出（由 Auto side 自动推导）
+//! - 所有分支出口（if_0, if_1, ..., else）由底部出去，沿宽度均匀分布，不重叠
+//! - else 为最右侧出口端点（兜底，排在所有 if 之后）
+//!
+//! **内部布局独立性**：
+//! - 条件项行高固定为 `ITEM_H`（不随节点尺寸拉伸）
+//! - 节点总高度 = `TITLE_H + ITEM_H * n_branches`（由内容推导，非输入）
+//! - 端口位置基于固定 `ITEM_H` 计算，与 `node.size.h` 无关
+//! - 排版引擎（dagre）通过 `nodesep`/`ranksep` + 节点尺寸自然完成分支对齐
 //!
 //! **数据格式**：
 //! ```json
@@ -30,10 +34,11 @@
 //! **布局**（横向，左进右出）：
 //! ```text
 //! ┌───────────────────────────────┐
-//! │[In]    ◆ Condition    [Else]→ │  标题栏 h=36
+//! │[In]        ◆ Condition        │  标题栏 h=TITLE_H
 //! ├───────────────────────────────┤
-//! │  If amount > 100       [if_0]→│  条件项 h=item_h
-//! │  If user.is_admin      [if_1]→│  条件项 h=item_h
+//! │  If amount > 100       [if_0]→│  条件项 h=ITEM_H
+//! │  If user.is_admin      [if_1]→│  条件项 h=ITEM_H
+//! │  Else                  [else]→│  兜底行 h=ITEM_H
 //! └───────────────────────────────┘
 //! ```
 //!
@@ -46,7 +51,7 @@
 //!      │ if user     │
 //!      │ else        │
 //!      └─┬──┬──┬────┘
-//!        ↓  ↓  ↓     底部均布出口（else 最左, if_0, if_1），不重叠
+//!        ↓  ↓  ↓     底部均布出口（if_0, if_1, else 最右），不重叠
 //! ```
 
 use gpui::{div, px, AnyElement, IntoElement, ParentElement, Styled};
@@ -62,10 +67,16 @@ use super::common::{label_of, make_port, port_sizes, render_simple_panel};
 /// 标题栏高度（逻辑坐标）。
 const TITLE_H: f32 = 36.0;
 
+/// 条件项行高（逻辑坐标，固定值，不随节点尺寸拉伸）。
+///
+/// 这是节点内部布局的基本单位：所有条件项行、端口位置均基于此常量计算，
+/// 与 `node.size.h` 无关。节点总高度由内容推导：`TITLE_H + ITEM_H * n_branches`。
+const ITEM_H: f32 = 36.0;
+
 /// Condition 节点：条件分支，结构化布局。
 ///
-/// - 横向：In 左 / Else 右（标题栏中心），if_i 右（条件行中心）
-/// - 纵向：In 上 / 所有分支（else + if_i）下，沿底部均匀分布不重叠，else 最左
+/// - 横向：In 左（标题栏），if_i 右（条件行），else 右（最后一行兜底）
+/// - 纵向：In 上（标题栏），所有分支（if_i + else）下，沿底部均匀分布，else 最右
 pub struct ConditionNode {
     schema: NodeSchema,
 }
@@ -78,9 +89,10 @@ impl Default for ConditionNode {
 
 impl ConditionNode {
     pub fn new() -> Self {
+        // 默认 2 条件 + 1 else：TITLE_H + ITEM_H * 3 = 36 + 108 = 144
         Self {
             schema: NodeSchema::new("condition", "Condition")
-                .with_size(SizeF::new(220.0, 144.0)) // 36 + 36*3（2 条件 + 1 else，纵向布局）
+                .with_size(SizeF::new(220.0, TITLE_H + ITEM_H * 3.0))
                 // 所有端口 side 设为 Auto，实际 side 由 port_position 位置自动推导
                 .with_port(PortSpec::new("in", PortDirection::In, PortSide::Auto))
                 .with_port(PortSpec::new("else", PortDirection::Out, PortSide::Auto))
@@ -119,17 +131,11 @@ fn n_branches(node: &Node) -> usize {
     get_conditions(node).len() + 1
 }
 
-/// 计算每个分支行的高度（逻辑坐标）。
+/// 节点由内容推导的高度。
 ///
-/// - 横向：可用高度均分给条件项行（不含 else，else 在标题栏）
-/// - 纵向：可用高度均分给所有分支行（含 else）
-fn item_height(node: &Node, layout: LayoutDirection) -> f32 {
-    let n_cond = get_conditions(node).len();
-    let n = match layout {
-        LayoutDirection::Horizontal => n_cond.max(1),
-        LayoutDirection::Vertical => n_branches(node).max(1),
-    };
-    (node.size.h - TITLE_H) / n as f32
+/// 横向和纵向一致：`TITLE_H + ITEM_H * n_branches`（else 占一行）。
+fn content_height(node: &Node) -> f32 {
+    TITLE_H + ITEM_H * n_branches(node) as f32
 }
 
 impl IFlowNode for ConditionNode {
@@ -140,34 +146,36 @@ impl IFlowNode for ConditionNode {
     fn get_view(&self, node: &Node, ctx: &mut NodeViewCtx) -> AnyElement {
         let s = ctx.scale;
         let w = node.size.w * s;
-        let h = node.size.h * s;
+        // 使用内容推导高度，而非 node.size.h（保证内部布局独立性）
+        let h = content_height(node) * s;
         let title_h = TITLE_H * s;
+        let item_h = ITEM_H * s;
         let conditions = get_conditions(node);
         let n_cond = conditions.len();
         let n_br = n_branches(node);
-        let item_h = item_height(node, ctx.layout) * s;
         let label = label_of(node);
         let layout = ctx.layout;
+        let t = &ctx.theme;
 
         let (port_size, port_outer, port_outer_half) = port_sizes(s);
         let border_color = if ctx.selected {
-            gpui::rgb(0xf97316)
+            t.cond_border_selected
         } else {
-            gpui::rgb(0xfdba74)
+            t.cond_border
         };
 
         // 端口颜色
-        let in_ring = gpui::rgb(0xc7d2fe);
-        let in_dot = gpui::rgb(0x6366f1);
-        let if_ring = gpui::rgb(0xfde68a);
-        let if_dot = gpui::rgb(0xf97316);
-        let else_ring = gpui::rgb(0xe2e8f0);
-        let else_dot = gpui::rgb(0x64748b);
+        let in_ring = t.cond_in_ring;
+        let in_dot = t.cond_in_dot;
+        let if_ring = t.cond_if_ring;
+        let if_dot = t.cond_if_dot;
+        let else_ring = t.cond_else_ring;
+        let else_dot = t.cond_else_dot;
 
         // 外层容器（不使用 overflow_hidden，避免裁剪半外露的端口圆圈）
         let mut container = div().relative().w(px(w)).h(px(h));
 
-        // 标题栏（橙色背景，顶部圆角对齐容器圆角）
+        // 标题栏（橙色背景，顶部圆角对齐容器圆角）— 仅 In 入口，无出口
         container = container.child(
             div()
                 .absolute()
@@ -175,7 +183,7 @@ impl IFlowNode for ConditionNode {
                 .left_0()
                 .w(px(w))
                 .h(px(title_h))
-                .bg(gpui::rgb(0xf97316))
+                .bg(t.cond_title_bg)
                 .rounded_t_lg()
                 .flex()
                 .items_center()
@@ -184,67 +192,63 @@ impl IFlowNode for ConditionNode {
                     div()
                         .text_size(px(14.0 * s))
                         .font_semibold()
-                        .text_color(gpui::rgb(0xffffff))
+                        .text_color(t.cond_title_text)
                         .child(label),
                 ),
         );
 
-        // 条件项行（浅橙背景）
+        // 条件项行（浅橙背景）— if_0, if_1, ...
         for (i, (_id, cond_label)) in conditions.iter().enumerate() {
             let item_top = title_h + item_h * i as f32;
-            // 横向布局：最后一行条件项需要底部圆角（else 在标题栏，不占行）
-            let is_last_row = matches!(layout, LayoutDirection::Horizontal)
-                && i == n_cond - 1;
             let mut row = div()
                 .absolute()
                 .left_0()
                 .top(px(item_top))
                 .w(px(w))
                 .h(px(item_h))
-                .bg(gpui::rgb(0xfff7ed))
+                .bg(t.cond_item_bg)
                 .border_t_1()
-                .border_color(gpui::rgb(0xfed7aa))
+                .border_color(t.cond_item_border)
                 .flex()
                 .items_center()
                 .px(px(12.0 * s))
                 .child(
                     div()
                         .text_size(px(12.0 * s))
-                        .text_color(gpui::rgb(0x9a3412))
+                        .text_color(t.cond_item_text)
                         .child(format!("If {}", cond_label)),
                 );
-            if is_last_row {
+            // 如果没有 else 行（理论上不会发生），最后一行需要底部圆角
+            if n_cond == n_br - 1 && i == n_cond - 1 && n_br == n_cond {
                 row = row.rounded_b_lg();
             }
             container = container.child(row);
         }
 
-        // 纵向布局时渲染 Else 兜底行（横向时 Else 在标题栏，无需单独行）
-        if matches!(layout, LayoutDirection::Vertical) {
-            let else_top = title_h + item_h * n_cond as f32;
-            container = container.child(
-                div()
-                    .absolute()
-                    .left_0()
-                    .top(px(else_top))
-                    .w(px(w))
-                    .h(px(item_h))
-                    .bg(gpui::rgb(0xffedd5))
-                    .border_t_1()
-                    .border_color(gpui::rgb(0xfed7aa))
-                    .rounded_b_lg()
-                    .flex()
-                    .items_center()
-                    .px(px(12.0 * s))
-                    .child(
-                        div()
-                            .text_size(px(12.0 * s))
-                            .font_semibold()
-                            .text_color(gpui::rgb(0x9a3412))
-                            .child("Else"),
-                    ),
-            );
-        }
+        // Else 兜底行（最后一行，浅橙偏暖背景，底部圆角）
+        let else_top = title_h + item_h * n_cond as f32;
+        container = container.child(
+            div()
+                .absolute()
+                .left_0()
+                .top(px(else_top))
+                .w(px(w))
+                .h(px(item_h))
+                .bg(t.cond_else_bg)
+                .border_t_1()
+                .border_color(t.cond_item_border)
+                .rounded_b_lg()
+                .flex()
+                .items_center()
+                .px(px(12.0 * s))
+                .child(
+                    div()
+                        .text_size(px(12.0 * s))
+                        .font_semibold()
+                        .text_color(t.cond_item_text)
+                        .child("Else"),
+                ),
+        );
 
         // 边框（覆盖整个节点，圆角）
         container = container.child(
@@ -271,16 +275,7 @@ impl IFlowNode for ConditionNode {
                     port_size,
                     in_ring,
                     in_dot,
-                ));
-
-                // Else 端口（标题栏右侧中心）— 灰色（兜底）
-                container = container.child(make_port(
-                    w - port_outer_half,
-                    title_h * 0.5 - port_outer_half,
-                    port_outer,
-                    port_size,
-                    else_ring,
-                    else_dot,
+                    t.port_bg,
                 ));
 
                 // if_i 端口（条件项右侧中心）— 橙色
@@ -293,8 +288,21 @@ impl IFlowNode for ConditionNode {
                         port_size,
                         if_ring,
                         if_dot,
+                        t.port_bg,
                     ));
                 }
+
+                // else 端口（最后一行右侧中心）— 灰色（兜底）
+                let else_port_y = title_h + item_h * (n_cond as f32 + 0.5) - port_outer_half;
+                container = container.child(make_port(
+                    w - port_outer_half,
+                    else_port_y,
+                    port_outer,
+                    port_size,
+                    else_ring,
+                    else_dot,
+                    t.port_bg,
+                ));
             }
             LayoutDirection::Vertical => {
                 // In 端口（标题栏顶部中心）— 靛蓝色
@@ -305,11 +313,27 @@ impl IFlowNode for ConditionNode {
                     port_size,
                     in_ring,
                     in_dot,
+                    t.port_bg,
                 ));
 
-                // 底部均匀分布出口：else 最左（index 0），if_i 依次向右
-                // else 端口 — 灰色
-                let else_t = 0.5 / n_br as f32;
+                // 底部均匀分布出口：if_0 最左，..., else 最右
+                // if_i 端口 — 橙色
+                for (i, _cond) in conditions.iter().enumerate() {
+                    let if_t = (i as f32 + 0.5) / n_br as f32;
+                    let port_x = w * if_t - port_outer_half;
+                    container = container.child(make_port(
+                        port_x,
+                        h - port_outer_half,
+                        port_outer,
+                        port_size,
+                        if_ring,
+                        if_dot,
+                        t.port_bg,
+                    ));
+                }
+
+                // else 端口（最右）— 灰色（兜底）
+                let else_t = (n_cond as f32 + 0.5) / n_br as f32;
                 let else_x = w * else_t - port_outer_half;
                 container = container.child(make_port(
                     else_x,
@@ -318,29 +342,16 @@ impl IFlowNode for ConditionNode {
                     port_size,
                     else_ring,
                     else_dot,
+                    t.port_bg,
                 ));
-
-                // if_i 端口 — 橙色
-                for (i, _cond) in conditions.iter().enumerate() {
-                    let t = (i as f32 + 1.5) / n_br as f32;
-                    let port_x = w * t - port_outer_half;
-                    container = container.child(make_port(
-                        port_x,
-                        h - port_outer_half,
-                        port_outer,
-                        port_size,
-                        if_ring,
-                        if_dot,
-                    ));
-                }
             }
         }
 
         container.into_any_element()
     }
 
-    fn get_panel(&self, node: &Node, _ctx: &mut NodeViewCtx) -> AnyElement {
-        render_simple_panel(node, "Condition 节点（条件分支）")
+    fn get_panel(&self, node: &Node, ctx: &mut NodeViewCtx) -> AnyElement {
+        render_simple_panel(node, "Condition 节点（条件分支）", &ctx.theme)
     }
 
     fn schema(&self) -> &NodeSchema {
@@ -354,11 +365,12 @@ impl IFlowNode for ConditionNode {
         layout: LayoutDirection,
     ) -> Option<PointF> {
         let n_br = n_branches(node);
-        let item_h = item_height(node, layout);
+        let n_cond = get_conditions(node).len();
         let left = node.position.x;
         let right = node.position.x + node.size.w;
         let top = node.position.y;
-        let bottom = node.position.y + node.size.h;
+        // 使用内容推导高度，保证端口位置与实际渲染高度一致
+        let bottom = node.position.y + content_height(node);
         let mid_x = node.position.x + node.size.w * 0.5;
         let title_mid_y = node.position.y + TITLE_H * 0.5;
 
@@ -368,29 +380,32 @@ impl IFlowNode for ConditionNode {
                 LayoutDirection::Horizontal => Some(PointF::new(left, title_mid_y)),
                 LayoutDirection::Vertical => Some(PointF::new(mid_x, top)),
             },
-            // Else 兜底出口：
-            // 横向 → 标题栏右侧中心（垂直居中）
-            // 纵向 → 底部最左侧出口端点
+            // Else 兜底出口（最后一行/最右）：
+            // 横向 → 最后一行右侧中心
+            // 纵向 → 底部最右侧出口端点
             "else" => match layout {
-                LayoutDirection::Horizontal => Some(PointF::new(right, title_mid_y)),
+                LayoutDirection::Horizontal => {
+                    let y = node.position.y + TITLE_H + ITEM_H * (n_cond as f32 + 0.5);
+                    Some(PointF::new(right, y))
+                }
                 LayoutDirection::Vertical => {
-                    let t = 0.5 / n_br as f32;
+                    let t = (n_cond as f32 + 0.5) / n_br as f32;
                     let x = left + node.size.w * t;
                     Some(PointF::new(x, bottom))
                 }
             },
             // if_i 条件出口：
             // 横向 → 条件行右侧中心
-            // 纵向 → 底部均匀分布（else 之后，index = i + 1）
+            // 纵向 → 底部均匀分布（if_0 最左，..., if_{n-1}，else 最右）
             pid if pid.starts_with("if_") => {
                 let idx: usize = pid[3..].parse().ok()?;
                 match layout {
                     LayoutDirection::Horizontal => {
-                        let y = node.position.y + TITLE_H + item_h * (idx as f32 + 0.5);
+                        let y = node.position.y + TITLE_H + ITEM_H * (idx as f32 + 0.5);
                         Some(PointF::new(right, y))
                     }
                     LayoutDirection::Vertical => {
-                        let t = (idx as f32 + 1.5) / n_br as f32;
+                        let t = (idx as f32 + 0.5) / n_br as f32;
                         let x = left + node.size.w * t;
                         Some(PointF::new(x, bottom))
                     }
@@ -398,5 +413,13 @@ impl IFlowNode for ConditionNode {
             }
             _ => None,
         }
+    }
+
+    /// Condition 节点的实际渲染高度随条件项数量变化：
+    /// `TITLE_H + ITEM_H * n_branches`（n_branches = 条件数 + 1 个 else）。
+    ///
+    /// 宽度保持 `node.size.w`（由 schema default_size 或创建时指定）。
+    fn content_size(&self, node: &Node) -> SizeF {
+        SizeF::new(node.size.w, content_height(node))
     }
 }

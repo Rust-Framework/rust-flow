@@ -1,6 +1,8 @@
-//! 工具栏：左下角浮动面板，提供缩放、视图、布局方向、边类型、网格开关。
+//! 工具栏：左下角浮动面板，提供缩放、视图、布局方向、边类型、网格开关、
+//! 拖拽开关、主题切换。
 //!
-//! 工具栏不受视口缩放影响（在内容层之外）。
+//! 工具栏不受视口缩放影响（在内容层之外）。所有颜色取自 [`Theme`](crate::theme::Theme)，
+//! 支持亮色/暗色主题切换。
 
 use gpui::{
     div, px, Context, InteractiveElement, IntoElement, MouseButton, ParentElement, Styled,
@@ -11,6 +13,14 @@ use rust_agent_flow::{EdgeType, PointF, RectF, SizeF, Viewport};
 
 use super::flow_editor::{FlowEditorView, LayoutDirection};
 use super::viewport;
+
+/// 透明色（用于未激活 toggle 的占位背景）。
+const TRANSPARENT: gpui::Rgba = gpui::Rgba {
+    r: 1.0,
+    g: 1.0,
+    b: 1.0,
+    a: 0.0,
+};
 
 impl FlowEditorView {
     /// 放大（以视口可见区域中心为锚点）。
@@ -63,14 +73,23 @@ impl FlowEditorView {
         cx.notify();
     }
 
+    /// 切换拖拽开关。
+    pub(crate) fn toggle_drag(&mut self, cx: &mut Context<Self>) {
+        self.drag_enabled = !self.drag_enabled;
+        cx.notify();
+    }
+
     /// 渲染工具栏：左下角横向浮动面板。
     ///
-    /// 不受缩放影响（在内容层之外）。
+    /// 不受缩放影响（在内容层之外）。所有颜色取自主题。
     pub(crate) fn render_toolbar(&self, cx: &Context<Self>) -> impl IntoElement {
         let scale_pct = (self.viewport.scale * 100.0) as i32;
+        let t = self.theme;
 
         let edge_type = self.default_edge_type;
         let show_grid = self.show_grid;
+        let drag_enabled = self.drag_enabled;
+        let is_dark = t.is_dark;
 
         div()
             .absolute()
@@ -81,9 +100,9 @@ impl FlowEditorView {
             .items_center()
             .gap_0p5()
             .rounded_lg()
-            .bg(gpui::rgba(0xffffffee))
+            .bg(t.toolbar_bg)
             .border_1()
-            .border_color(gpui::rgb(0xe2e8f0))
+            .border_color(t.toolbar_border)
             .shadow_lg()
             .p_1()
             // 缩放百分比 + 放大/缩小
@@ -96,11 +115,11 @@ impl FlowEditorView {
                     .w(px(28.0))
                     .h(px(28.0))
                     .rounded_md()
-                    .hover(|s| s.bg(gpui::rgb(0xf1f5f9)))
-                    .active(|s| s.bg(gpui::rgb(0xe2e8f0)))
+                    .hover(|s| s.bg(t.toolbar_hover_bg))
+                    .active(|s| s.bg(t.toolbar_active_bg))
                     .text_xs()
                     .font_medium()
-                    .text_color(gpui::rgb(0x475569))
+                    .text_color(t.toolbar_text)
                     .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, window, cx| {
                         this.zoom_in(window, cx);
                     }))
@@ -116,7 +135,7 @@ impl FlowEditorView {
                     .justify_center()
                     .text_xs()
                     .font_medium()
-                    .text_color(gpui::rgb(0x64748b))
+                    .text_color(t.toolbar_subtext)
                     .child(format!("{}%", scale_pct)),
             )
             .child(
@@ -128,23 +147,18 @@ impl FlowEditorView {
                     .w(px(28.0))
                     .h(px(28.0))
                     .rounded_md()
-                    .hover(|s| s.bg(gpui::rgb(0xf1f5f9)))
-                    .active(|s| s.bg(gpui::rgb(0xe2e8f0)))
+                    .hover(|s| s.bg(t.toolbar_hover_bg))
+                    .active(|s| s.bg(t.toolbar_active_bg))
                     .text_sm()
                     .font_medium()
-                    .text_color(gpui::rgb(0x475569))
+                    .text_color(t.toolbar_text)
                     .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, window, cx| {
                         this.zoom_out(window, cx);
                     }))
                     .child("\u{2212}"), // minus
             )
             // 分隔线
-            .child(
-                div()
-                    .w(px(1.0))
-                    .h(px(20.0))
-                    .bg(gpui::rgb(0xe2e8f0)),
-            )
+            .child(divider(t.toolbar_divider))
             // 适应视图 / 重置
             .child(
                 div()
@@ -155,11 +169,11 @@ impl FlowEditorView {
                     .w(px(28.0))
                     .h(px(28.0))
                     .rounded_md()
-                    .hover(|s| s.bg(gpui::rgb(0xf1f5f9)))
-                    .active(|s| s.bg(gpui::rgb(0xe2e8f0)))
+                    .hover(|s| s.bg(t.toolbar_hover_bg))
+                    .active(|s| s.bg(t.toolbar_active_bg))
                     .text_sm()
                     .font_medium()
-                    .text_color(gpui::rgb(0x475569))
+                    .text_color(t.toolbar_text)
                     .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, _, cx| {
                         this.fit_view(cx);
                     }))
@@ -174,23 +188,18 @@ impl FlowEditorView {
                     .w(px(28.0))
                     .h(px(28.0))
                     .rounded_md()
-                    .hover(|s| s.bg(gpui::rgb(0xf1f5f9)))
-                    .active(|s| s.bg(gpui::rgb(0xe2e8f0)))
+                    .hover(|s| s.bg(t.toolbar_hover_bg))
+                    .active(|s| s.bg(t.toolbar_active_bg))
                     .text_sm()
                     .font_medium()
-                    .text_color(gpui::rgb(0x475569))
+                    .text_color(t.toolbar_text)
                     .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, _, cx| {
                         this.reset_view(cx);
                     }))
                     .child("\u{27F3}"), // reset
             )
             // 分隔线
-            .child(
-                div()
-                    .w(px(1.0))
-                    .h(px(20.0))
-                    .bg(gpui::rgb(0xe2e8f0)),
-            )
+            .child(divider(t.toolbar_divider))
             // 布局方向切换
             .child(
                 div()
@@ -202,23 +211,23 @@ impl FlowEditorView {
                     .h(px(28.0))
                     .rounded_md()
                     .bg(if self.layout_direction == LayoutDirection::Horizontal {
-                        gpui::rgb(0x6366f1)
+                        t.toolbar_accent
                     } else {
-                        gpui::Rgba { r: 1.0, g: 1.0, b: 1.0, a: 0.0 }
+                        TRANSPARENT
                     })
                     .hover(|s| {
                         s.bg(if self.layout_direction == LayoutDirection::Horizontal {
-                            gpui::rgb(0x6366f1)
+                            t.toolbar_accent
                         } else {
-                            gpui::rgb(0xf1f5f9)
+                            t.toolbar_hover_bg
                         })
                     })
                     .text_xs()
                     .font_medium()
                     .text_color(if self.layout_direction == LayoutDirection::Horizontal {
-                        gpui::rgb(0xffffff)
+                        t.toolbar_accent_text
                     } else {
-                        gpui::rgb(0x475569)
+                        t.toolbar_text
                     })
                     .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, _, cx| {
                         this.set_layout_direction(LayoutDirection::Horizontal, cx);
@@ -235,23 +244,23 @@ impl FlowEditorView {
                     .h(px(28.0))
                     .rounded_md()
                     .bg(if self.layout_direction == LayoutDirection::Vertical {
-                        gpui::rgb(0x6366f1)
+                        t.toolbar_accent
                     } else {
-                        gpui::Rgba { r: 1.0, g: 1.0, b: 1.0, a: 0.0 }
+                        TRANSPARENT
                     })
                     .hover(|s| {
                         s.bg(if self.layout_direction == LayoutDirection::Vertical {
-                            gpui::rgb(0x6366f1)
+                            t.toolbar_accent
                         } else {
-                            gpui::rgb(0xf1f5f9)
+                            t.toolbar_hover_bg
                         })
                     })
                     .text_xs()
                     .font_medium()
                     .text_color(if self.layout_direction == LayoutDirection::Vertical {
-                        gpui::rgb(0xffffff)
+                        t.toolbar_accent_text
                     } else {
-                        gpui::rgb(0x475569)
+                        t.toolbar_text
                     })
                     .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, _, cx| {
                         this.set_layout_direction(LayoutDirection::Vertical, cx);
@@ -259,12 +268,7 @@ impl FlowEditorView {
                     .child("\u{2195}"), // ↕
             )
             // 分隔线
-            .child(
-                div()
-                    .w(px(1.0))
-                    .h(px(20.0))
-                    .bg(gpui::rgb(0xe2e8f0)),
-            )
+            .child(divider(t.toolbar_divider))
             // 边类型选择（紧凑下拉式）
             .child(
                 div()
@@ -276,17 +280,17 @@ impl FlowEditorView {
                     .h(px(28.0))
                     .rounded_md()
                     .bg(if matches!(edge_type, EdgeType::SmoothStep) {
-                        gpui::rgb(0xede9fe)
+                        t.toolbar_toggle_bg
                     } else {
-                        gpui::Rgba { r: 1.0, g: 1.0, b: 1.0, a: 0.0 }
+                        TRANSPARENT
                     })
-                    .hover(|s| s.bg(gpui::rgb(0xf8fafc)))
+                    .hover(|s| s.bg(t.toolbar_toggle_hover_bg))
                     .text_xs()
                     .font_medium()
                     .text_color(if matches!(edge_type, EdgeType::SmoothStep) {
-                        gpui::rgb(0x6366f1)
+                        t.toolbar_toggle_text
                     } else {
-                        gpui::rgb(0x64748b)
+                        t.toolbar_subtext
                     })
                     .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, _, cx| {
                         // 循环切换边类型，同时更新所有已有边
@@ -310,12 +314,7 @@ impl FlowEditorView {
                     }),
             )
             // 分隔线
-            .child(
-                div()
-                    .w(px(1.0))
-                    .h(px(20.0))
-                    .bg(gpui::rgb(0xe2e8f0)),
-            )
+            .child(divider(t.toolbar_divider))
             // 点阵背景开关
             .child(
                 div()
@@ -327,17 +326,17 @@ impl FlowEditorView {
                     .h(px(28.0))
                     .rounded_md()
                     .bg(if show_grid {
-                        gpui::rgb(0xede9fe)
+                        t.toolbar_toggle_bg
                     } else {
-                        gpui::Rgba { r: 1.0, g: 1.0, b: 1.0, a: 0.0 }
+                        TRANSPARENT
                     })
-                    .hover(|s| s.bg(gpui::rgb(0xf8fafc)))
+                    .hover(|s| s.bg(t.toolbar_toggle_hover_bg))
                     .text_xs()
                     .font_medium()
                     .text_color(if show_grid {
-                        gpui::rgb(0x6366f1)
+                        t.toolbar_toggle_text
                     } else {
-                        gpui::rgb(0x64748b)
+                        t.toolbar_subtext
                     })
                     .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, _, cx| {
                         this.show_grid = !this.show_grid;
@@ -345,5 +344,60 @@ impl FlowEditorView {
                     }))
                     .child("\u{25A6}"), // ▦ grid symbol
             )
+            // 拖拽开关
+            .child(
+                div()
+                    .id("tb-drag")
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .w(px(28.0))
+                    .h(px(28.0))
+                    .rounded_md()
+                    .bg(if drag_enabled {
+                        t.toolbar_toggle_bg
+                    } else {
+                        TRANSPARENT
+                    })
+                    .hover(|s| s.bg(t.toolbar_toggle_hover_bg))
+                    .text_xs()
+                    .font_medium()
+                    .text_color(if drag_enabled {
+                        t.toolbar_toggle_text
+                    } else {
+                        t.toolbar_subtext
+                    })
+                    .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, _, cx| {
+                        this.toggle_drag(cx);
+                    }))
+                    .child("\u{270E}"), // ✎ drag/move symbol
+            )
+            // 分隔线
+            .child(divider(t.toolbar_divider))
+            // 主题切换
+            .child(
+                div()
+                    .id("tb-theme")
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .w(px(28.0))
+                    .h(px(28.0))
+                    .rounded_md()
+                    .hover(|s| s.bg(t.toolbar_hover_bg))
+                    .active(|s| s.bg(t.toolbar_active_bg))
+                    .text_sm()
+                    .font_medium()
+                    .text_color(t.toolbar_text)
+                    .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, _, cx| {
+                        this.toggle_theme(cx);
+                    }))
+                    .child(if is_dark { "\u{2600}" } else { "\u{263D}" }), // ☀ light / ☽ dark
+            )
     }
+}
+
+/// 工具栏分隔线。
+fn divider(color: gpui::Rgba) -> gpui::Div {
+    div().w(px(1.0)).h(px(20.0)).bg(color)
 }

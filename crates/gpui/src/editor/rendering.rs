@@ -10,7 +10,7 @@
 //!（上进下出），无论主布局方向如何。回环边（目标端口为 `loop_in`）
 //! 使用 `loop_back_path` 向下绕过 Loop 节点 + 循环体的组合边界。
 
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use gpui::{canvas, div, px, IntoElement, ParentElement, Point, Styled};
@@ -39,44 +39,8 @@ enum EdgeRender {
         dst: PointF,
         horizontal: bool,
         node_bounds: RectF,
+        edge_type: EdgeType,
     },
-}
-
-/// 收集每个 Loop 节点关联的循环体节点组。
-///
-/// 循环体节点 = `loop_body` 出口的目标 + 从这些节点沿前向边可达的节点
-///（排除通过 `loop_in` 回连的边和回到 Loop 节点的边）。
-fn collect_loop_body_groups(graph: &FlowGraph) -> HashMap<NodeId, HashSet<NodeId>> {
-    let mut groups: HashMap<NodeId, HashSet<NodeId>> = HashMap::new();
-
-    // 找到所有 loop_body 边，按源节点（Loop 节点）分组
-    for edge in graph.edges() {
-        if edge.source_port.as_deref() == Some("loop_body") {
-            groups.entry(edge.source).or_default().insert(edge.target);
-        }
-    }
-
-    // BFS 扩展每组：沿前向边可达的节点都是循环体的一部分
-    for (loop_node, body_nodes) in groups.iter_mut() {
-        let mut queue: VecDeque<NodeId> = body_nodes.iter().copied().collect();
-        while let Some(nid) = queue.pop_front() {
-            for edge in graph.out_edges(nid) {
-                // 跳过回环边（到 loop_in）
-                if edge.target_port.as_deref() == Some("loop_in") {
-                    continue;
-                }
-                // 跳过回到 Loop 节点的边（如 done）
-                if edge.target == *loop_node {
-                    continue;
-                }
-                if body_nodes.insert(edge.target) {
-                    queue.push_back(edge.target);
-                }
-            }
-        }
-    }
-
-    groups
 }
 
 /// 计算 Loop 节点 + 其所有循环体节点的组合边界。
@@ -97,7 +61,12 @@ fn compute_loop_bounds(graph: &FlowGraph, loop_node: NodeId, body_nodes: &HashSe
     bounds.unwrap_or_default()
 }
 
-/// 计算边的端点，循环体节点强制使用纵向端口（上进下出）。
+/// 计算边的端点。
+///
+/// **端口策略**（与布局方向协同，减少拐弯）：
+/// - **纵向布局**：body 节点强制 Top/Bottom（垂直子流），与 Loop 的 Bottom→Top 形成 opposite 配对
+/// - **横向布局**：body 节点用默认 Left/Right（水平子流），与 Loop 的 Right→Left 形成 opposite 配对；
+///   回环边 src 例外，强制 Bottom（回环边从下方绕行）
 fn compute_edge_endpoints(
     edge: &Edge,
     graph: &FlowGraph,
@@ -118,9 +87,19 @@ fn compute_edge_endpoints(
 
     let src_is_body = body_nodes.contains(&edge.source);
     let dst_is_body = body_nodes.contains(&edge.target);
+    let is_loop_back = edge.target_port.as_deref() == Some("loop_in");
 
-    // 源端点：循环体节点强制 Bottom，其他用 resolve_port
-    let (src, src_side) = if src_is_body {
+    // 纵向布局：body 节点始终强制 Top/Bottom（垂直子流）
+    // 横向布局：仅回环边 src 强制 Bottom（回环边从下方绕行），其他用默认 Left/Right
+    let force_src_bottom = src_is_body
+        && match layout {
+            LayoutDirection::Vertical => true,
+            LayoutDirection::Horizontal => is_loop_back,
+        };
+    let force_dst_top = dst_is_body && matches!(layout, LayoutDirection::Vertical);
+
+    // 源端点
+    let (src, src_side) = if force_src_bottom {
         (port_position_by_side(src_node, PortSide::Bottom), PortSide::Bottom)
     } else {
         match edge.source_port.as_deref() {
@@ -129,8 +108,8 @@ fn compute_edge_endpoints(
         }
     };
 
-    // 目标端点：循环体节点强制 Top，其他用 resolve_port
-    let (dst, dst_side) = if dst_is_body {
+    // 目标端点
+    let (dst, dst_side) = if force_dst_top {
         (port_position_by_side(dst_node, PortSide::Top), PortSide::Top)
     } else {
         match edge.target_port.as_deref() {
@@ -151,17 +130,20 @@ impl FlowEditorView {
     /// 渲染所有边（canvas paint），使用**逻辑坐标** + PathBuilder 变换。
     ///
     /// 边端点通过 [`compute_edge_endpoints`] 计算：
-    /// - 循环体节点强制纵向端口（Top 进 / Bottom 出）
-    /// - 回环边（target_port == "loop_in"）使用 `loop_back_path` 向下绕过
-    /// - 其他边使用 `edge_endpoints` 默认逻辑
+    /// - 纵向布局：body 节点强制 Top/Bottom（垂直子流）
+    /// - 横向布局：body 节点用默认 Left/Right（水平子流），回环边 src 例外（Bottom）
+    /// - 回环边（target_port == "loop_in"）使用 `loop_back_path` 向下/向左绕过
     pub(crate) fn render_edges(&self) -> impl IntoElement {
         let s = self.scale();
         let (src_side_default, dst_side_default) = self.port_sides();
         let layout = self.layout_direction;
         let registry = self.registry.clone();
+        let edge_default_color = self.theme.edge_default;
+        let edge_loop_back_color = self.theme.edge_loop_back;
+        let grid_dot_color = self.theme.grid_dot;
 
         // 收集循环体节点分组
-        let body_groups = collect_loop_body_groups(&self.graph);
+        let body_groups = self.graph.loop_body_groups();
         let all_body_nodes: HashSet<NodeId> =
             body_groups.values().flat_map(|s| s.iter().copied()).collect();
 
@@ -197,6 +179,7 @@ impl FlowEditorView {
                         dst,
                         horizontal: matches!(layout, LayoutDirection::Horizontal),
                         node_bounds,
+                        edge_type: edge.edge_type,
                     }
                 } else {
                     EdgeRender::Normal {
@@ -237,25 +220,28 @@ impl FlowEditorView {
                     px(offset_y + bounds.origin.y.as_f32()),
                 );
                 if show_grid {
-                    paint_grid(bounds, s, total_offset, window);
+                    paint_grid(bounds, s, total_offset, grid_dot_color, window);
                 }
                 for er in &edge_renders {
                     match er {
                         EdgeRender::Normal { src, dst, src_side, dst_side, edge_type } => {
                             paint_edge_scaled(
-                                *src, *dst, *src_side, *dst_side, *edge_type, s, total_offset, window,
+                                *src, *dst, *src_side, *dst_side, *edge_type, s, total_offset,
+                                edge_default_color, window,
                             );
                         }
-                        EdgeRender::LoopBack { src, dst, horizontal, node_bounds } => {
+                        EdgeRender::LoopBack { src, dst, horizontal, node_bounds, edge_type } => {
                             paint_loop_back_edge(
-                                *src, *dst, *horizontal, *node_bounds, s, total_offset, window,
+                                *src, *dst, *horizontal, *node_bounds, *edge_type, s, total_offset,
+                                edge_loop_back_color, window,
                             );
                         }
                     }
                 }
                 if let Some((src, dst, src_side, dst_side, edge_type)) = drawing {
                     paint_edge_scaled(
-                        src, dst, src_side, dst_side, edge_type, s, total_offset, window,
+                        src, dst, src_side, dst_side, edge_type, s, total_offset,
+                        edge_default_color, window,
                     );
                 }
             },
@@ -273,9 +259,10 @@ impl FlowEditorView {
             LayoutDirection::Horizontal => rust_agent_flow::LayoutDirection::Horizontal,
             LayoutDirection::Vertical => rust_agent_flow::LayoutDirection::Vertical,
         };
+        let theme = self.theme;
 
         // 收集循环体节点（与 render_edges 保持一致）
-        let body_groups = collect_loop_body_groups(&self.graph);
+        let body_groups = self.graph.loop_body_groups();
         let all_body_nodes: HashSet<NodeId> =
             body_groups.values().flat_map(|s| s.iter().copied()).collect();
 
@@ -293,7 +280,8 @@ impl FlowEditorView {
                     .selected(is_selected)
                     .with_scale(s)
                     .with_layout(layout)
-                    .with_body_mode(is_body);
+                    .with_body_mode(is_body)
+                    .with_theme(theme);
 
                 div()
                     .absolute()
@@ -309,7 +297,9 @@ impl FlowEditorView {
     pub(crate) fn render_panel(&self) -> Option<gpui::AnyElement> {
         let node = self.selected.and_then(|id| self.graph.node(id).cloned())?;
         let flow_node = self.registry.get(&node.kind);
-        let panel = PanelView::new(node).with_flow_node_opt(flow_node);
+        let panel = PanelView::new(node)
+            .with_flow_node_opt(flow_node)
+            .with_theme(self.theme);
         Some(
             div()
                 .absolute()

@@ -1,24 +1,27 @@
 //! 点阵背景渲染。
 //!
-//! 性能优化（参考 ReactFlow / tldraw 成熟方案）：
-//! - 所有点收集到**单个 fill path**，一次 `paint_path` 提交，减少 draw call。
-//! - 使用 `move_to` / `line_to` 显式构造矩形子路径（避免 `add_polygon` 在
-//!   多子路径 fill 下的渲染缺陷）。
-//! - 自适应间距限制可见点数量，保证平移时帧率稳定。
+//! 每个点作为独立的 fill path 单独绘制，避免多子路径 fill 在某些
+//! lyon FillTessellator 实现下的渲染缺陷。点为固定屏幕尺寸（2px 半径），
+//! 间距随缩放变化。自适应间距限制可见点数量，保证平移时帧率稳定。
 
-use gpui::{px, Bounds, PathBuilder, Point, Pixels, Window};
+use gpui::{px, Bounds, PathBuilder, Point, Pixels, Rgba, Window};
 
 /// 点阵背景间距（逻辑坐标）。
 pub(crate) const GRID_SPACING: f32 = 40.0;
 
 /// 绘制点阵背景。
 ///
-/// 点为固定屏幕尺寸（1.5px 半径），间距随缩放变化。自适应间距：当屏幕
+/// 点为固定屏幕尺寸（2px 半径），间距随缩放变化。自适应间距：当屏幕
 /// 间距 < 20px 时将逻辑间距翻倍，限制点数量上限，避免低缩放时点爆炸。
+///
+/// 每个点单独构造 fill path 并 paint，确保渲染可靠性。
+///
+/// `dot_color` 来自主题，支持亮色/暗色主题切换。
 pub(crate) fn paint_grid(
     bounds: Bounds<Pixels>,
     scale: f32,
     offset: Point<Pixels>,
+    dot_color: Rgba,
     window: &mut Window,
 ) {
     let w = bounds.size.width.as_f32();
@@ -46,34 +49,26 @@ pub(crate) fn paint_grid(
     let start_x = (min_lx / spacing).floor() * spacing;
     let start_y = (min_ly / spacing).floor() * spacing;
 
-    let dot_color = gpui::rgb(0x94a3b8); // slate-400，在 0xf8fafc 背景上有足够对比度
-    let dot_r = 2.0_f32;
+    let dot_r = 1.5_f32;
 
-    // 单个 fill path 收集所有点，一次提交。
-    let mut path = PathBuilder::fill();
-    let mut count: usize = 0;
     let mut gy = start_y;
     while gy <= max_ly {
         let mut gx = start_x;
         while gx <= max_lx {
             let sx = gx * scale + ox;
             let sy = gy * scale + oy;
-            // 显式构造矩形子路径（move_to + line_to + 闭合）。
-            // 比 add_polygon 更可靠：确保每个子路径被正确加入 fill。
-            path.move_to(Point::new(px(sx - dot_r), px(sy - dot_r)));
-            path.line_to(Point::new(px(sx + dot_r), px(sy - dot_r)));
-            path.line_to(Point::new(px(sx + dot_r), px(sy + dot_r)));
-            path.line_to(Point::new(px(sx - dot_r), px(sy + dot_r)));
-            path.line_to(Point::new(px(sx - dot_r), px(sy - dot_r)));
-            count += 1;
+            // 每个点单独绘制，避免多子路径 fill 的渲染问题。
+            let mut path = PathBuilder::fill();
+            path.move_to(Point::new(px(sx - dot_r), px(sy)));
+            path.line_to(Point::new(px(sx), px(sy - dot_r)));
+            path.line_to(Point::new(px(sx + dot_r), px(sy)));
+            path.line_to(Point::new(px(sx), px(sy + dot_r)));
+            path.close();
+            if let Ok(path) = path.build() {
+                window.paint_path(path, dot_color);
+            }
             gx += spacing;
         }
         gy += spacing;
-    }
-
-    if count > 0 {
-        if let Ok(path) = path.build() {
-            window.paint_path(path, dot_color);
-        }
     }
 }

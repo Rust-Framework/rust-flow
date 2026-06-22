@@ -17,9 +17,10 @@ use super::viewport;
 /// 编辑器交互状态机。
 ///
 /// 任意时刻只处于一种状态，鼠标事件根据当前状态分发处理。
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub enum InteractionState {
     /// 空闲：无交互进行中。
+    #[default]
     Idle,
     /// 平移视口：记录鼠标起点（**屏幕坐标**）和视口 offset 起点。
     ///
@@ -41,12 +42,6 @@ pub enum InteractionState {
         from_port: PortId,
         current: PointF,
     },
-}
-
-impl Default for InteractionState {
-    fn default() -> Self {
-        Self::Idle
-    }
 }
 
 impl FlowEditorView {
@@ -78,13 +73,19 @@ impl FlowEditorView {
                 };
             }
             (MouseButton::Left, HitResult::Node(node_id)) => {
-                let node_origin = self.graph.node(node_id).map(|n| n.position).unwrap_or_default();
+                // 始终选中被点击的节点
                 self.selected = Some(node_id);
-                self.interaction = InteractionState::DraggingNode {
-                    node_id,
-                    start: logical,
-                    node_origin,
-                };
+                if self.drag_enabled {
+                    // 允许拖拽：进入 DraggingNode 状态
+                    let node_origin =
+                        self.graph.node(node_id).map(|n| n.position).unwrap_or_default();
+                    self.interaction = InteractionState::DraggingNode {
+                        node_id,
+                        start: logical,
+                        node_origin,
+                    };
+                }
+                // 拖拽禁用时仅选中节点，不进入拖拽状态（Idle）
             }
             (MouseButton::Left, HitResult::InPort(_, _)) => {
                 // 点击入端口：暂不处理（可作为连线目标）

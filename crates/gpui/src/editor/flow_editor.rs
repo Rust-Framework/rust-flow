@@ -31,10 +31,11 @@ use gpui::{
 };
 use rust_agent_flow::{EdgeType, FlowGraph, NodeId, PointF, PortSide, Viewport};
 use rust_agent_flow::{
-    LayoutDirection as CoreLayoutDirection, LayoutEngine, LayoutResult, SimpleLayout,
+    LayoutDirection as CoreLayoutDirection, LayoutEngine, LayoutResult, DagreLayout,
 };
 
 use crate::node::NodeRegistry;
+use crate::theme::Theme;
 
 use super::interaction::InteractionState;
 
@@ -58,6 +59,10 @@ pub struct FlowEditorView {
     pub layout_direction: LayoutDirection,
     /// 是否显示点阵背景。
     pub show_grid: bool,
+    /// 是否允许拖拽节点（false 时左键点击节点仅选中，不进入拖拽状态）。
+    pub drag_enabled: bool,
+    /// 当前主题颜色配置。
+    pub theme: Theme,
 }
 
 impl FlowEditorView {
@@ -73,6 +78,8 @@ impl FlowEditorView {
             default_edge_type: EdgeType::SmoothStep,
             layout_direction: LayoutDirection::Horizontal,
             show_grid: true,
+            drag_enabled: true,
+            theme: Theme::light(),
         }
     }
 
@@ -91,19 +98,56 @@ impl FlowEditorView {
 
     /// 运行布局引擎，按当前布局方向重新排列所有节点位置。
     ///
-    /// 使用内置 [`SimpleLayout`]（无外部依赖），保持节点拓扑分层结构。
-    /// 切换方向时调用此方法即可重新排版。
+    /// 使用 [`DagreLayout`]（包装 `dagre` crate，ReactFlow 同款 Sugiyama 算法），
+    /// 保持节点拓扑分层结构。切换方向时调用此方法即可重新排版。
     pub(crate) fn relayout(&mut self) {
+        // 同步节点尺寸：确保 dagre 使用与实际渲染一致的尺寸（特别是
+        // Condition 节点的高度随条件项数量变化）。
+        self.sync_node_sizes();
+
         let dir = match self.layout_direction {
             LayoutDirection::Horizontal => CoreLayoutDirection::Horizontal,
             LayoutDirection::Vertical => CoreLayoutDirection::Vertical,
         };
-        let result: LayoutResult = SimpleLayout::new().layout(&self.graph, dir);
+        let result: LayoutResult = DagreLayout::new().layout(&self.graph, dir);
         for (node_id, pos) in result.positions {
             if let Some(node) = self.graph.node_mut(node_id) {
                 node.position = pos;
             }
         }
+    }
+
+    /// 同步所有节点的 `size` 为实际渲染尺寸（`IFlowNode::content_size`）。
+    ///
+    /// 结构化节点（如 Condition）的渲染高度随数据变化，但 `node.size.h`
+    /// 可能在创建后未更新。此方法在布局前调用，确保 dagre、命中测试、
+    /// 回环边边界计算使用正确的尺寸。
+    fn sync_node_sizes(&mut self) {
+        let registry = self.registry.clone();
+        let ids: Vec<NodeId> = self.graph.node_ids().collect();
+        for id in ids {
+            let new_size = {
+                let node = match self.graph.node(id) {
+                    Some(n) => n,
+                    None => continue,
+                };
+                match registry.get(&node.kind) {
+                    Some(f) => f.content_size(node),
+                    None => continue,
+                }
+            };
+            if let Some(node) = self.graph.node_mut(id) {
+                node.size = new_size;
+            }
+        }
+    }
+
+    /// 自动排版：运行 dagre 布局引擎重新排列所有节点，并通知视图刷新。
+    ///
+    /// 公开 API，供外部（如 demo）在创建编辑器后触发自动排版。
+    pub fn auto_layout(&mut self, cx: &mut Context<Self>) {
+        self.relayout();
+        cx.notify();
     }
 
     /// 切换布局方向并重新排版节点位置。
@@ -113,6 +157,24 @@ impl FlowEditorView {
         }
         self.layout_direction = dir;
         self.relayout();
+        cx.notify();
+    }
+
+    /// 设置是否允许拖拽节点。
+    pub fn set_drag_enabled(&mut self, enabled: bool, cx: &mut Context<Self>) {
+        self.drag_enabled = enabled;
+        cx.notify();
+    }
+
+    /// 切换主题（亮色 ↔ 暗色）。
+    pub fn toggle_theme(&mut self, cx: &mut Context<Self>) {
+        self.theme = self.theme.toggle();
+        cx.notify();
+    }
+
+    /// 设置指定主题。
+    pub fn set_theme(&mut self, theme: Theme, cx: &mut Context<Self>) {
+        self.theme = theme;
         cx.notify();
     }
 }
@@ -132,7 +194,7 @@ impl Render for FlowEditorView {
         let mut container = div()
             .size_full()
             .relative()
-            .bg(gpui::rgb(0xf8fafc))
+            .bg(self.theme.canvas_bg)
             .overflow_hidden()
             .cursor(if is_panning {
                 CursorStyle::ClosedHand

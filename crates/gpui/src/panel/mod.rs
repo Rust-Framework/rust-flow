@@ -8,11 +8,13 @@ use gpui::{AnyElement, App, IntoElement, ParentElement, RenderOnce, Styled, Wind
 use rust_agent_flow::Node;
 
 use crate::node::{IFlowNode, NodeViewCtx};
+use crate::theme::Theme;
 
 /// 属性面板视图：选中节点时右侧显示。
 pub struct PanelView {
     pub node: Node,
     pub flow_node: Option<Arc<dyn IFlowNode>>,
+    pub theme: Theme,
 }
 
 impl PanelView {
@@ -20,6 +22,7 @@ impl PanelView {
         Self {
             node,
             flow_node: None,
+            theme: Theme::default(),
         }
     }
 
@@ -27,10 +30,16 @@ impl PanelView {
         self.flow_node = Some(flow_node);
         self
     }
+
+    pub fn with_theme(mut self, theme: Theme) -> Self {
+        self.theme = theme;
+        self
+    }
 }
 
 impl RenderOnce for PanelView {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let theme = self.theme;
         let content: AnyElement = if let Some(flow_node) = self.flow_node {
             let mut ctx = NodeViewCtx {
                 window,
@@ -38,6 +47,7 @@ impl RenderOnce for PanelView {
                 selected: true,
                 scale: 1.0,
                 layout: rust_agent_flow::LayoutDirection::Horizontal,
+                theme,
             };
             flow_node.get_panel(&self.node, &mut ctx)
         } else {
@@ -51,9 +61,9 @@ impl RenderOnce for PanelView {
         gpui::div()
             .w_80()
             .h_full()
-            .bg(gpui::rgb(0xf8fafc))
+            .bg(theme.panel_bg)
             .border_l_1()
-            .border_color(gpui::rgb(0xe2e8f0))
+            .border_color(theme.panel_border)
             .child(content)
     }
 }

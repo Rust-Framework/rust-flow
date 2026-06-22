@@ -27,7 +27,12 @@ fn main() {
         cx.spawn(async move |cx| {
             cx.open_window(gpui::WindowOptions::default(), |window, cx| {
                 let graph = build_agent_flow();
-                let view = cx.new(|cx| FlowEditorView::new(graph, cx));
+                let view = cx.new(|cx| {
+                    let mut editor = FlowEditorView::new(graph, cx);
+                    // 使用 dagre 自动排版（ReactFlow 同款 Sugiyama 算法）
+                    editor.auto_layout(cx);
+                    editor
+                });
                 cx.new(|cx| gpui_component::Root::new(view, window, cx))
             })
             .expect("Failed to open window");

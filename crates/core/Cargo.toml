@@ -9,11 +9,4 @@ description = "Framework-agnostic workflow graph model, geometry and layout (no 
 slotmap = { workspace = true }
 serde = { workspace = true }
 serde_json = { version = "1", features = ["preserve_order"] }
-
-[dependencies.mermaid-dagre]
-version = "0.1"
-optional = true
-
-[features]
-default = []
-dagre = ["dep:mermaid-dagre"]
+dagre = "0.1"
