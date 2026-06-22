@@ -16,7 +16,7 @@ use std::sync::Arc;
 use gpui::{canvas, div, px, IntoElement, ParentElement, Point, Styled};
 use rust_agent_flow::{Edge, EdgeType, FlowGraph, NodeId, PointF, PortSide, RectF};
 
-use crate::edge::{paint_edge_scaled, paint_join_marker, paint_loop_back_edge};
+use crate::edge::{paint_edge_scaled, paint_loop_back_edge};
 use crate::node::{IFlowNode, NodeView};
 use crate::panel::PanelView;
 
@@ -25,7 +25,7 @@ use super::grid::paint_grid;
 use super::interaction::InteractionState;
 use super::ports::{port_position_by_side, resolve_port};
 
-/// 边渲染指令（区分普通边、Loop 回环边、Join 汇聚标记边）。
+/// 边渲染指令（区分普通边、Loop 回环边）。
 enum EdgeRender {
     Normal {
         src: PointF,
@@ -39,15 +39,6 @@ enum EdgeRender {
         dst: PointF,
         horizontal: bool,
         node_bounds: RectF,
-    },
-    /// 带有 Join 汇聚标记的边：在距目标 80 单位处渲染小方块。
-    Join {
-        src: PointF,
-        dst: PointF,
-        src_side: PortSide,
-        dst_side: PortSide,
-        edge_type: EdgeType,
-        color: gpui::Rgba, // Join 标记颜色（跟随源节点主题）
     },
 }
 
@@ -104,38 +95,6 @@ fn compute_loop_bounds(graph: &FlowGraph, loop_node: NodeId, body_nodes: &HashSe
         }
     }
     bounds.unwrap_or_default()
-}
-
-/// 检测汇聚目标节点：接收多条入边的节点（分支汇合点）。
-///
-/// 返回目标节点 ID 集合。这些节点上的入边需要渲染 Join 汇聚标记。
-///
-/// **检测规则**：
-/// - 目标节点的入边数量 ≥ 2，且来自**不同源节点**
-/// - 排除回环边（loop_in）和循环体内部边
-fn detect_convergence_targets(graph: &FlowGraph, body_nodes: &HashSet<NodeId>) -> HashSet<NodeId> {
-    let mut incoming: HashMap<NodeId, Vec<NodeId>> = HashMap::new();
-
-    for edge in graph.edges() {
-        // 排除回环边和循环体内部边
-        if edge.target_port.as_deref() == Some("loop_in") {
-            continue;
-        }
-        if body_nodes.contains(&edge.source) && body_nodes.contains(&edge.target) {
-            continue;
-        }
-        incoming.entry(edge.target).or_default().push(edge.source);
-    }
-
-    incoming
-        .into_iter()
-        .filter(|(_target, sources)| {
-            // 至少 2 个不同来源
-            let unique: HashSet<_> = sources.iter().collect();
-            unique.len() >= 2
-        })
-        .map(|(target, _)| target)
-        .collect()
 }
 
 /// 计算边的端点，循环体节点强制使用纵向端口（上进下出）。
@@ -206,9 +165,6 @@ impl FlowEditorView {
         let all_body_nodes: HashSet<NodeId> =
             body_groups.values().flat_map(|s| s.iter().copied()).collect();
 
-        // 检测汇聚目标节点（接收多条入边的节点）
-        let convergence_targets = detect_convergence_targets(&self.graph, &all_body_nodes);
-
         // 为每条边计算渲染指令
         let edge_renders: Vec<EdgeRender> = self
             .graph
@@ -241,22 +197,6 @@ impl FlowEditorView {
                         dst,
                         horizontal: matches!(layout, LayoutDirection::Horizontal),
                         node_bounds,
-                    }
-                } else if convergence_targets.contains(&edge.target) {
-                    // 汇聚边：目标节点接收多条入边，渲染 Join 标记
-                    // 颜色跟随源节点主题（Condition=橙, Loop=蓝, 默认=灰）
-                    let color = match self.graph.node(edge.source).map(|n| n.kind.as_str()) {
-                        Some("condition") => gpui::rgb(0xf97316),
-                        Some("loop") => gpui::rgb(0x3b82f6),
-                        _ => gpui::rgb(0x64748b),
-                    };
-                    EdgeRender::Join {
-                        src,
-                        dst,
-                        src_side,
-                        dst_side,
-                        edge_type: edge.edge_type,
-                        color,
                     }
                 } else {
                     EdgeRender::Normal {
@@ -310,12 +250,6 @@ impl FlowEditorView {
                             paint_loop_back_edge(
                                 *src, *dst, *horizontal, *node_bounds, s, total_offset, window,
                             );
-                        }
-                        EdgeRender::Join { src, dst, src_side, dst_side, edge_type, color } => {
-                            paint_edge_scaled(
-                                *src, *dst, *src_side, *dst_side, *edge_type, s, total_offset, window,
-                            );
-                            paint_join_marker(*src, *dst, *color, s, total_offset, window);
                         }
                     }
                 }

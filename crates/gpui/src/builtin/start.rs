@@ -1,7 +1,7 @@
 //! Start 节点：流程起点，仅 Out 端口，绿色药丸形。
 
 use gpui::AnyElement;
-use rust_agent_flow::{Node, NodeSchema, PortDirection, PortSide, PortSpec, SizeF};
+use rust_agent_flow::{LayoutDirection, Node, NodeSchema, PortDirection, PortSide, PortSpec, SizeF};
 
 use crate::node::{render_node_card, NodeVisual, NodeViewCtx, IFlowNode};
 
@@ -50,7 +50,8 @@ impl IFlowNode for StartNode {
         };
         let w = node.size.w * ctx.scale;
         let h = node.size.h * ctx.scale;
-        render_node_card(&visual, w, h, ctx.scale, false, ctx.selected)
+        let vertical = ctx.layout == LayoutDirection::Vertical;
+        render_node_card(&visual, w, h, ctx.scale, vertical, ctx.selected)
     }
 
     fn get_panel(&self, node: &Node, _ctx: &mut NodeViewCtx) -> AnyElement {

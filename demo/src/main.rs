@@ -4,8 +4,8 @@
 //!
 //! 展示一个 Agent 编排场景，覆盖图灵完备控制流：
 //! - Start → Planner（规划）→ Condition（条件判断）
-//! - Condition 分支：if_0 → Search（检索），else → ToolCall（工具调用）
-//! - 两路汇合到 Loop（循环）
+//! - Condition 分支：if_0 → Search（检索），if_1 → Notify（通知），else → ToolCall（工具调用）
+//! - 三路汇合到 Loop（循环）
 //! - Loop 的 loop_body → Process（循环体）→ 回连 Loop 的 loop_in（循环回环）
 //! - Loop 的 done → Summarize（汇总）→ End
 //!
@@ -40,16 +40,18 @@ fn main() {
 ///
 /// ```text
 /// Start → Planner → Condition ──if_0──→ Search ─────────┐
-///                      │                                  │
-///                      else                            ToolCall│
-///                      ↓                                  ↓
-///                                              ◇ (Join, 距Loop 80)
-///                                                  ↓
+///                      │──if_1──→ Notify ──────────┐    │
+///                      │                            │    │
+///                      else                         │    │
+///                      ↓                            │    │
+///                   ToolCall ───────────────────────┼────┤
+///                                                   │    │
+///                                                   ↓    ↓
 ///                                               Loop ──loop_body──→ Process
 ///                                                │              ↗     │
 ///                                                Top    Bottom
 ///                                  loop_in ←─────────────────┘
-///                                  done ◇           (回环向下绕过)
+///                                  done           (回环向下绕过)
 ///                                   ↓
 ///                                Summarize → End
 /// ```
@@ -76,11 +78,16 @@ fn build_agent_flow() -> FlowGraph {
                 { "id": "if_1", "label": "user.is_admin" }
             ]
         }),
-        SizeF::new(220.0, 108.0),
+        SizeF::new(220.0, 144.0),
     );
     let search = graph.add_node_with_size(
         "action",
         serde_json::json!({ "label": "Search", "desc": "检索知识库" }),
+        SizeF::new(180.0, 35.0),
+    );
+    let notify = graph.add_node_with_size(
+        "action",
+        serde_json::json!({ "label": "Notify", "desc": "发送通知" }),
         SizeF::new(180.0, 35.0),
     );
     let tool = graph.add_node_with_size(
@@ -109,36 +116,48 @@ fn build_agent_flow() -> FlowGraph {
         SizeF::new(120.0, 35.0),
     );
 
-    // 布局：左→右，条件分支上下展开，循环体在 Loop 右侧纵向编排
-    set_position(&mut graph, start, 80.0, 240.0);
-    set_position(&mut graph, planner, 320.0, 240.0);
-    set_position(&mut graph, condition, 600.0, 240.0);
-    set_position(&mut graph, search, 880.0, 100.0); // if_0 分支
-    set_position(&mut graph, tool, 880.0, 400.0); // else 分支
-    set_position(&mut graph, loop_node, 1160.0, 240.0);
-    set_position(&mut graph, process, 1440.0, 320.0); // 循环体：纵向布局（loop_body 右侧向下）
-    set_position(&mut graph, summarize, 1720.0, 240.0);
-    set_position(&mut graph, end, 2000.0, 240.0);
+    // 布局：左→右主流程对齐 y=280（端口 y≈298），分支目标紧凑排列
+    //
+    // 横向布局（默认）：
+    //   Condition 出口端口 Y：else=298（标题栏中心）、if_0=343（第一条件行中心）、if_1=397（第二条件行中心）
+    //   目标节点中心对齐出口端口 Y → 连线水平、紧凑（间隔 10~19px）
+    //   出口顺序（上→下）：else → if_0 → if_1，目标节点同序排列，避免连线交叉
+    //
+    // 纵向布局：
+    //   Condition 底部出口 X 顺序：else（最左）→ if_0 → if_1（最右）
+    //   目标节点 Y 顺序（上→下）：tool(else) → search(if_0) → notify(if_1)
+    //   Y 顺序与端口 X 顺序一致 → 连线不交叉
+    set_position(&mut graph, start, 80.0, 280.0);
+    set_position(&mut graph, planner, 320.0, 280.0);
+    set_position(&mut graph, condition, 600.0, 280.0);
+    set_position(&mut graph, tool, 880.0, 281.0);      // else 分支：中心 y=298.5 ≈ else 端口 298
+    set_position(&mut graph, search, 880.0, 326.0);    // if_0 分支：中心 y=343.5 ≈ if_0 端口 343
+    set_position(&mut graph, notify, 880.0, 380.0);    // if_1 分支：中心 y=397.5 ≈ if_1 端口 397
+    set_position(&mut graph, loop_node, 1160.0, 280.0);
+    set_position(&mut graph, process, 1440.0, 400.0);  // 循环体：主线下方，loop_body→process→loop_in 回环
+    set_position(&mut graph, summarize, 1720.0, 280.0);
+    set_position(&mut graph, end, 2000.0, 280.0);
 
     // 边：全部使用正交圆角折线（SmoothStep）
     // 主流程
     add_edge(&mut graph, start, planner, None, None, EdgeType::SmoothStep);
     add_edge(&mut graph, planner, condition, None, Some("in"), EdgeType::SmoothStep);
 
-    // 条件分支：Condition 的 if_0 → Search，else → ToolCall
+    // 条件分支：Condition 的 if_0 → Search，if_1 → Notify，else → ToolCall（全分支覆盖）
     add_edge(&mut graph, condition, search, Some("if_0"), None, EdgeType::SmoothStep);
+    add_edge(&mut graph, condition, notify, Some("if_1"), None, EdgeType::SmoothStep);
     add_edge(&mut graph, condition, tool, Some("else"), None, EdgeType::SmoothStep);
 
-    // 分支汇合：Search/ToolCall 都连到 Loop 的 in 端口（汇聚点）
-    // 渲染层自动在距目标 80 单位处渲染 Join 标记
+    // 分支汇合：Search/Notify/ToolCall 都连到 Loop 的 in 端口（汇聚点）
     add_edge(&mut graph, search, loop_node, None, Some("in"), EdgeType::SmoothStep);
+    add_edge(&mut graph, notify, loop_node, None, Some("in"), EdgeType::SmoothStep);
     add_edge(&mut graph, tool, loop_node, None, Some("in"), EdgeType::SmoothStep);
 
     // 循环体：Loop 的 loop_body → Process → 回连 Loop 的 loop_in
     add_edge(&mut graph, loop_node, process, Some("loop_body"), None, EdgeType::SmoothStep);
     add_edge(&mut graph, process, loop_node, None, Some("loop_in"), EdgeType::SmoothStep);
 
-    // 循环结束：Loop.done → Summarize（汇聚边，自动渲染 Join 标记）
+    // 循环结束：Loop.done → Summarize
     add_edge(&mut graph, loop_node, summarize, Some("done"), None, EdgeType::SmoothStep);
     add_edge(&mut graph, summarize, end, None, None, EdgeType::SmoothStep);
 

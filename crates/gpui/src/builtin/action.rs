@@ -1,7 +1,7 @@
 //! Action 节点：顺序执行步骤，In + Out 端口，白色卡片。
 
 use gpui::AnyElement;
-use rust_agent_flow::{Node, NodeSchema, PortDirection, PortSide, PortSpec, SizeF};
+use rust_agent_flow::{LayoutDirection, Node, NodeSchema, PortDirection, PortSide, PortSpec, SizeF};
 
 use crate::node::{render_node_card, NodeVisual, NodeViewCtx, IFlowNode};
 
@@ -51,7 +51,8 @@ impl IFlowNode for ActionNode {
         };
         let w = node.size.w * ctx.scale;
         let h = node.size.h * ctx.scale;
-        render_node_card(&visual, w, h, ctx.scale, false, ctx.selected)
+        let vertical = ctx.layout == LayoutDirection::Vertical;
+        render_node_card(&visual, w, h, ctx.scale, vertical, ctx.selected)
     }
 
     fn get_panel(&self, node: &Node, _ctx: &mut NodeViewCtx) -> AnyElement {

@@ -7,9 +7,6 @@
 //! **外部回环连线**：从 LoopBody 出口 → 外部循环体节点 → 回连到 LoopIn 入口，
 //! 循环体支线在两个方向上均从右侧出、向左绕回左侧入。
 //!
-//! **Done 出口连线上的 Join 标记**：done → next 的连线上，距目标节点 80 单位处
-//! 渲染一个小方块汇聚标记，表示循环结束后主线在此汇聚继续。
-//!
 //! **布局**（纵向，主要标准）：
 //! ```text
 //!              In
@@ -101,10 +98,10 @@ impl IFlowNode for LoopNode {
             gpui::rgb(0x93c5fd)
         };
 
-        // 外层容器
+        // 外层容器（不使用 overflow_hidden，避免裁剪半外露的端口圆圈）
         let mut container = div().relative().w(px(w)).h(px(h));
 
-        // 标题栏（蓝色背景）
+        // 标题栏（蓝色背景，顶部圆角对齐容器圆角）
         container = container.child(
             div()
                 .absolute()
@@ -113,6 +110,7 @@ impl IFlowNode for LoopNode {
                 .w(px(w))
                 .h(px(title_h))
                 .bg(gpui::rgb(0x3b82f6))
+                .rounded_t_lg()
                 .flex()
                 .items_center()
                 .justify_center()
@@ -125,7 +123,7 @@ impl IFlowNode for LoopNode {
                 ),
         );
 
-        // 循环条件区域（浅蓝背景）
+        // 循环条件区域（浅蓝背景，底部圆角对齐容器圆角）
         container = container.child(
             div()
                 .absolute()
@@ -136,6 +134,7 @@ impl IFlowNode for LoopNode {
                 .bg(gpui::rgb(0xeff6ff))
                 .border_t_1()
                 .border_color(gpui::rgb(0xbfdbfe))
+                .rounded_b_lg()
                 .flex()
                 .items_center()
                 .justify_center()
