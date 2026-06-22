@@ -116,7 +116,7 @@ impl IFlowNode for LoopNode {
                 .left_0()
                 .w(px(w))
                 .h(px(title_h))
-                .bg(gpui::rgb(0x3b82f6))
+                .bg(t.loop_title_bg)
                 .rounded_t_lg()
                 .flex()
                 .items_center()
@@ -125,7 +125,7 @@ impl IFlowNode for LoopNode {
                     div()
                         .text_size(px(14.0 * s))
                         .font_semibold()
-                        .text_color(gpui::rgb(0xffffff))
+                        .text_color(t.loop_title_text)
                         .child(label),
                 ),
         );
@@ -138,9 +138,9 @@ impl IFlowNode for LoopNode {
                 .top(px(title_h))
                 .w(px(w))
                 .h(px(body_h))
-                .bg(gpui::rgb(0xeff6ff))
+                .bg(t.loop_body_bg)
                 .border_t_1()
-                .border_color(gpui::rgb(0xbfdbfe))
+                .border_color(t.loop_body_border)
                 .rounded_b_lg()
                 .flex()
                 .items_center()
@@ -148,7 +148,7 @@ impl IFlowNode for LoopNode {
                 .child(
                     div()
                         .text_size(px(12.0 * s))
-                        .text_color(gpui::rgb(0x1e3a8a))
+                        .text_color(t.loop_body_text)
                         .child(desc),
                 ),
         );
@@ -176,13 +176,13 @@ impl IFlowNode for LoopNode {
         let body_mid_y = title_h + body_h * 0.5;
 
         // 端口颜色
-        let in_ring = gpui::rgb(0xbfdbfe);
-        let in_dot = gpui::rgb(0x3b82f6);
-        let done_ring = gpui::rgb(0xe2e8f0);
-        let done_dot = gpui::rgb(0x64748b);
-        let body_ring = gpui::rgb(0xbfdbfe);
-        let body_dot = gpui::rgb(0x3b82f6);
-        let port_bg = gpui::rgb(0xffffff);
+        let in_ring = t.loop_in_ring;
+        let in_dot = t.loop_in_dot;
+        let done_ring = t.loop_done_ring;
+        let done_dot = t.loop_done_dot;
+        let body_ring = t.loop_in_ring;
+        let body_dot = t.loop_in_dot;
+        let port_bg = t.port_bg;
 
         match layout {
             LayoutDirection::Horizontal => {
