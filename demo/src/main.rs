@@ -39,15 +39,19 @@ fn main() {
 /// 构造一个 Agent 编排流程图，展现条件分支和循环编排。
 ///
 /// ```text
-/// Start → Planner → Condition ──if_0──→ Search ──┐
-///                      │                         ↓
-///                      else                    Loop ──loop_body──→ Process
-///                      ↓                         │                   │
-///                    ToolCall ───────────────────┘                   │
-///                                              loop_in ←─────────────┘
-///                                              done
-///                                               ↓
-///                                            Summarize → End
+/// Start → Planner → Condition ──if_0──→ Search ─────────┐
+///                      │                                  │
+///                      else                            ToolCall│
+///                      ↓                                  ↓
+///                                              ◇ (Join, 距Loop 80)
+///                                                  ↓
+///                                               Loop ──loop_body──→ Process
+///                                                │              ↗     │
+///                                                Top    Bottom
+///                                  loop_in ←─────────────────┘
+///                                  done ◇           (回环向下绕过)
+///                                   ↓
+///                                Summarize → End
 /// ```
 fn build_agent_flow() -> FlowGraph {
     let mut graph = FlowGraph::new();
@@ -105,14 +109,14 @@ fn build_agent_flow() -> FlowGraph {
         SizeF::new(120.0, 35.0),
     );
 
-    // 布局：左→右，条件分支上下展开，循环体在 Loop 右侧
+    // 布局：左→右，条件分支上下展开，循环体在 Loop 右侧纵向编排
     set_position(&mut graph, start, 80.0, 240.0);
     set_position(&mut graph, planner, 320.0, 240.0);
     set_position(&mut graph, condition, 600.0, 240.0);
     set_position(&mut graph, search, 880.0, 100.0); // if_0 分支
     set_position(&mut graph, tool, 880.0, 400.0); // else 分支
     set_position(&mut graph, loop_node, 1160.0, 240.0);
-    set_position(&mut graph, process, 1440.0, 240.0); // 循环体
+    set_position(&mut graph, process, 1440.0, 320.0); // 循环体：纵向布局（loop_body 右侧向下）
     set_position(&mut graph, summarize, 1720.0, 240.0);
     set_position(&mut graph, end, 2000.0, 240.0);
 
@@ -125,7 +129,8 @@ fn build_agent_flow() -> FlowGraph {
     add_edge(&mut graph, condition, search, Some("if_0"), None, EdgeType::SmoothStep);
     add_edge(&mut graph, condition, tool, Some("else"), None, EdgeType::SmoothStep);
 
-    // 分支汇合到 Loop 的主输入
+    // 分支汇合：Search/ToolCall 都连到 Loop 的 in 端口（汇聚点）
+    // 渲染层自动在距目标 80 单位处渲染 Join 标记
     add_edge(&mut graph, search, loop_node, None, Some("in"), EdgeType::SmoothStep);
     add_edge(&mut graph, tool, loop_node, None, Some("in"), EdgeType::SmoothStep);
 
@@ -133,7 +138,7 @@ fn build_agent_flow() -> FlowGraph {
     add_edge(&mut graph, loop_node, process, Some("loop_body"), None, EdgeType::SmoothStep);
     add_edge(&mut graph, process, loop_node, None, Some("loop_in"), EdgeType::SmoothStep);
 
-    // 循环结束：Loop 的 done → Summarize → End
+    // 循环结束：Loop.done → Summarize（汇聚边，自动渲染 Join 标记）
     add_edge(&mut graph, loop_node, summarize, Some("done"), None, EdgeType::SmoothStep);
     add_edge(&mut graph, summarize, end, None, None, EdgeType::SmoothStep);
 

@@ -11,7 +11,8 @@
 
 use gpui::{canvas, px, IntoElement, PathBuilder, Point, Pixels, Window};
 use rust_agent_flow::{
-    bezier_path, smoothstep_path, step_path, straight_path, EdgeType, PointF, PortSide,
+    bezier_path, loop_back_path, smoothstep_path, step_path, straight_path, EdgeType, PointF,
+    PortSide, RectF,
 };
 
 /// 边视图：持有点位和类型，`into_element` 返回 canvas 元素。
@@ -175,4 +176,100 @@ pub(crate) fn paint_edge_scaled(
     let is_bezier = edge_type == EdgeType::Bezier && points.len() == 4;
     paint_polyline(&points, is_bezier, scale, offset, window);
     paint_arrow(&points, scale, offset, window);
+}
+
+/// 渲染 Loop 回环边：使用 `loop_back_path` 绕过 Loop 节点下方。
+///
+/// `node_bounds` 应包含 Loop 节点 + 所有循环体节点的组合边界，
+/// 确保回环路径从最后循环体节点的底部 → 向下 → 向左 → 向上 → 回到 loop_in。
+pub(crate) fn paint_loop_back_edge(
+    src: PointF,
+    dst: PointF,
+    horizontal: bool,
+    node_bounds: RectF,
+    scale: f32,
+    offset: Point<Pixels>,
+    window: &mut Window,
+) {
+    let points = loop_back_path(src, dst, horizontal, node_bounds);
+    paint_polyline(&points, false, scale, offset, window);
+    paint_arrow(&points, scale, offset, window);
+}
+
+/// Join 汇聚标记：在连线上距目标节点指定距离处渲染小方块。
+///
+/// 用于 Condition/Loop 等结构化节点的分支汇聚语义：
+/// - **位置**：从 `dst`（目标节点入口）沿连线向 `src` 方向回退 `distance` 单位
+/// - **视觉**：白底 + 彩色边框的小方块，内部实心圆点
+///
+/// ```text
+/// src ────────────────┤ ◇ ────── dst
+///                  distance=80
+/// ```
+const JOIN_DISTANCE: f32 = 80.0;
+const JOIN_SIZE: f32 = 10.0; // 小方块尺寸（逻辑坐标）
+
+pub(crate) fn paint_join_marker(
+    src: PointF,
+    dst: PointF,
+    color: gpui::Rgba, // 边框+内部颜色
+    scale: f32,
+    offset: Point<Pixels>,
+    window: &mut Window,
+) {
+    let dx = dst.x - src.x;
+    let dy = dst.y - src.y;
+    let len = (dx * dx + dy * dy).sqrt();
+    if len < JOIN_DISTANCE + 1.0 {
+        return; // 边太短，不渲染
+    }
+
+    // 从 dst 沿反方向回退 JOIN_DISTANCE 单位
+    let t = (len - JOIN_DISTANCE) / len;
+    let pos = PointF::new(
+        src.x + dx * t,
+        src.y + dy * t,
+    );
+
+    let half = JOIN_SIZE * 0.5;
+
+    // 外框：白色填充 + 彩色边框
+    let mut outer = PathBuilder::fill();
+    outer.scale(scale);
+    outer.translate(offset);
+    outer.move_to(to_px(PointF::new(pos.x - half, pos.y - half)));
+    outer.line_to(to_px(PointF::new(pos.x + half, pos.y - half)));
+    outer.line_to(to_px(PointF::new(pos.x + half, pos.y + half)));
+    outer.line_to(to_px(PointF::new(pos.x - half, pos.y + half)));
+    if let Ok(path) = outer.build() {
+        window.paint_path(path, gpui::white());
+    }
+
+    // 边框
+    let mut border = PathBuilder::stroke(px(1.5 * scale));
+    border.scale(scale);
+    border.translate(offset);
+    border.move_to(to_px(PointF::new(pos.x - half, pos.y - half)));
+    border.line_to(to_px(PointF::new(pos.x + half, pos.y - half)));
+    border.line_to(to_px(PointF::new(pos.x + half, pos.y + half)));
+    border.line_to(to_px(PointF::new(pos.x - half, pos.y + half)));
+    border.close();
+    if let Ok(path) = border.build() {
+        window.paint_path(path, color);
+    }
+
+    // 内部实心点
+    let dot_size = 4.0;
+    let dot_half = dot_size * 0.5;
+    let mut dot = PathBuilder::fill();
+    dot.scale(scale);
+    dot.translate(offset);
+    // 用小正方形近似圆点（PathBuilder 无 circle）
+    dot.move_to(to_px(PointF::new(pos.x - dot_half, pos.y - dot_half)));
+    dot.line_to(to_px(PointF::new(pos.x + dot_half, pos.y - dot_half)));
+    dot.line_to(to_px(PointF::new(pos.x + dot_half, pos.y + dot_half)));
+    dot.line_to(to_px(PointF::new(pos.x - dot_half, pos.y + dot_half)));
+    if let Ok(path) = dot.build() {
+        window.paint_path(path, color);
+    }
 }

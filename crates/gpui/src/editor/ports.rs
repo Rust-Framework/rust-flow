@@ -146,6 +146,7 @@ fn derive_side_from_position(node: &Node, pos: &PointF) -> PortSide {
 ///
 /// 优先使用 edge.source_port / edge.target_port（精确端口），
 /// 否则回退到布局方向默认 side。
+#[allow(dead_code)]
 pub(crate) fn edge_endpoints(
     edge: &Edge,
     graph: &FlowGraph,
@@ -174,6 +175,7 @@ pub(crate) fn edge_endpoints(
 }
 
 /// 计算单个端点位置（内部辅助）。
+#[allow(dead_code)]
 fn compute_endpoint(
     node_id: NodeId,
     port_id: Option<&str>,

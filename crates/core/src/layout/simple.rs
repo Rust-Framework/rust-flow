@@ -17,8 +17,10 @@
 //! - **Condition**: multi-output fan-out — targets of `if_*` / `else` are stacked
 //!   vertically (horizontal layout) or horizontally (vertical layout) around the
 //!   condition's center, minimizing crossing.
-//! - **Loop**: the loop body chain is placed beside the loop node (same layer as
-//!   the loop's successors), keeping the cycle compact.
+//! - **Loop**: the loop body chain is placed **vertically** to the right of the
+//!   loop node (top-in / bottom-out, regardless of main direction). The layout
+//!   engine reserves space for the body chain and shifts subsequent nodes to
+//!   avoid overlap. The back-edge path routes below the combined bounds.
 
 use super::{LayoutDirection, LayoutEngine, LayoutResult};
 use crate::geometry::PointF;
@@ -191,6 +193,16 @@ impl LayoutEngine for SimpleLayout {
             }
         }
 
+        // Post-process: reposition loop body nodes vertically and reserve space.
+        post_process_loop_bodies(
+            &mut positions,
+            graph,
+            &sizes,
+            direction,
+            self.layer_gap,
+            self.node_gap,
+        );
+
         LayoutResult { positions }
     }
 }
@@ -299,6 +311,148 @@ fn order_layers(
     layers
 }
 
+// ─── Loop body post-processing ──────────────────────────────────────────────
+
+/// Back-edge path margin (must match `loop_back_path` in `edge_path.rs`).
+const BACK_EDGE_MARGIN: f32 = 40.0;
+
+/// Collect loop body nodes grouped by their parent Loop node.
+///
+/// Body nodes = `loop_body` 出口的目标 + 从这些节点沿前向边可达的节点
+///（排除通过 `loop_in` 回连的边和回到 Loop 节点的边）。
+fn collect_loop_body_groups(graph: &FlowGraph) -> HashMap<NodeId, HashSet<NodeId>> {
+    let mut groups: HashMap<NodeId, HashSet<NodeId>> = HashMap::new();
+
+    for edge in graph.edges() {
+        if edge.source_port.as_deref() == Some("loop_body") {
+            groups.entry(edge.source).or_default().insert(edge.target);
+        }
+    }
+
+    for (loop_node, body_nodes) in groups.iter_mut() {
+        let mut queue: std::collections::VecDeque<NodeId> = body_nodes.iter().copied().collect();
+        while let Some(nid) = queue.pop_front() {
+            for edge in graph.out_edges(nid) {
+                if edge.target_port.as_deref() == Some("loop_in") {
+                    continue;
+                }
+                if edge.target == *loop_node {
+                    continue;
+                }
+                if body_nodes.insert(edge.target) {
+                    queue.push_back(edge.target);
+                }
+            }
+        }
+    }
+
+    groups
+}
+
+/// Post-process: reposition loop body nodes vertically beside their Loop node,
+/// and shift other nodes to reserve space for the body chain + back-edge path.
+///
+/// **Body chain layout**: nodes are stacked vertically (top → bottom) to the
+/// right of the Loop node, using Top/Bottom ports (纵向布局).
+///
+/// **Space reservation**:
+/// - Horizontal: shift nodes to the right of the Loop node further right
+///   by (body chain width + layer_gap).
+/// - Vertical: shift nodes below the Loop node further down
+///   by (body chain height - loop height + back-edge margin + node_gap).
+fn post_process_loop_bodies(
+    positions: &mut HashMap<NodeId, PointF>,
+    graph: &FlowGraph,
+    sizes: &HashMap<NodeId, (f32, f32)>,
+    direction: LayoutDirection,
+    layer_gap: f32,
+    node_gap: f32,
+) {
+    let body_groups = collect_loop_body_groups(graph);
+    if body_groups.is_empty() {
+        return;
+    }
+
+    let all_body_nodes: HashSet<NodeId> =
+        body_groups.values().flat_map(|s| s.iter().copied()).collect();
+
+    for (loop_node, body_nodes) in &body_groups {
+        let loop_pos = match positions.get(loop_node) {
+            Some(&p) => p,
+            None => continue,
+        };
+        let (loop_w, loop_h) = sizes.get(loop_node).copied().unwrap_or((220.0, 80.0));
+
+        // Order body nodes by current Y (top → bottom) to preserve chain order
+        let mut body_list: Vec<NodeId> = body_nodes.iter().copied().collect();
+        body_list.sort_by(|&a, &b| {
+            let ya = positions.get(&a).map(|p| p.y).unwrap_or(0.0);
+            let yb = positions.get(&b).map(|p| p.y).unwrap_or(0.0);
+            ya.partial_cmp(&yb).unwrap_or(std::cmp::Ordering::Equal)
+        });
+
+        // Position body nodes vertically to the right of the Loop node
+        let body_x = loop_pos.x + loop_w + layer_gap;
+        let mut body_y = loop_pos.y;
+        let mut max_body_w = 0.0f32;
+        let mut chain_bottom = loop_pos.y + loop_h;
+
+        for &nid in &body_list {
+            let (w, h) = sizes.get(&nid).copied().unwrap_or((180.0, 35.0));
+            positions.insert(nid, PointF::new(body_x, body_y));
+            body_y += h + node_gap;
+            max_body_w = max_body_w.max(w);
+            chain_bottom = chain_bottom.max(body_y);
+        }
+
+        // Shift non-body nodes to avoid overlap with body chain + back-edge path.
+        //
+        // Design principle: **main-flow nodes follow the main axis** (Loop's center X).
+        // Body space calculation is purely for **collision avoidance**, not alignment.
+        // - Horizontal: only shift nodes whose Y overlaps with body chain's Y range.
+        //   Main-flow successors (via done) are typically below the body chain and keep
+        //   their original X position on the main axis.
+        // - Vertical: shift nodes below the body chain down to clear it + back-edge margin.
+        match direction {
+            LayoutDirection::Horizontal => {
+                let body_top = loop_pos.y;
+                let body_bottom = chain_bottom;
+                let shift_x = max_body_w + layer_gap;
+                for (nid, pos) in positions.iter_mut() {
+                    if all_body_nodes.contains(nid) || *nid == *loop_node {
+                        continue;
+                    }
+                    // Only shift if node is to the right of Loop AND vertically overlaps
+                    // with the body chain. Nodes entirely below the body chain stay on
+                    // the main axis (no horizontal shift).
+                    let node_h = sizes.get(nid).map(|(_, h)| *h).unwrap_or(35.0);
+                    let node_bottom = pos.y + node_h;
+                    if pos.x >= loop_pos.x + loop_w
+                        && pos.y < body_bottom
+                        && node_bottom > body_top
+                    {
+                        pos.x += shift_x;
+                    }
+                }
+            }
+            LayoutDirection::Vertical => {
+                // Shift nodes below the Loop node further down
+                // (body chain extends below loop + back-edge margin)
+                let extra_h =
+                    (chain_bottom - loop_pos.y - loop_h + BACK_EDGE_MARGIN + node_gap).max(0.0);
+                for (nid, pos) in positions.iter_mut() {
+                    if all_body_nodes.contains(nid) || *nid == *loop_node {
+                        continue;
+                    }
+                    if pos.y >= loop_pos.y + loop_h {
+                        pos.y += extra_h;
+                    }
+                }
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -353,5 +507,61 @@ mod tests {
         // a < b < c in x (layers increase left → right, back-edge ignored).
         assert!(pa.x < pb.x);
         assert!(pb.x < pc.x);
+    }
+
+    #[test]
+    fn loop_body_nodes_are_vertical_and_reserve_space() {
+        // Loop → (loop_body) → Body1 → Body2 → (loop_in) Loop
+        //                  → (done) → After  (main flow, should stay on main axis)
+        let mut g = FlowGraph::new();
+        let before = g.add_node("a", serde_json::json!({}));
+        let loop_n = g.add_node("loop", serde_json::json!({}));
+        let body1 = g.add_node("b", serde_json::json!({}));
+        let body2 = g.add_node("c", serde_json::json!({}));
+        let after = g.add_node("d", serde_json::json!({}));
+
+        g.add_edge(Edge::new(before, loop_n));
+        let mut e_body = Edge::new(loop_n, body1);
+        e_body.source_port = Some("loop_body".to_string());
+        g.add_edge(e_body);
+        g.add_edge(Edge::new(body1, body2));
+        let mut e_back = Edge::new(body2, loop_n);
+        e_back.target_port = Some("loop_in".to_string());
+        g.add_edge(e_back);
+        let mut e_done = Edge::new(loop_n, after);
+        e_done.source_port = Some("done".to_string());
+        g.add_edge(e_done);
+
+        let result = SimpleLayout::new().layout(&g, LayoutDirection::Horizontal);
+
+        let pl = result.positions.get(&loop_n).unwrap();
+        let pb1 = result.positions.get(&body1).unwrap();
+        let pb2 = result.positions.get(&body2).unwrap();
+        let pa = result.positions.get(&after).unwrap();
+
+        // Body nodes are to the right of the Loop node
+        assert!(pb1.x > pl.x, "body1 should be right of loop");
+        assert!(pb2.x > pl.x, "body2 should be right of loop");
+
+        // Body nodes are stacked vertically (body1 above body2)
+        assert!(pb1.y < pb2.y, "body1 should be above body2");
+
+        // Body nodes share the same X (vertical chain)
+        assert!((pb1.x - pb2.x).abs() < 1.0, "body nodes should share X");
+
+        // Main-flow node (after/done) stays on main axis — NOT shifted right by body width.
+        // It should be to the right of Loop (next layer) but NOT shifted further right.
+        // The key: after.x should be close to what it would be without body nodes,
+        // i.e., it follows the main layer progression, not the body chain width.
+        assert!(pa.x > pl.x, "after should be right of loop (next layer)");
+        // After should be below the body chain (vertical placement in same/next layer)
+        // and its X should NOT include the body_width shift
+        let loop_right = pl.x + 220.0; // default loop width
+        // After's X should be reasonably close to normal layer position,
+        // not pushed way right by body chain
+        assert!(
+            pa.x < loop_right + 400.0,
+            "after should not be excessively shifted right by body chain"
+        );
     }
 }

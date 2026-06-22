@@ -218,6 +218,8 @@ pub struct NodeView {
     pub vertical: bool,
     /// 布局方向。
     pub layout: LayoutDirection,
+    /// 循环体模式：强制端口纵向渲染（上进下出），覆盖 layout 方向。
+    pub body_mode: bool,
 }
 
 impl NodeView {
@@ -228,7 +230,8 @@ impl NodeView {
             selected: false,
             scale: 1.0,
             vertical: false,
-            layout: LayoutDirection::Vertical,
+            layout: LayoutDirection::Horizontal,
+            body_mode: false,
         }
     }
 
@@ -255,6 +258,15 @@ impl NodeView {
 
     pub fn selected(mut self, selected: bool) -> Self {
         self.selected = selected;
+        self
+    }
+
+    /// 标记为循环体节点：端口强制纵向（Top 进 / Bottom 出）。
+    pub fn with_body_mode(mut self, body: bool) -> Self {
+        self.body_mode = body;
+        if body {
+            self.vertical = true;
+        }
         self
     }
 }

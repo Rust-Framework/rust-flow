@@ -25,6 +25,18 @@
 //! │  If user.is_admin      [if_1] │  条件项 h=36
 //! └───────────────────────────────┘
 //! ```
+//!
+//! **布局**（纵向）：
+//! ```text
+//!            In
+//!             ↓
+//!      ┌─Condition──┐
+//!      │ if_0       │ → 右
+//!      │ if_1       │ → 右
+//!      │ else       │ ↓
+//!      └────────────┘
+//!             ↓
+//! ```
 
 use gpui::{div, px, AnyElement, IntoElement, ParentElement, Styled};
 use gpui_component::StyledExt;

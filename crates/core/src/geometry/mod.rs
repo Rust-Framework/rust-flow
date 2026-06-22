@@ -142,6 +142,18 @@ impl RectF {
             size: SizeF::new(self.size.w + amount * 2.0, self.size.h + amount * 2.0),
         }
     }
+
+    /// Compute the smallest rectangle containing both `self` and `other`.
+    pub fn union(self, other: Self) -> Self {
+        let left = self.left().min(other.left());
+        let top = self.top().min(other.top());
+        let right = self.right().max(other.right());
+        let bottom = self.bottom().max(other.bottom());
+        Self::new(
+            PointF::new(left, top),
+            SizeF::new(right - left, bottom - top),
+        )
+    }
 }
 
 #[cfg(test)]
@@ -175,5 +187,24 @@ mod tests {
         assert_eq!(e.left(), 5.0);
         assert_eq!(e.right(), 35.0);
         assert_eq!(e.size, SizeF::new(30.0, 30.0));
+    }
+
+    #[test]
+    fn rect_union() {
+        let a = RectF::new(PointF::new(10.0, 10.0), SizeF::new(20.0, 20.0));
+        let b = RectF::new(PointF::new(30.0, 30.0), SizeF::new(20.0, 20.0));
+        let u = a.union(b);
+        assert_eq!(u.left(), 10.0);
+        assert_eq!(u.top(), 10.0);
+        assert_eq!(u.right(), 50.0);
+        assert_eq!(u.bottom(), 50.0);
+
+        // Union with self is identity
+        let s = a.union(a);
+        assert_eq!(s, a);
+
+        // Union with contained rect is the outer rect
+        let inner = RectF::new(PointF::new(15.0, 15.0), SizeF::new(5.0, 5.0));
+        assert_eq!(a.union(inner), a);
     }
 }

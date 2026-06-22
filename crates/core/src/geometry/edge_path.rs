@@ -406,44 +406,40 @@ pub fn smoothstep_path(
 // Loop-back (U-shape)
 // ---------------------------------------------------------------------------
 
-/// Loop-back path: U-shape routing around `node_bounds` for loop nodes.
+/// Loop-back path: U-shape routing **below** `node_bounds` for loop nodes.
 ///
-/// Horizontal: exit right → down → left around the node → up → enter left.
-/// Vertical: exit bottom → left → up around the node → right → enter top.
+/// Always routes below the node (regardless of main layout direction):
+/// `src → right → down → left → up → dst`
+///
+/// `node_bounds` should include the loop body area (Loop node + all loop body
+/// nodes), so the path clears everything when routing below.
+///
+/// **Design rationale**: the loop body chain is always vertical (top-in /
+/// bottom-out), arranged downward from `loop_body` (right side of Loop node).
+/// The back-edge from the last loop body node's bottom port must go down,
+/// around, and back up to `loop_in` (left side of Loop node), never crossing
+/// through the node.
 pub fn loop_back_path(
     src: PointF,
     dst: PointF,
-    horizontal: bool,
+    _horizontal: bool, // ignored — always route below
     node_bounds: crate::geometry::RectF,
 ) -> Vec<PointF> {
     let margin = 40.0;
-    if horizontal {
-        // Route below the node: right → down → left → up to dst (left side).
-        let bottom_y = node_bounds.bottom() + margin;
-        let right_x = src.x + margin;
-        let left_x = dst.x - margin;
-        vec![
-            src,
-            PointF::new(right_x, src.y),
-            PointF::new(right_x, bottom_y),
-            PointF::new(left_x, bottom_y),
-            PointF::new(left_x, dst.y),
-            dst,
-        ]
-    } else {
-        // Route left of the node: down → left → up → right to dst (top side).
-        let left_x = node_bounds.left() - margin;
-        let bottom_y = src.y + margin;
-        let top_y = dst.y - margin;
-        vec![
-            src,
-            PointF::new(src.x, bottom_y),
-            PointF::new(left_x, bottom_y),
-            PointF::new(left_x, top_y),
-            PointF::new(dst.x, top_y),
-            dst,
-        ]
-    }
+    // bottom_y must be below both the node bounds and the source point
+    // (source is the last loop body node's bottom port, which may be below
+    // the Loop node itself).
+    let bottom_y = node_bounds.bottom().max(src.y) + margin;
+    let right_x = src.x + margin;
+    let left_x = dst.x - margin;
+    vec![
+        src,
+        PointF::new(right_x, src.y),
+        PointF::new(right_x, bottom_y),
+        PointF::new(left_x, bottom_y),
+        PointF::new(left_x, dst.y),
+        dst,
+    ]
 }
 
 #[cfg(test)]
@@ -513,25 +509,40 @@ mod tests {
     }
 
     #[test]
-    fn loop_back_horizontal_routes_below() {
+    fn loop_back_always_routes_below() {
         let bounds = crate::geometry::RectF::new(
             PointF::new(100.0, 100.0),
             crate::geometry::SizeF::new(180.0, 80.0),
         );
-        let pts = loop_back_path(
-            PointF::new(300.0, 140.0),
-            PointF::new(100.0, 140.0),
-            true,
-            bounds,
+        // Test both horizontal=true and horizontal=false — both must route below.
+        for horizontal in [true, false] {
+            let pts = loop_back_path(
+                PointF::new(300.0, 140.0),
+                PointF::new(100.0, 140.0),
+                horizontal,
+                bounds,
+            );
+            // The bottom routing segment must be below the node.
+            let bottom = bounds.bottom();
+            let has_below = pts.iter().any(|p| p.y >= bottom);
+            assert!(has_below, "U-shape must route below the node (horizontal={horizontal})");
+            // Endpoints preserved.
+            assert_eq!(*pts.first().unwrap(), PointF::new(300.0, 140.0));
+            assert_eq!(*pts.last().unwrap(), PointF::new(100.0, 140.0));
+        }
+    }
+
+    #[test]
+    fn loop_back_clears_source_below_node() {
+        // Source (last loop body node) is below the Loop node — path must go
+        // even lower to clear it.
+        let bounds = crate::geometry::RectF::new(
+            PointF::new(100.0, 100.0),
+            crate::geometry::SizeF::new(180.0, 80.0),
         );
-        // The bottom routing segment must be below the node.
-        let bottom = bounds.bottom();
-        let has_below = pts
-            .iter()
-            .any(|p| p.y >= bottom);
-        assert!(has_below, "U-shape must route below the node");
-        // Endpoints preserved.
-        assert_eq!(*pts.first().unwrap(), PointF::new(300.0, 140.0));
-        assert_eq!(*pts.last().unwrap(), PointF::new(100.0, 140.0));
+        let src = PointF::new(300.0, 300.0); // well below the node (bottom=180)
+        let pts = loop_back_path(src, PointF::new(100.0, 140.0), true, bounds);
+        let max_y = pts.iter().map(|p| p.y).fold(0.0f32, f32::max);
+        assert!(max_y > src.y, "path must go below the source point");
     }
 }
