@@ -392,13 +392,6 @@ fn reserve_loop_back_edge_space(
 /// This constant is duplicated here because core crate cannot depend on gpui.
 const LOOP_TITLE_MID_Y: f32 = 18.0;
 
-/// Loop node body mid-Y offset (= TITLE_H + BODY_H / 2 = 36 + 22 = 58).
-///
-/// **Must match** `TITLE_H + BODY_H * 0.5` in `crates/gpui/src/builtin/loop_node.rs`.
-/// The `loop_body` port is at `(right, body_mid_y)` for horizontal layout,
-/// and `loop_in` port is at `(left, body_mid_y)` for both layouts.
-const LOOP_BODY_MID_Y: f32 = 58.0;
-
 /// Loop node `loop_body` port X ratio for vertical layout.
 ///
 /// `loop_body` port is at `(x + w * 0.25, bottom)` in vertical layout,
@@ -584,10 +577,12 @@ fn align_loop_body_target(
 
         match direction {
             LayoutDirection::Horizontal => {
-                // loop_body port Y = loop_pos.y + LOOP_BODY_MID_Y
-                // Body Left port Y = target_pos.y + target.h / 2
-                // Straight: target_pos.y + target.h / 2 = loop_pos.y + LOOP_BODY_MID_Y
-                target_pos.y = loop_pos.y + LOOP_BODY_MID_Y - target_node.size.h * 0.5;
+                // 循环体节点始终从 Top 进入（纵向编排），无论主布局方向。
+                // loop_body port X = loop_pos.x + loop_w * LOOP_BODY_PORT_X_RATIO
+                // Body Top port X = target_pos.x + target.w / 2
+                // Straight: target_pos.x + target.w / 2 = loop_pos.x + loop_w * RATIO
+                target_pos.x = loop_pos.x + loop_node.size.w * LOOP_BODY_PORT_X_RATIO
+                    - target_node.size.w * 0.5;
             }
             LayoutDirection::Vertical => {
                 // loop_body port X = loop_pos.x + loop_w * LOOP_BODY_PORT_X_RATIO

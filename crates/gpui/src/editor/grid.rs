@@ -1,20 +1,25 @@
 //! 点阵背景渲染。
 //!
-//! 每个点作为独立的 fill path 单独绘制，避免多子路径 fill 在某些
-//! lyon FillTessellator 实现下的渲染缺陷。点为固定屏幕尺寸（2px 半径），
-//! 间距随缩放变化。自适应间距限制可见点数量，保证平移时帧率稳定。
+//! 使用 `paint_quad` 绘制每个点（小圆形 quad），利用 GPUI 的
+//! `snap_bounds` + `snapped_content_mask` 机制确保像素对齐渲染。
+//! 之前使用 `paint_path`（PathBuilder::fill）绘制 3px 菱形，
+//! 由于 `paint_path` 不做设备像素对齐，极小路径在 `insert_primitive`
+//! 的 `intersect` 裁剪后可能被判定为空而跳过，导致点阵不可见。
+//!
+//! 点为固定屏幕尺寸，间距随缩放变化。自适应间距限制可见点数量，
+//! 保证平移时帧率稳定。
 
-use gpui::{px, Bounds, PathBuilder, Point, Pixels, Rgba, Window};
+use gpui::{Bounds, Corners, Edges, Pixels, Point, Rgba, Window, quad};
 
 /// 点阵背景间距（逻辑坐标）。
 pub(crate) const GRID_SPACING: f32 = 40.0;
 
 /// 绘制点阵背景。
 ///
-/// 点为固定屏幕尺寸（2px 半径），间距随缩放变化。自适应间距：当屏幕
-/// 间距 < 20px 时将逻辑间距翻倍，限制点数量上限，避免低缩放时点爆炸。
-///
-/// 每个点单独构造 fill path 并 paint，确保渲染可靠性。
+/// 每个点用 `paint_quad` 绘制为小圆形（通过 `corner_radii` = 半径实现）。
+/// `paint_quad` 内部使用 `snap_bounds`（对齐设备像素）和
+/// `snapped_content_mask`（`cover_bounds` 向外取整），确保小尺寸图形
+/// 不会被 content_mask 裁剪掉。
 ///
 /// `dot_color` 来自主题，支持亮色/暗色主题切换。
 pub(crate) fn paint_grid(
@@ -49,7 +54,9 @@ pub(crate) fn paint_grid(
     let start_x = (min_lx / spacing).floor() * spacing;
     let start_y = (min_ly / spacing).floor() * spacing;
 
-    let dot_r = 1.5_f32;
+    // 点的屏幕尺寸（直径 3px，半径 1.5px）
+    let dot_size = 3.0_f32;
+    let half = dot_size / 2.0;
 
     let mut gy = start_y;
     while gy <= max_ly {
@@ -57,16 +64,19 @@ pub(crate) fn paint_grid(
         while gx <= max_lx {
             let sx = gx * scale + ox;
             let sy = gy * scale + oy;
-            // 每个点单独绘制，避免多子路径 fill 的渲染问题。
-            let mut path = PathBuilder::fill();
-            path.move_to(Point::new(px(sx - dot_r), px(sy)));
-            path.line_to(Point::new(px(sx), px(sy - dot_r)));
-            path.line_to(Point::new(px(sx + dot_r), px(sy)));
-            path.line_to(Point::new(px(sx), px(sy + dot_r)));
-            path.close();
-            if let Ok(path) = path.build() {
-                window.paint_path(path, dot_color);
-            }
+            // 用 paint_quad 绘制圆形点：corner_radii = half 使正方形变为圆。
+            let dot_bounds = Bounds::new(
+                Point::new(gpui::px(sx - half), gpui::px(sy - half)),
+                gpui::Size::new(gpui::px(dot_size), gpui::px(dot_size)),
+            );
+            window.paint_quad(quad(
+                dot_bounds,
+                Corners::all(gpui::px(half)),
+                dot_color,
+                Edges::default(),
+                gpui::transparent_black(),
+                gpui::BorderStyle::default(),
+            ));
             gx += spacing;
         }
         gy += spacing;

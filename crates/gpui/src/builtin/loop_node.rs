@@ -4,8 +4,9 @@
 //! - **纵向**：In 顶 / Done 底（主线），LoopBody 右 / LoopIn 左（循环体支线）
 //! - **横向**：In 左 / Done 右（主线），LoopBody 右 / LoopIn 左（循环体支线，固定）
 //!
-//! **外部回环连线**：从 LoopBody 出口 → 外部循环体节点 → 回连到 LoopIn 入口，
-//! 循环体支线在两个方向上均从右侧出、向左绕回左侧入。
+//! **外部回环连线**：从 LoopBody 出口 → 外部循环体节点 → 回连到 LoopIn 入口。
+//! 循环体节点始终纵向编排（上进下出），无论主布局方向。
+//! 回环边从 body 节点底部出，向下绕过 body 组合边界，左进 loop_in。
 //!
 //! **布局**（纵向，主要标准）：
 //! ```text
@@ -29,9 +30,9 @@
 //!       │ └──┬─────────────────────┬───┘ │
 //!       │    │ LoopIn        LoopBody│   │
 //!       │    ↑                      ↓    │
-//!       │    │                  (→ body node → 右出向下绕回)
+//!       │    │           (→ body node 上进下出 →)
 //!       └────┘ ┌─────────────────────────────┐
-//!              │   回环边从 body 右侧出，向下绕过，左进 loop_in
+//!              │   回环边从 body 底部出，向下绕过，左进 loop_in
 //! ```
 
 use gpui::{div, px, AnyElement, IntoElement, ParentElement, Styled};
@@ -309,7 +310,7 @@ impl IFlowNode for LoopNode {
             },
             // 循环体支线：
             // - 纵向：LoopBody 底部偏左（w*0.25），与 Done（mid_x）错开；LoopIn 左侧入
-            // - 横向：LoopBody 右侧出；LoopIn 左侧入（回环边从下绕回）
+            // - 横向：LoopBody 右侧出；LoopIn 左侧入（回环边从 body 底部向下绕回）
             "loop_body" => match layout {
                 LayoutDirection::Horizontal => Some(PointF::new(right, body_mid_y)),
                 LayoutDirection::Vertical => {

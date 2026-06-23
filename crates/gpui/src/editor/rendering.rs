@@ -7,8 +7,8 @@
 //! ## Loop 循环体特殊处理
 //!
 //! 循环体节点（从 `loop_body` 出口可达的节点）始终使用**纵向端口**
-//!（上进下出），无论主布局方向如何。回环边（目标端口为 `loop_in`）
-//! 使用 `loop_back_path` 向下绕过 Loop 节点 + 循环体的组合边界。
+//!（上进下出），无论主布局方向是横向还是纵向。回环边（目标端口为
+//! `loop_in`）使用 `loop_back_path` 向下绕过 Loop 节点 + 循环体的组合边界。
 
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -64,9 +64,10 @@ fn compute_loop_bounds(graph: &FlowGraph, loop_node: NodeId, body_nodes: &HashSe
 /// 计算边的端点。
 ///
 /// **端口策略**（与布局方向协同，减少拐弯）：
-/// - **纵向布局**：body 节点强制 Top/Bottom（垂直子流），与 Loop 的 Bottom→Top 形成 opposite 配对
-/// - **横向布局**：body 节点用默认 Left/Right（水平子流），与 Loop 的 Right→Left 形成 opposite 配对；
-///   回环边 src 同样用默认 Right（右出左进，回环边从下方绕行）
+/// - **循环体节点**：始终强制 Top/Bottom（垂直子流，上进下出），无论主布局方向如何。
+///   这样 Loop 的 `loop_body` 出口（Bottom）→ body 入口（Top），
+///   body 出口（Bottom）→ Loop 的 `loop_in` 入口（Top），形成自然的纵向流。
+/// - **非循环体节点**：按布局方向使用默认端口对（纵向 Top/Bottom，横向 Left/Right）。
 fn compute_edge_endpoints(
     edge: &Edge,
     graph: &FlowGraph,
@@ -88,10 +89,9 @@ fn compute_edge_endpoints(
     let src_is_body = body_nodes.contains(&edge.source);
     let dst_is_body = body_nodes.contains(&edge.target);
 
-    // 纵向布局：body 节点始终强制 Top/Bottom（垂直子流）
-    // 横向布局：body 节点用默认 Left/Right（水平子流），回环边从右侧出、向左绕回
-    let force_src_bottom = src_is_body && matches!(layout, LayoutDirection::Vertical);
-    let force_dst_top = dst_is_body && matches!(layout, LayoutDirection::Vertical);
+    // 循环体节点始终强制 Top/Bottom（垂直子流，上进下出），无论主布局方向。
+    let force_src_bottom = src_is_body;
+    let force_dst_top = dst_is_body;
 
     // 源端点
     let (src, src_side) = if force_src_bottom {
@@ -125,9 +125,9 @@ impl FlowEditorView {
     /// 渲染所有边（canvas paint），使用**逻辑坐标** + PathBuilder 变换。
     ///
     /// 边端点通过 [`compute_edge_endpoints`] 计算：
-    /// - 纵向布局：body 节点强制 Top/Bottom（垂直子流）
-    /// - 横向布局：body 节点用默认 Left/Right（水平子流），回环边右出左进
-    /// - 回环边（target_port == "loop_in"）使用 `loop_back_path` 向下/向左绕过
+    /// - 循环体节点始终强制 Top/Bottom（垂直子流，上进下出），无论主布局方向
+    /// - 非循环体节点按布局方向使用默认端口对
+    /// - 回环边（target_port == "loop_in"）使用 `loop_back_path` 向下绕过
     pub(crate) fn render_edges(&self) -> impl IntoElement {
         let s = self.scale();
         let (src_side_default, dst_side_default) = self.port_sides();

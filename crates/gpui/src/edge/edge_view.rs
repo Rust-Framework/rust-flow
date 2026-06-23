@@ -192,10 +192,11 @@ pub(crate) fn paint_edge_scaled(
     paint_arrow(&points, scale, offset, color, window);
 }
 
-/// 渲染 Loop 回环边：使用 `loop_back_path` 绕过 Loop 节点下方。
+/// 渲染 Loop 回环边：使用 `loop_back_path` 绕过 Loop 节点下方/左侧。
 ///
-/// `node_bounds` 应包含 Loop 节点 + 所有循环体节点的组合边界，
-/// 确保回环路径从最后循环体节点的右侧 → 向右 → 向下 → 向左 → 向上 → 回到 loop_in。
+/// `node_bounds` 应包含 Loop 节点 + 所有循环体节点的组合边界。
+/// - **横向布局**：回环边从 body 底部出 → 向下 → 向左 → 向上 → 右进 loop_in
+/// - **纵向布局**：回环边从 body 底部出 → 向左 → 向上 → 右进 loop_in（绕左侧）
 ///
 /// **样式一致性**：当 `edge_type` 为 `SmoothStep` 时，对 `loop_back_path`
 /// 产生的折线应用 `round_corners` 圆角处理，与普通边保持一致的圆角风格。
