@@ -109,7 +109,12 @@ impl IFlowNode for ActionNode {
         );
 
         // 主体（底部圆角）：描述文案
-        let body_text = if desc.is_empty() { "Action".to_string() } else { desc };
+        // desc 为空时回退到 i18n 的 "Action" 文案（中英文切换同步）
+        let body_text = if desc.is_empty() {
+            crate::i18n::t(ctx.language, crate::i18n::TKey::Action).to_string()
+        } else {
+            desc
+        };
         container = container.child(
             div()
                 .absolute()

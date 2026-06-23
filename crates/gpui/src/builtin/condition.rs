@@ -392,7 +392,7 @@ impl IFlowNode for ConditionNode {
                     div()
                         .text_size(px(12.0 * s))
                         .text_color(t.node_subtext)
-                        .child(format!("If {}", cond_label)),
+                        .child(format!("{} {}", crate::i18n::t(ctx.language, TKey::If), cond_label)),
                 );
             container = container.child(row);
         }
@@ -418,7 +418,7 @@ impl IFlowNode for ConditionNode {
                         .text_size(px(12.0 * s))
                         .font_semibold()
                         .text_color(t.node_subtext)
-                        .child("Else"),
+                        .child(crate::i18n::t(ctx.language, TKey::Else).to_string()),
                 ),
         );
 

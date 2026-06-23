@@ -62,7 +62,7 @@ impl LayoutEngine for DagreLayout {
             rankdir,
             nodesep: self.nodesep,
             ranksep: self.ranksep,
-            edgesep: 20.0,
+            edgesep: 30.0,
             marginx: 40.0,
             marginy: 40.0,
             ranker: Ranker::NetworkSimplex,
@@ -137,6 +137,20 @@ impl LayoutEngine for DagreLayout {
         // minimises edge crossings.
         reorder_branch_targets(graph, &mut positions, direction);
 
+        // Post-process: align linear chains along the cross-axis to produce
+        // straight edges in the main flow.
+        //
+        // dagre assigns cross-axis positions via barycenter heuristics that
+        // don't guarantee alignment of consecutive single-successor nodes.
+        // This step traverses nodes in topological order and aligns each
+        // linear successor's cross-axis center with its predecessor's,
+        // eliminating unnecessary bends. Branch sources (2+ out-edges) and
+        // merge targets (2+ in-edges) break the chain.
+        //
+        // Runs BEFORE loop-specific alignment so that loop alignment can
+        // fine-tune based on the already-aligned main flow.
+        align_linear_chain(graph, &mut positions, direction);
+
         // Post-process: reserve space for Loop back-edge routing.
         //
         // The loop back-edge routes BELOW the body group in BOTH layouts
@@ -202,9 +216,16 @@ fn branch_port_order(port: &str) -> usize {
 /// order of their source node.
 ///
 /// For each source node that has multiple outgoing edges with `source_port`,
-/// sort the target nodes by their port order and assign them to the sorted
-/// positions currently occupied by those targets. This only permutes
-/// positions among the group — it does not change the set of positions.
+/// sort the target nodes by their port order and:
+/// 1. **Unify the main-axis coordinate** (X for horizontal, Y for vertical)
+///    to the median of current values, ensuring all branch targets align in
+///    the same column (horizontal) or row (vertical).
+/// 2. **Distribute the cross-axis coordinate** (Y for horizontal, X for
+///    vertical) — width-aware cumulative allocation when dagre's spacing is
+///    too tight, even distribution when adequate. This prevents the
+///   黏连/重叠 that occurs when dagre places branch targets at different
+///    ranks (where `nodesep` doesn't apply) near the same cross-axis
+///    coordinate.
 ///
 /// Only Condition-style ports (`if_N` / `else`) are reordered. Other
 /// multi-port nodes (e.g. Loop with `loop_body` / `done`) are skipped to
@@ -246,14 +267,15 @@ fn reorder_branch_targets(
         // Sort targets by port order (if_0=0, if_1=1, ..., else=MAX).
         targets.sort_by_key(|(port, _)| branch_port_order(port));
 
-        // Collect the current coordinates of these targets along the
-        // cross-rank axis (Y for horizontal layout, X for vertical).
-        let mut current_coords: Vec<f32> = targets
+        // Collect the current coordinates of these targets.
+        // main_axis = X (horizontal) / Y (vertical) — flow direction
+        // cross_axis = Y (horizontal) / X (vertical) — branch stacking direction
+        let current_coords: Vec<(f32, f32)> = targets
             .iter()
             .filter_map(|(_, nid)| positions.get(nid))
             .map(|p| match direction {
-                LayoutDirection::Horizontal => p.y,
-                LayoutDirection::Vertical => p.x,
+                LayoutDirection::Horizontal => (p.x, p.y),
+                LayoutDirection::Vertical => (p.y, p.x),
             })
             .collect();
 
@@ -261,16 +283,224 @@ fn reorder_branch_targets(
             continue; // some targets missing positions — skip
         }
 
-        // Sort the coordinates so we assign the smallest coordinate to the
-        // first port (else), the next to if_0, etc.
-        current_coords.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        // Unify main-axis coordinate: use the median so all branch targets
+        // align in the same column (horizontal) or row (vertical).
+        let mut main_coords: Vec<f32> = current_coords.iter().map(|(m, _)| *m).collect();
+        main_coords.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        let median_main = main_coords[main_coords.len() / 2];
 
-        // Assign sorted targets to sorted coordinates.
-        for (i, (_, nid)) in targets.iter().enumerate() {
-            if let Some(pos) = positions.get_mut(nid) {
-                match direction {
-                    LayoutDirection::Horizontal => pos.y = current_coords[i],
-                    LayoutDirection::Vertical => pos.x = current_coords[i],
+        // Collect cross-axis coordinates and sort to find [min, max].
+        let mut cross_coords: Vec<f32> = current_coords.iter().map(|(_, c)| *c).collect();
+        cross_coords.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        let cross_min = *cross_coords.first().unwrap_or(&0.0);
+        let cross_max = *cross_coords.last().unwrap_or(&0.0);
+        let n = targets.len();
+
+        // Collect each target's cross-axis size (width for vertical, height for horizontal).
+        // Used to compute the minimum span required to avoid overlap.
+        let cross_sizes: Vec<f32> = targets
+            .iter()
+            .filter_map(|(_, nid)| {
+                graph.node(*nid).map(|node| match direction {
+                    LayoutDirection::Horizontal => node.size.h,
+                    LayoutDirection::Vertical => node.size.w,
+                })
+            })
+            .collect();
+        if cross_sizes.len() != n {
+            continue;
+        }
+
+        // Minimum required span = sum of sizes + MIN_SEP between each pair.
+        let total_sizes: f32 = cross_sizes.iter().sum();
+        let needed_span = total_sizes + MIN_BRANCH_CROSS_SEP * (n - 1) as f32;
+        let available_span = cross_max - cross_min;
+
+        // Assign cross-axis coordinates.
+        // - If dagre gave enough space (available >= needed), use even distribution
+        //   within [min, max] to preserve dagre's intended spacing.
+        // - If dagre's spacing is too tight (available < needed), use cumulative
+        //   width-aware allocation centered on the median to prevent overlap.
+        if available_span >= needed_span {
+            let cross_step = if n > 1 {
+                available_span / (n - 1) as f32
+            } else {
+                0.0
+            };
+            for (i, (_, nid)) in targets.iter().enumerate() {
+                if let Some(pos) = positions.get_mut(nid) {
+                    let new_cross = cross_min + cross_step * i as f32;
+                    match direction {
+                        LayoutDirection::Horizontal => {
+                            pos.x = median_main;
+                            pos.y = new_cross;
+                        }
+                        LayoutDirection::Vertical => {
+                            pos.y = median_main;
+                            pos.x = new_cross;
+                        }
+                    }
+                }
+            }
+        } else {
+            // Cumulative width-aware allocation: stack targets centered on median.
+            let cross_center = (cross_min + cross_max) * 0.5;
+            let mut cursor = cross_center - needed_span * 0.5;
+            for (i, (_, nid)) in targets.iter().enumerate() {
+                let new_cross = cursor + cross_sizes[i] * 0.5;
+                cursor += cross_sizes[i] + MIN_BRANCH_CROSS_SEP;
+                if let Some(pos) = positions.get_mut(nid) {
+                    match direction {
+                        LayoutDirection::Horizontal => {
+                            pos.x = median_main;
+                            pos.y = new_cross;
+                        }
+                        LayoutDirection::Vertical => {
+                            pos.y = median_main;
+                            pos.x = new_cross;
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Minimum cross-axis separation between branch targets (logical pixels).
+///
+/// Ensures branch targets (e.g. Condition's if_0/if_1/else targets) don't
+/// visually黏连 even when dagre places them at similar cross-axis
+/// coordinates. This happens when targets are in different ranks — dagre's
+/// `nodesep` only applies within the same rank, so cross-rank targets can
+/// end up at nearly identical X (vertical layout) or Y (horizontal layout)
+/// positions.
+const MIN_BRANCH_CROSS_SEP: f32 = 40.0;
+
+/// Whether an edge is a loop-related "special" edge that should be excluded
+/// from linear chain alignment.
+///
+/// Excludes:
+/// - `loop_body` edges (Loop → body entry)
+/// - `done` edges (Loop → exit target)
+/// - `loop_in` edges (body → Loop back-edge)
+fn is_loop_edge(edge: &crate::graph::Edge) -> bool {
+    match edge.source_port.as_deref() {
+        Some("loop_body") | Some("done") => true,
+        _ => edge.target_port.as_deref() == Some("loop_in"),
+    }
+}
+
+/// Align linear chains along the cross-axis to eliminate unnecessary bends
+/// in the main flow.
+///
+/// A **linear chain** is a sequence of nodes connected by non-loop edges
+/// where each intermediate node has exactly one non-loop in-edge and one
+/// non-loop out-edge. This function traverses nodes in topological order
+/// (Kahn's algorithm) and aligns each linear successor's cross-axis center
+/// with its predecessor's, producing straight edges.
+///
+/// **Alignment formula** (center-port alignment so the edge is a straight line):
+/// - Horizontal: `next.y = curr.y + (curr.h - next.h) / 2`
+///   (aligns `next.y + next.h/2 == curr.y + curr.h/2`, i.e. port Y matches)
+/// - Vertical: `next.x = curr.x + (curr.w - next.w) / 2`
+///
+/// **Chain breaks** at:
+/// - Branch sources (non-loop out-degree ≥ 2): successors are branch targets
+///   whose positions are controlled by `reorder_branch_targets`.
+/// - Merge targets (non-loop in-degree ≥ 2): the node is a convergence point
+///   whose position is determined by dagre.
+/// - Loop-related edges (excluded by [`is_loop_edge`]).
+///
+/// Runs after `reorder_branch_targets` (so branch target ordering is
+/// preserved) and before `align_loop_*` (so loop alignment can fine-tune
+/// based on the already-aligned main flow).
+fn align_linear_chain(
+    graph: &FlowGraph,
+    positions: &mut std::collections::HashMap<crate::graph::NodeId, PointF>,
+    direction: LayoutDirection,
+) {
+    use std::collections::{HashMap, VecDeque};
+
+    // 1. Compute original non-loop in-degree, out-degree, and adjacency.
+    let mut orig_in_deg: HashMap<crate::graph::NodeId, usize> = HashMap::new();
+    let mut orig_out_deg: HashMap<crate::graph::NodeId, usize> = HashMap::new();
+    let mut out_adj: HashMap<crate::graph::NodeId, Vec<crate::graph::NodeId>> = HashMap::new();
+
+    for node in graph.nodes() {
+        orig_in_deg.entry(node.id).or_insert(0);
+        orig_out_deg.entry(node.id).or_insert(0);
+        out_adj.entry(node.id).or_insert(Vec::new());
+    }
+    for edge in graph.edges() {
+        if is_loop_edge(edge) {
+            continue;
+        }
+        *orig_in_deg.entry(edge.target).or_insert(0) += 1;
+        *orig_out_deg.entry(edge.source).or_insert(0) += 1;
+        out_adj.entry(edge.source).or_insert_with(Vec::new).push(edge.target);
+    }
+
+    // 2. Kahn's topological sort with remaining in-degree.
+    let mut rem_in_deg = orig_in_deg.clone();
+    let mut queue: VecDeque<crate::graph::NodeId> = rem_in_deg
+        .iter()
+        .filter(|(_, &deg)| deg == 0)
+        .map(|(&id, _)| id)
+        .collect();
+
+    let mut visited: std::collections::HashSet<crate::graph::NodeId> =
+        std::collections::HashSet::new();
+
+    while let Some(u) = queue.pop_front() {
+        if !visited.insert(u) {
+            continue;
+        }
+
+        // 3. If u is a linear node (exactly 1 non-loop out-edge), align its
+        //    successor v — but only if v is also linear (exactly 1 non-loop
+        //    in-edge), i.e. v is not a merge target.
+        if orig_out_deg.get(&u).copied() == Some(1) {
+            if let Some(succs) = out_adj.get(&u) {
+                if let Some(&v) = succs.first() {
+                    if orig_in_deg.get(&v).copied() == Some(1) {
+                        // Align v's cross-axis center to u's.
+                        let u_pos = match positions.get(&u) {
+                            Some(p) => *p,
+                            None => continue,
+                        };
+                        let u_node = match graph.node(u) {
+                            Some(n) => n,
+                            None => continue,
+                        };
+                        let v_node = match graph.node(v) {
+                            Some(n) => n,
+                            None => continue,
+                        };
+                        if let Some(v_pos) = positions.get_mut(&v) {
+                            match direction {
+                                LayoutDirection::Horizontal => {
+                                    v_pos.y = u_pos.y
+                                        + (u_node.size.h - v_node.size.h) * 0.5;
+                                }
+                                LayoutDirection::Vertical => {
+                                    v_pos.x = u_pos.x
+                                        + (u_node.size.w - v_node.size.w) * 0.5;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // 4. Decrement remaining in-degree for successors and enqueue.
+        if let Some(succs) = out_adj.get(&u) {
+            for &v in succs {
+                if let Some(deg) = rem_in_deg.get_mut(&v) {
+                    *deg = deg.saturating_sub(1);
+                    if *deg == 0 {
+                        queue.push_back(v);
+                    }
                 }
             }
         }
@@ -748,6 +978,53 @@ mod tests {
             y_if0 <= y_if1 && y_if1 <= y_else,
             "if_0 ({}) should be above if_1 ({}) above else ({})",
             y_if0, y_if1, y_else
+        );
+    }
+
+    #[test]
+    fn linear_chain_aligned_along_cross_axis() {
+        // Main flow: Start → A → B → Cond (branch) → ...
+        // Start, A, B are linear (1 in, 1 out). Cond is a branch source.
+        // After layout, Start/A/B should have aligned port-Y (center Y)
+        // so the connecting edges are straight horizontal lines.
+        let mut g = FlowGraph::new();
+        let start = g.add_node_with_size("start", serde_json::json!({}), SizeF::new(160.0, 56.0));
+        let a = g.add_node_with_size("action", serde_json::json!({}), SizeF::new(200.0, 64.0));
+        let b = g.add_node_with_size("action", serde_json::json!({}), SizeF::new(180.0, 35.0));
+        let cond = g.add_node_with_size("condition", serde_json::json!({}), SizeF::new(220.0, 144.0));
+        // Branch targets + sink to give Cond something to branch to.
+        let t0 = g.add_node_with_size("action", serde_json::json!({}), SizeF::new(100.0, 40.0));
+        let t1 = g.add_node_with_size("action", serde_json::json!({}), SizeF::new(100.0, 40.0));
+        let sink = g.add_node_with_size("end", serde_json::json!({}), SizeF::new(100.0, 40.0));
+
+        g.add_edge(Edge::new(start, a));
+        g.add_edge(Edge::new(a, b));
+        g.add_edge(Edge::new(b, cond));
+        let mut e_if0 = Edge::new(cond, t0);
+        e_if0.source_port = Some("if_0".to_string());
+        let mut e_else = Edge::new(cond, t1);
+        e_else.source_port = Some("else".to_string());
+        g.add_edge(e_if0);
+        g.add_edge(e_else);
+        g.add_edge(Edge::new(t0, sink));
+        g.add_edge(Edge::new(t1, sink));
+
+        let result = DagreLayout::new().layout(&g, LayoutDirection::Horizontal);
+
+        // For horizontal layout, port Y = node.y + node.h / 2.
+        // Linear chain nodes (start, a, b) should have matching port Y.
+        let port_y = |id| {
+            let p = &result.positions[&id];
+            let node = g.node(id).unwrap();
+            p.y + node.size.h * 0.5
+        };
+        let py_start = port_y(start);
+        let py_a = port_y(a);
+        let py_b = port_y(b);
+        assert!(
+            (py_start - py_a).abs() < 1.0 && (py_a - py_b).abs() < 1.0,
+            "Linear chain port Y should be aligned: start={}, a={}, b={}",
+            py_start, py_a, py_b
         );
     }
 }

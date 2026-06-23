@@ -138,6 +138,7 @@ pub enum TKey {
     EdgeStep,
     EdgeSmoothStep,
     // 点阵密度名称
+    GridDensityDisabled,
     GridDensityCompact,
     GridDensityNormal,
     GridDensitySparse,
@@ -243,6 +244,7 @@ fn t_zh(key: TKey) -> &'static str {
         TKey::EdgeStep => "直角折线",
         TKey::EdgeSmoothStep => "圆角折线",
         // 点阵密度名称
+        TKey::GridDensityDisabled => "禁用",
         TKey::GridDensityCompact => "紧凑",
         TKey::GridDensityNormal => "标准",
         TKey::GridDensitySparse => "稀疏",
@@ -341,6 +343,7 @@ fn t_en(key: TKey) -> &'static str {
         TKey::EdgeStep => "Step",
         TKey::EdgeSmoothStep => "Smooth Step",
         // 点阵密度名称
+        TKey::GridDensityDisabled => "Disabled",
         TKey::GridDensityCompact => "Compact",
         TKey::GridDensityNormal => "Normal",
         TKey::GridDensitySparse => "Sparse",

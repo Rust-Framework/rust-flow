@@ -23,6 +23,7 @@
 //! - [`super::ports`]：端口位置计算
 //! - [`super::viewport`]：视口数学映射
 
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use gpui::{
@@ -58,6 +59,8 @@ pub struct FlowEditorView {
     pub selected: Option<NodeId>,
     /// 当前悬停的节点 ID（用于显示删除按钮等 hover 元素）。
     pub hovered: Option<NodeId>,
+    /// 当前悬停的边「+」按钮对应的边 ID（用于显示手型 cursor + tooltip）。
+    pub hovered_plus: Option<EdgeId>,
     /// 默认边类型（用于 DrawingEdge 临时连线 + 全局切换）。
     pub default_edge_type: EdgeType,
     /// 布局方向（决定边的端口侧：Horizontal=Right/Left, Vertical=Bottom/Top）。
@@ -79,6 +82,12 @@ pub struct FlowEditorView {
     pub language: Language,
     /// 当前数据源（切换时重建图）。
     pub data_source: DataSource,
+    /// 缓存的循环体分组（Loop 节点 → 其循环体节点集合）。
+    ///
+    /// 由 `loop_body_groups()` BFS 计算得出，在 `relayout` 末尾更新。
+    /// 拖动/平移等不改变图结构的交互不会触发更新，避免每帧重复 O(V+E) 遍历。
+    /// 供 `render`、`hit_test_edge_plus` 等复用，保证渲染与命中测试一致。
+    pub cached_body_groups: HashMap<NodeId, HashSet<NodeId>>,
 }
 
 impl FlowEditorView {
@@ -102,6 +111,7 @@ impl FlowEditorView {
             syntax_service: default_syntax_service(),
             language: Language::default(),
             data_source: DataSource::default(),
+            cached_body_groups: HashMap::new(),
         }
     }
 
@@ -137,6 +147,10 @@ impl FlowEditorView {
                 node.position = pos;
             }
         }
+
+        // 更新缓存的循环体分组：图结构/布局变化后重新计算 BFS。
+        // 拖动/平移等不改变图结构的交互不会触发 relayout，避免每帧重复计算。
+        self.cached_body_groups = self.graph.loop_body_groups();
     }
 
     /// 同步所有节点的 `size` 为实际渲染尺寸（`IFlowNode::content_size`）。
@@ -161,6 +175,34 @@ impl FlowEditorView {
             if let Some(node) = self.graph.node_mut(id) {
                 node.size = new_size;
             }
+        }
+    }
+
+    /// 仅检查并更新单个节点的渲染尺寸，返回尺寸是否发生变化。
+    ///
+    /// 用于 `SetData` 路径：避免每次按键都遍历所有节点（`sync_node_sizes`）
+    /// 和运行 dagre 布局（`relayout`）。只有结构化节点（如 Condition 的
+    /// conditions 数量变化）才会真正改变尺寸触发重排。
+    fn update_node_size_if_changed(&mut self, node_id: NodeId) -> bool {
+        let (kind, old_size) = match self.graph.node(node_id) {
+            Some(n) => (n.kind.clone(), n.size),
+            None => return false,
+        };
+        let flow_node = match self.registry.get(&kind) {
+            Some(f) => f,
+            None => return false,
+        };
+        let new_size = match self.graph.node(node_id) {
+            Some(n) => flow_node.content_size(n),
+            None => return false,
+        };
+        if new_size != old_size {
+            if let Some(node) = self.graph.node_mut(node_id) {
+                node.size = new_size;
+            }
+            true
+        } else {
+            false
         }
     }
 
@@ -328,8 +370,11 @@ impl FlowEditorView {
                 if let Some(node) = self.graph.node_mut(node_id) {
                     node.data[key] = value;
                 }
-                self.sync_node_sizes();
-                self.relayout();
+                // 仅当节点实际渲染尺寸变化时才触发 relayout，
+                // 避免每次按键都运行 dagre 布局导致严重卡顿。
+                if self.update_node_size_if_changed(node_id) {
+                    self.relayout();
+                }
                 cx.notify();
             }
         }
@@ -423,8 +468,9 @@ impl FlowEditorView {
                 .flex()
                 .flex_col()
                 .gap_1()
-                .on_mouse_down(MouseButton::Left, |_, _, _| {
+                .on_mouse_down(MouseButton::Left, |_, _, cx| {
                     // 拦截浮层内点击，防止冒泡到画布的 Empty 分支导致浮层关闭
+                    cx.stop_propagation();
                 })
                 .child(
                     div()
@@ -458,12 +504,15 @@ impl FlowEditorView {
 impl Render for FlowEditorView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let entity = cx.entity();
-        // 计算循环体分组一次，传入 render_edges/render_nodes 复用，
-        // 避免每帧重复执行 BFS 遍历（O(V+E)）。
-        let body_groups = self.graph.loop_body_groups();
-        let edges = self.render_edges(&body_groups);
-        let nodes = self.render_nodes(entity.clone(), &body_groups);
-        let panel = self.ensure_panel_view(entity, window, cx);
+        // 先调用需要 &mut self 的方法（ensure_panel_view 可能修改 panel_view），
+        // 借用释放后再引用 cached_body_groups，避免每帧 clone 整个 HashMap。
+        let panel = self.ensure_panel_view(entity.clone(), window, cx);
+
+        // 使用缓存的循环体分组引用，避免每帧 clone。
+        // 缓存在 relayout 末尾更新，拖动/平移等不改变图结构的交互不会触发更新。
+        let body_groups = &self.cached_body_groups;
+        let edges = self.render_edges(body_groups);
+        let nodes = self.render_nodes(entity.clone(), body_groups);
         let toolbar = self.render_toolbar(cx);
 
         let offset = self.viewport.offset;
@@ -508,15 +557,23 @@ impl Render for FlowEditorView {
         container = container.child(content);
 
         // ====== 边「+」按钮层：在节点层之上，不受 offset 影响 ======
-        // 按钮位置 = viewport.offset + edge_midpoint × scale（屏幕坐标）
-        // 放在节点层之后确保不被节点遮挡
-        container = container.child(self.render_edge_plus_buttons(&body_groups));
+        // 按钮位置 = viewport.offset + 源端口轴向偏移10px × scale（屏幕坐标）
+        // 放在节点层之后确保不被节点遮挡。
+        // 拖动节点/平移画布时跳过按钮渲染，避免每帧创建大量 div 元素导致卡顿。
+        let is_interacting = matches!(
+            self.interaction,
+            InteractionState::DraggingNode { .. } | InteractionState::Panning { .. }
+        );
+        if !is_interacting {
+            container = container.child(self.render_edge_plus_buttons(body_groups));
+        }
 
         // ====== 工具栏：不受缩放影响 ======
         container = container.child(toolbar);
 
         // ====== 属性面板：不受缩放影响 ======
         // 面板容器拦截鼠标事件，防止点击冒泡到画布导致 selected=None 面板销毁。
+        // GPUI 的 on_mouse_down 不会自动停止冒泡，必须显式调用 cx.stop_propagation()。
         if let Some(panel_view) = panel {
             container = container.child(
                 div()
@@ -525,8 +582,8 @@ impl Render for FlowEditorView {
                     .top_0()
                     .bottom_0()
                     .id("panel-container")
-                    .on_mouse_down(MouseButton::Left, |_, _, _| {})
-                    .on_mouse_down(MouseButton::Middle, |_, _, _| {})
+                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                    .on_mouse_down(MouseButton::Middle, |_, _, cx| cx.stop_propagation())
                     .child(panel_view),
             );
         }

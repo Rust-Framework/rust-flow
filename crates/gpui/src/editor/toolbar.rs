@@ -14,6 +14,7 @@ use gpui_component::{IconName, Selectable, Sizable};
 use rust_agent_flow::{EdgeType, PointF, RectF, SizeF, Viewport};
 
 use crate::i18n::{t, TKey};
+use crate::FlowIcon;
 
 use super::data_source::DataSource;
 use super::flow_editor::{FlowEditorView, LayoutDirection};
@@ -140,7 +141,7 @@ impl FlowEditorView {
             // ====== 视图组：适应 + 重置 ======
             .child(
                 Button::new("tb-fit")
-                    .icon(IconName::Maximize)
+                    .icon(FlowIcon::Screen)
                     .small()
                     .ghost()
                     .tooltip(t(lang, TKey::TbFitView))
@@ -161,7 +162,7 @@ impl FlowEditorView {
             // ====== 布局方向组 ======
             .child(
                 Button::new("tb-dir-h")
-                    .icon(IconName::ArrowRight)
+                    .icon(FlowIcon::Horizontal)
                     .small()
                     .ghost()
                     .selected(layout_direction == LayoutDirection::Horizontal)
@@ -172,7 +173,7 @@ impl FlowEditorView {
             )
             .child(
                 Button::new("tb-dir-v")
-                    .icon(IconName::ArrowDown)
+                    .icon(FlowIcon::Vertical)
                     .small()
                     .ghost()
                     .selected(layout_direction == LayoutDirection::Vertical)
@@ -219,43 +220,47 @@ impl FlowEditorView {
                         }
                     }),
             )
-            // ====== 点阵组：开关 + 密度 Dropdown ======
+            // ====== 点阵背景 Dropdown（开关 + 密度合一） ======
             .child(
                 Button::new("tb-grid")
-                    .icon(IconName::LayoutDashboard)
+                    .icon(FlowIcon::Grip)
                     .small()
                     .ghost()
                     .selected(show_grid)
                     .tooltip(t(lang, TKey::TbToggleGrid))
-                    .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                        this.show_grid = !this.show_grid;
-                        cx.notify();
-                    })),
-            )
-            .child(
-                Button::new("tb-grid-density")
-                    .label(density_label(grid_spacing))
-                    .small()
-                    .ghost()
-                    .tooltip(t(lang, TKey::TbGridDensity))
                     .dropdown_menu({
                         let entity = entity.clone();
                         move |menu, _window, _cx| {
-                            let variants = [
-                                (20.0, TKey::GridDensityCompact),
-                                (28.0, TKey::GridDensityNormal),
-                                (40.0, TKey::GridDensitySparse),
+                            // 禁用 + 3 档密度
+                            let variants: [(Option<f32>, TKey); 4] = [
+                                (None, TKey::GridDensityDisabled),
+                                (Some(20.0), TKey::GridDensityCompact),
+                                (Some(28.0), TKey::GridDensityNormal),
+                                (Some(40.0), TKey::GridDensitySparse),
                             ];
                             let mut menu = menu;
-                            for (spacing, key) in variants {
+                            for (spacing_opt, key) in variants {
                                 let label = t(lang, key);
                                 let entity = entity.clone();
+                                let checked = match spacing_opt {
+                                    None => !show_grid,
+                                    Some(sp) => show_grid && (grid_spacing as i32) == (sp as i32),
+                                };
                                 menu = menu.item(
                                     PopupMenuItem::new(label)
-                                        .checked((grid_spacing as i32) == (spacing as i32))
+                                        .checked(checked)
                                         .on_click(move |_, _, cx| {
                                             entity.update(cx, |this, cx| {
-                                                this.set_grid_spacing(spacing, cx);
+                                                match spacing_opt {
+                                                    None => {
+                                                        this.show_grid = false;
+                                                    }
+                                                    Some(sp) => {
+                                                        this.show_grid = true;
+                                                        this.grid_spacing = sp.max(8.0);
+                                                    }
+                                                }
+                                                cx.notify();
                                             });
                                         }),
                                 );
@@ -267,7 +272,7 @@ impl FlowEditorView {
             // ====== 拖拽开关 ======
             .child(
                 Button::new("tb-drag")
-                    .icon(IconName::Settings)
+                    .icon(FlowIcon::Drag)
                     .small()
                     .ghost()
                     .selected(drag_enabled)
@@ -301,7 +306,7 @@ impl FlowEditorView {
             // ====== 数据源 Dropdown ======
             .child(
                 Button::new("tb-data-source")
-                    .icon(IconName::Cpu)
+                    .icon(IconName::ListSpec)
                     .small()
                     .ghost()
                     .tooltip(t(lang, TKey::TbDataSource))
@@ -326,14 +331,5 @@ impl FlowEditorView {
                         }
                     }),
             )
-    }
-}
-
-/// 返回点阵密度的简短标签（D1/D2/D3）。
-fn density_label(spacing: f32) -> &'static str {
-    match spacing as i32 {
-        20 => "D1",
-        40 => "D3",
-        _ => "D2",
     }
 }

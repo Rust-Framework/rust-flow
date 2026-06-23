@@ -3,6 +3,7 @@
 //! 提供 [`FlowEditorView`] 及 [`IFlowNode`] 扩展接口，基于 `rust-agent-flow` core 层
 //! 实现类 ReactFlow 的可视化流程设计器。
 
+pub mod assets;
 pub mod builtin;
 pub mod editor;
 pub mod edge;
@@ -11,6 +12,7 @@ pub mod node;
 pub mod panel;
 pub mod theme;
 
+pub use assets::{CombinedAssets, FlowIcon};
 pub use editor::{DataSource, FlowEditorView};
 pub use edge::EdgeView;
 pub use i18n::{Language, TKey, t};

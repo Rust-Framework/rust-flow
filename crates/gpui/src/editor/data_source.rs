@@ -90,8 +90,8 @@ fn agent_flow_doc() -> FlowDocument {
     let condition = doc.add_node(NodeDef::new("condition", serde_json::json!({
         "label": "Check",
         "conditions": [
-            { "id": "if_0", "label": "amount > 100" },
-            { "id": "if_1", "label": "user.is_admin" }
+            { "id": "if_0", "label": "needs_search" },
+            { "id": "if_1", "label": "needs_tool" }
         ]
     })).with_size(SizeF::new(220.0, 144.0)).with_position(PointF::new(820.0, 280.0)));
 
@@ -131,21 +131,22 @@ fn agent_flow_doc() -> FlowDocument {
         ]
     })).with_size(SizeF::new(160.0, 56.0)).with_position(PointF::new(2500.0, 280.0)));
 
-    // 主流程
+    // 主流程（顺序初始化：Start → Vars → Agent → Planner → Check）
+    // 消除原 Start 同时扇出 Vars/Agent 的并行依赖，Vars 先就绪再驱动 Agent
     doc.add_edge(EdgeDef::new(start, variable).with_edge_type(EdgeType::SmoothStep));
-    doc.add_edge(EdgeDef::new(start, agent).with_edge_type(EdgeType::SmoothStep));
-    doc.add_edge(EdgeDef::new(variable, planner).with_edge_type(EdgeType::SmoothStep));
+    doc.add_edge(EdgeDef::new(variable, agent).with_edge_type(EdgeType::SmoothStep));
     doc.add_edge(EdgeDef::new(agent, planner).with_edge_type(EdgeType::SmoothStep));
     doc.add_edge(EdgeDef::new(planner, condition).with_target_port("in").with_edge_type(EdgeType::SmoothStep));
-    // 条件分支
+    // 条件分支（任务意图维度：needs_search / needs_tool / else needs_notify）
     doc.add_edge(EdgeDef::new(condition, search).with_source_port("if_0").with_edge_type(EdgeType::SmoothStep));
-    doc.add_edge(EdgeDef::new(condition, notify).with_source_port("if_1").with_edge_type(EdgeType::SmoothStep));
-    doc.add_edge(EdgeDef::new(condition, tool).with_source_port("else").with_edge_type(EdgeType::SmoothStep));
-    // 汇合
+    doc.add_edge(EdgeDef::new(condition, tool).with_source_port("if_1").with_edge_type(EdgeType::SmoothStep));
+    doc.add_edge(EdgeDef::new(condition, notify).with_source_port("else").with_edge_type(EdgeType::SmoothStep));
+    // 对称适配：Search 和 ToolCall 都经 Adapter 归一化再入 Loop，保证 Loop 输入类型一致
     doc.add_edge(EdgeDef::new(search, adapter).with_edge_type(EdgeType::SmoothStep));
+    doc.add_edge(EdgeDef::new(tool, adapter).with_edge_type(EdgeType::SmoothStep));
     doc.add_edge(EdgeDef::new(adapter, loop_node).with_target_port("in").with_edge_type(EdgeType::SmoothStep));
-    doc.add_edge(EdgeDef::new(notify, loop_node).with_target_port("in").with_edge_type(EdgeType::SmoothStep));
-    doc.add_edge(EdgeDef::new(tool, loop_node).with_target_port("in").with_edge_type(EdgeType::SmoothStep));
+    // 副作用分支隔离：Notify 不入 Loop（无迭代对象），直接汇入 Summarize
+    doc.add_edge(EdgeDef::new(notify, summarize).with_edge_type(EdgeType::SmoothStep));
     // 循环体
     doc.add_edge(EdgeDef::new(loop_node, process).with_source_port("loop_body").with_edge_type(EdgeType::SmoothStep));
     doc.add_edge(EdgeDef::new(process, loop_node).with_target_port("loop_in").with_edge_type(EdgeType::SmoothStep));

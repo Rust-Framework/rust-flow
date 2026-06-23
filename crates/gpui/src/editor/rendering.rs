@@ -69,7 +69,7 @@ fn compute_loop_bounds(graph: &FlowGraph, loop_node: NodeId, body_nodes: &HashSe
 ///   这样 Loop 的 `loop_body` 出口（Right）→ body 入口（Top），
 ///   body 出口（Bottom）→ Loop 的 `loop_in` 入口（Left），回环边向下绕回。
 /// - **非循环体节点**：按布局方向使用默认端口对（纵向 Top/Bottom，横向 Left/Right）。
-fn compute_edge_endpoints(
+pub(crate) fn compute_edge_endpoints(
     edge: &Edge,
     graph: &FlowGraph,
     registry: &crate::node::NodeRegistry,
@@ -270,11 +270,18 @@ impl FlowEditorView {
         .size_full()
     }
 
-    /// 渲染所有可见边中点的「+」按钮（div 覆盖层）。
+    /// 渲染所有可见边的「+」按钮（div 覆盖层）。
     ///
-    /// 按钮位置 = viewport.offset + edge_midpoint × scale
+    /// 按钮位置 = 源端口 + 沿端口 side 轴向偏移 10px（逻辑坐标）。
+    /// - 横向布局（src_side=Right）：按钮在源端口右侧 10px，Y 与端口齐平
+    /// - 纵向布局（src_side=Bottom）：按钮在源端口下方 10px，X 与端口齐平
+    ///
+    /// 使用 `compute_edge_endpoints` 获取精确端口位置和 side，确保按钮中心
+    /// 落在 smoothstep/bezier 路径的起始段上（路径从端口沿 side 方向出发）。
+    /// 同一节点不同端口（如 Condition 的 if_0/if_1/else）的按钮不会重叠。
+    ///
     /// 跳过回环边（target_port == "loop_in"）和连接到隐藏循环体节点的边。
-    /// 中点计算与 `hit_test_edge_plus` 保持一致（节点中心中点）。
+    /// 按钮位置计算与 `hit_test_edge_plus` 保持完全一致。
     pub(crate) fn render_edge_plus_buttons(
         &self,
         body_groups: &HashMap<NodeId, HashSet<NodeId>>,
@@ -285,6 +292,13 @@ impl FlowEditorView {
         let bg = self.theme.edge_plus_bg;
         let border = self.theme.edge_plus_border;
         let text_color = self.theme.toolbar_text;
+        let layout = self.layout_direction;
+        let registry = self.registry.clone();
+        let (src_side_default, dst_side_default) = self.port_sides();
+
+        // 所有循环体节点（用于 compute_edge_endpoints 的端口侧强制）
+        let all_body_nodes: HashSet<NodeId> =
+            body_groups.values().flat_map(|s| s.iter().copied()).collect();
 
         // 收集隐藏节点（收起的循环体）
         let mut hidden_nodes: HashSet<NodeId> = HashSet::new();
@@ -309,22 +323,30 @@ impl FlowEditorView {
                 !hidden_nodes.contains(&edge.source) && !hidden_nodes.contains(&edge.target)
             })
             .filter_map(|edge| {
-                let src = self.graph.node(edge.source)?;
-                let dst = self.graph.node(edge.target)?;
-                let src_center = PointF::new(
-                    src.position.x + src.size.w * 0.5,
-                    src.position.y + src.size.h * 0.5,
+                // 使用端口位置计算按钮位置（靠近源节点出口）
+                let (src, src_side, _, _) = compute_edge_endpoints(
+                    edge,
+                    &self.graph,
+                    &registry,
+                    layout,
+                    &all_body_nodes,
+                    src_side_default,
+                    dst_side_default,
                 );
-                let dst_center = PointF::new(
-                    dst.position.x + dst.size.w * 0.5,
-                    dst.position.y + dst.size.h * 0.5,
-                );
-                let mid = PointF::new(
-                    (src_center.x + dst_center.x) * 0.5,
-                    (src_center.y + dst_center.y) * 0.5,
-                );
-                let screen_x = offset_x + mid.x * s;
-                let screen_y = offset_y + mid.y * s;
+
+                // 按源端口 side 的轴向偏移，确保按钮中心在连线路径起始段上。
+                // 修改此常量可调整按钮与源节点的距离（逻辑像素）。
+                let (dx, dy) = match src_side {
+                    PortSide::Right => (25.0, 0.0),
+                    PortSide::Bottom => (0.0, 25.0),
+                    PortSide::Left => (-25.0, 0.0),
+                    PortSide::Top => (0.0, -25.0),
+                    PortSide::Auto => (25.0, 0.0),
+                };
+                let button_pos = PointF::new(src.x + dx, src.y + dy);
+
+                let screen_x = offset_x + button_pos.x * s;
+                let screen_y = offset_y + button_pos.y * s;
                 Some((screen_x, screen_y))
             })
             .map(|(x, y)| {
@@ -337,6 +359,7 @@ impl FlowEditorView {
                     .rounded_full()
                     .bg(bg)
                     .border_1()
+                    .border_dashed()
                     .border_color(border)
                     .flex()
                     .items_center()

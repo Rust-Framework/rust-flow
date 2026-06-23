@@ -18,12 +18,11 @@
 //! - 点击边中点「+」按钮：弹出节点选择面板，选择类型后插入到边中间
 
 use gpui::AppContext;
-use gpui_component_assets::Assets;
-use rust_agent_flow_gpui::{DataSource, FlowEditorView};
+use rust_agent_flow_gpui::{CombinedAssets, DataSource, FlowEditorView};
 
 fn main() {
     gpui_platform::application()
-        .with_assets(Assets)
+        .with_assets(CombinedAssets)
         .run(move |cx: &mut gpui::App| {
             rust_agent_flow_gpui::init(cx);
 

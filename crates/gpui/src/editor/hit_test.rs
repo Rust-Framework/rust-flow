@@ -7,7 +7,7 @@
 //! 端口命中区域：以端口位置为中心，边长 `PORT_HIT_WIDTH * 2` 的正方形。
 //! 按钮命中必须在节点主体命中之前检查，否则按钮区域会被节点主体"吞掉"。
 
-use rust_agent_flow::{point_in_rect, EdgeId, NodeId, PortDirection, PortId, PointF, RectF, SizeF};
+use rust_agent_flow::{point_in_rect, EdgeId, NodeId, PortDirection, PortId, PointF, PortSide, RectF, SizeF};
 
 use super::flow_editor::{FlowEditorView, LayoutDirection};
 use super::ports::{port_position_by_side, resolve_port, PORT_HIT_WIDTH};
@@ -154,16 +154,29 @@ impl FlowEditorView {
         None
     }
 
-    /// 边中点「+」按钮命中测试。
+    /// 边「+」按钮命中测试。
     ///
-    /// 遍历所有可见边，计算每条边的中点（源节点中心与目标节点中心的中点），
-    /// 检查点击是否在 plus button 半径内（12px 逻辑距离）。
+    /// 遍历所有可见边，计算每条边的按钮位置（源端口 + 沿端口 side 轴向偏移 10px），
+    /// 检查点击是否在按钮半径内（12px 逻辑距离）。
+    ///
+    /// 按钮位置计算与 `render_edge_plus_buttons` 保持完全一致，使用精确端口位置
+    /// 和轴向偏移（横向 Right→(10,0)，纵向 Bottom→(0,10)），确保按钮中心在连线
+    /// 路径起始段上。
     ///
     /// 跳过回环边（`target_port == "loop_in"`），因为回环边路径复杂，
-    /// 端口中点与实际路径中点偏差大。
+    /// 端口位置与实际路径中点偏差大。
     fn hit_test_edge_plus(&self, logical: PointF) -> Option<EdgeId> {
         const RADIUS: f32 = 12.0;
+        const OFFSET: f32 = 25.0;
         let radius_sq = RADIUS * RADIUS;
+
+        let layout = self.layout_direction;
+        let (src_side_default, dst_side_default) = self.port_sides();
+        let all_body_nodes: std::collections::HashSet<NodeId> = self
+            .cached_body_groups
+            .values()
+            .flat_map(|s| s.iter().copied())
+            .collect();
 
         for edge in self.graph.edges() {
             // 跳过回环边
@@ -171,32 +184,30 @@ impl FlowEditorView {
                 continue;
             }
 
-            let src = match self.graph.node(edge.source) {
-                Some(n) => n,
-                None => continue,
-            };
-            let dst = match self.graph.node(edge.target) {
-                Some(n) => n,
-                None => continue,
-            };
-
-            // 边中点 = 源节点中心与目标节点中心的中点
-            let src_center = PointF::new(
-                src.position.x + src.size.w * 0.5,
-                src.position.y + src.size.h * 0.5,
-            );
-            let dst_center = PointF::new(
-                dst.position.x + dst.size.w * 0.5,
-                dst.position.y + dst.size.h * 0.5,
-            );
-            let mid = PointF::new(
-                (src_center.x + dst_center.x) * 0.5,
-                (src_center.y + dst_center.y) * 0.5,
+            // 使用端口位置计算按钮位置（与 render_edge_plus_buttons 完全一致）
+            let (src, src_side, _, _) = super::rendering::compute_edge_endpoints(
+                edge,
+                &self.graph,
+                &self.registry,
+                layout,
+                &all_body_nodes,
+                src_side_default,
+                dst_side_default,
             );
 
-            let dx = logical.x - mid.x;
-            let dy = logical.y - mid.y;
-            if dx * dx + dy * dy <= radius_sq {
+            // 按源端口 side 的轴向偏移 OFFSET，与渲染端一致
+            let (dx, dy) = match src_side {
+                PortSide::Right => (OFFSET, 0.0),
+                PortSide::Bottom => (0.0, OFFSET),
+                PortSide::Left => (-OFFSET, 0.0),
+                PortSide::Top => (0.0, -OFFSET),
+                PortSide::Auto => (OFFSET, 0.0),
+            };
+            let button_pos = PointF::new(src.x + dx, src.y + dy);
+
+            let ddx = logical.x - button_pos.x;
+            let ddy = logical.y - button_pos.y;
+            if ddx * ddx + ddy * ddy <= radius_sq {
                 return Some(edge.id);
             }
         }

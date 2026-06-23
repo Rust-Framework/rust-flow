@@ -82,9 +82,12 @@ fn to_px(p: PointF) -> Point<Pixels> {
 ///
 /// `points` 为**逻辑坐标**，通过 `scale` + `offset` 变换到屏幕空间。
 /// 线宽随 `scale` 缩放，确保缩放时视觉比例一致。
+///
+/// `dashed` 为 true 时使用虚线样式（用于回环边等语义区分）。
 pub(crate) fn paint_polyline(
     points: &[PointF],
     is_bezier: bool,
+    dashed: bool,
     scale: f32,
     offset: Point<Pixels>,
     color: Rgba,
@@ -94,6 +97,9 @@ pub(crate) fn paint_polyline(
         return;
     }
     let mut path = PathBuilder::stroke(px(1.5 * scale));
+    if dashed {
+        path = path.dash_array(&[px(6.0 * scale), px(4.0 * scale)]);
+    }
     path.scale(scale);
     path.translate(offset);
     path.move_to(to_px(points[0]));
@@ -113,8 +119,15 @@ pub(crate) fn paint_polyline(
 /// 绘制箭头（在 dst 点画三角形，方向由最后一段决定）。
 ///
 /// `points` 为**逻辑坐标**，箭头尺寸（8.0 逻辑单位）随 `scale` 自动缩放。
+///
+/// **贝塞尔曲线特殊处理**：对于三次贝塞尔，`points = [P0, C1, C2, P3]`，
+/// 控制点 `C2` 不在曲线上。直接用 `C2 → P3` 方向虽然数学上是正确的切线
+/// 方向，但当控制点距离较远时，箭头方向与曲线在端点附近的视觉方向可能
+/// 不一致。因此对贝塞尔曲线，在 t=0.9 处采样曲线点，用 `B(1.0) - B(0.9)`
+/// 的割线方向作为箭头方向，使箭头与曲线在端点附近的视觉走向一致。
 pub(crate) fn paint_arrow(
     points: &[PointF],
+    is_bezier: bool,
     scale: f32,
     offset: Point<Pixels>,
     color: Rgba,
@@ -124,16 +137,34 @@ pub(crate) fn paint_arrow(
         return;
     }
     let tip = points[points.len() - 1];
-    let prev = points[points.len() - 2];
 
-    let dx = tip.x - prev.x;
-    let dy = tip.y - prev.y;
-    let len = (dx * dx + dy * dy).sqrt();
-    if len < 1e-6 {
-        return;
-    }
-    let ux = dx / len;
-    let uy = dy / len;
+    // 计算箭头方向（单位向量）。
+    let (ux, uy) = if is_bezier && points.len() == 4 {
+        // 贝塞尔曲线：在 t=0.9 处采样，用割线方向匹配视觉走向。
+        // B(t) = (1-t)³P0 + 3(1-t)²t·P1 + 3(1-t)t²·P2 + t³·P3
+        let (p0, p1, p2, p3) = (points[0], points[1], points[2], points[3]);
+        let t = 0.9;
+        let s = 1.0 - t;
+        let bx = s * s * s * p0.x + 3.0 * s * s * t * p1.x + 3.0 * s * t * t * p2.x + t * t * t * p3.x;
+        let by = s * s * s * p0.y + 3.0 * s * s * t * p1.y + 3.0 * s * t * t * p2.y + t * t * t * p3.y;
+        let dx = p3.x - bx;
+        let dy = p3.y - by;
+        let len = (dx * dx + dy * dy).sqrt();
+        if len < 1e-6 {
+            return;
+        }
+        (dx / len, dy / len)
+    } else {
+        // 折线：用最后两个点的方向。
+        let prev = points[points.len() - 2];
+        let dx = tip.x - prev.x;
+        let dy = tip.y - prev.y;
+        let len = (dx * dx + dy * dy).sqrt();
+        if len < 1e-6 {
+            return;
+        }
+        (dx / len, dy / len)
+    };
 
     // 箭头尺寸为逻辑单位，PathBuilder::scale 会自动缩放到屏幕空间。
     let size = 8.0;
@@ -188,8 +219,8 @@ pub(crate) fn paint_edge_scaled(
         EdgeType::SmoothStep => smoothstep_path(src, dst, src_side, dst_side, 12.0),
     };
     let is_bezier = edge_type == EdgeType::Bezier && points.len() == 4;
-    paint_polyline(&points, is_bezier, scale, offset, color, window);
-    paint_arrow(&points, scale, offset, color, window);
+    paint_polyline(&points, is_bezier, false, scale, offset, color, window);
+    paint_arrow(&points, is_bezier, scale, offset, color, window);
 }
 
 /// 渲染 Loop 回环边：使用 `loop_back_path` 绕过 Loop 节点下方/左侧。
@@ -198,8 +229,12 @@ pub(crate) fn paint_edge_scaled(
 /// - **横向布局**：回环边从 body 底部出 → 向下 → 向左 → 向上 → 右进 loop_in
 /// - **纵向布局**：回环边从 body 底部出 → 向左 → 向上 → 右进 loop_in（绕左侧）
 ///
-/// **样式一致性**：当 `edge_type` 为 `SmoothStep` 时，对 `loop_back_path`
-/// 产生的折线应用 `round_corners` 圆角处理，与普通边保持一致的圆角风格。
+/// **样式一致性**：当 `edge_type` 为 `SmoothStep` 或 `Bezier` 时，对
+/// `loop_back_path` 产生的折线应用 `round_corners` 圆角处理，与普通边
+/// 保持一致的圆角风格。
+///
+/// **虚线样式**：回环边始终使用虚线绘制，与主流程边视觉区分，突出
+/// 循环回环语义。
 ///
 /// **颜色区分**：回环边使用 `color` 参数（来自主题的回环边色），与普通边
 /// 的默认色区分，突出循环语义。
@@ -216,11 +251,18 @@ pub(crate) fn paint_loop_back_edge(
     window: &mut Window,
 ) {
     let raw = loop_back_path(src, dst, horizontal, node_bounds);
-    // Apply rounded corners for SmoothStep to match the theme.
+    // Apply rounded corners for SmoothStep and Bezier.
+    //
+    // Bezier 使用更大圆角半径（24.0 vs SmoothStep 的 12.0），使回环边在
+    // 贝塞尔模式下呈现更平滑的曲线视觉效果，与 SmoothStep 产生明显区分。
+    // 回环边必须绕过循环体组合边界，无法使用单段三次贝塞尔直线连接，
+    // 因此采用 round_corners 对 U 型折线做圆角化处理。
     let points = match edge_type {
+        EdgeType::Bezier => round_corners(&raw, 24.0),
         EdgeType::SmoothStep => round_corners(&raw, 12.0),
         _ => raw,
     };
-    paint_polyline(&points, false, scale, offset, color, window);
-    paint_arrow(&points, scale, offset, color, window);
+    // 回环边使用虚线样式，与主流程边区分。
+    paint_polyline(&points, false, true, scale, offset, color, window);
+    paint_arrow(&points, false, scale, offset, color, window);
 }

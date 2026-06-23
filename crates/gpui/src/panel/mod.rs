@@ -10,20 +10,34 @@
 //! 3. `FlowEditorView::handle_node_action` 更新 node.data + relayout
 //! 4. `FlowEditorView::render` 检测节点数据变化 → `panel_view.update(sync_from_node)`
 //! 5. `sync_from_node` 更新 InputState 值（syncing 标记避免回环）
+//!
+//! 性能优化：
+//! - `sync_from_node` 快速路径：若 `node.data` 未变化则直接返回，避免每帧更新所有 InputState
+//! - 每个字段更新前比较当前值与新值，仅在实际变化时调用 `set_value`，避免光标跳动
+//! - 渲染时仅克隆 `schema.fields`（Vec<FieldSpec>）而非整个 NodeSchema
+//!
+//! 视觉设计（参考 n8n/Retool/Appsmith 属性面板）：
+//! - 头部：节点图标（彩色圆角方块）+ 类型标签 + kind 副标题
+//! - 内容区：可纵向滚动，统一字段间距和标签样式
+//! - Dropdown：使用 gpui-component Button + DropdownMenu（与工具栏一致）
+//! - List：卡片式行容器 + gpui-component Button 添加/删除
+//! - Switch：水平布局（标签左 + 开关右）
 
 use std::sync::Arc;
 
 use gpui::{
-    div, px, App, AppContext, Context, Entity, InteractiveElement, IntoElement, ParentElement,
-    Render, ScrollHandle, Styled, Subscription, Window,
+    div, px, App, AppContext, ClickEvent, Context, Entity, InteractiveElement, IntoElement,
+    ParentElement, Render, ScrollHandle, StatefulInteractiveElement, Styled, Subscription,
+    Window,
 };
+use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::input::{Input, InputEvent, InputState};
-use gpui_component::{Icon, IconName, Sizable, StyledExt};
-use rust_agent_flow::{
-    DropdownOption, FieldSpec, FieldType, ListSpec, Node,
-};
+use gpui_component::menu::{DropdownMenu, PopupMenuItem};
 use gpui_component::switch::Switch;
+use gpui_component::{Icon, IconName, Sizable, StyledExt};
+use rust_agent_flow::{DropdownOption, FieldSpec, FieldType, ListSpec, Node};
 
+use crate::builtin::common::node_icon;
 use crate::i18n::{t, Language, TKey};
 use crate::node::{ActionCallback, IFlowNode, NodeAction, SharedSyntaxService};
 use crate::theme::Theme;
@@ -62,7 +76,7 @@ pub struct PanelView {
     /// 同步标记：避免节点更新时回环触发 on_change。
     syncing: bool,
 
-    #[allow(dead_code)]
+    /// 内容区滚动句柄（支持属性面板纵向滚动）。
     scroll_handle: ScrollHandle,
 
     _subscriptions: Vec<Subscription>,
@@ -240,23 +254,34 @@ impl PanelView {
     }
 
     /// 节点数据变化时，从 node 同步到字段状态（避免回环）。
+    ///
+    /// 性能优化：
+    /// 1. 快速路径：若 `node.data` 与当前完全一致，直接返回（避免每帧无意义更新）
+    /// 2. 逐字段比较：仅在实际值变化时调用 `set_value`，避免光标跳动和不必要重绘
     pub fn sync_from_node(&mut self, node: Node, window: &mut Window, cx: &mut Context<Self>) {
         if self.node.id != node.id {
+            return;
+        }
+        // 快速路径：数据完全一致时跳过所有更新（ensure_panel_view 每帧调用此方法）
+        if self.node.data == node.data {
             return;
         }
         self.syncing = true;
         self.node = node;
 
-        // 同步 label
+        // 同步 label（仅在实际变化时更新，避免光标跳动）
         let label = label_of(&self.node);
-        self.label_input.update(cx, |s, cx| {
-            s.set_value(label.as_str(), window, cx);
-        });
+        let current_label = self.label_input.read(cx).value().to_string();
+        if current_label != label {
+            self.label_input.update(cx, |s, cx| {
+                s.set_value(label.as_str(), window, cx);
+            });
+        }
 
-        // 同步每个 field_state
+        // 同步每个 field_state（仅克隆 fields，避免持有 flow_node 借用）
         if let Some(ref fn_) = self.flow_node {
-            let schema = fn_.schema().clone();
-            for (i, field) in schema.fields.iter().enumerate() {
+            let fields = fn_.schema().fields.clone();
+            for (i, field) in fields.iter().enumerate() {
                 if field.key == "label" {
                     continue;
                 }
@@ -272,7 +297,10 @@ impl PanelView {
                 match &mut self.field_states[i] {
                     FieldState::Input(entity) => {
                         let text = value_to_string(&value);
-                        entity.update(cx, |s, cx| s.set_value(text.as_str(), window, cx));
+                        let current = entity.read(cx).value().to_string();
+                        if current != text {
+                            entity.update(cx, |s, cx| s.set_value(text.as_str(), window, cx));
+                        }
                     }
                     FieldState::Switch(b) => {
                         *b = value.as_bool().unwrap_or(false);
@@ -500,6 +528,7 @@ impl PanelView {
 impl Render for PanelView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = self.theme;
+        let header = self.render_header(&theme);
         let content = self.render_schema_panel(&theme, cx);
 
         div()
@@ -510,11 +539,75 @@ impl Render for PanelView {
             .border_color(theme.panel_border)
             .flex()
             .flex_col()
-            .child(content)
+            .child(header)
+            .child(
+                div()
+                    .id("panel-scroll")
+                    .flex_1()
+                    .overflow_y_scroll()
+                    .track_scroll(&self.scroll_handle)
+                    .child(content),
+            )
     }
 }
 
 impl PanelView {
+    /// 渲染面板头部：节点图标（彩色圆角方块）+ 类型标签 + kind 副标题。
+    ///
+    /// 视觉参考 n8n/Retool 属性面板头部：带彩色背景的图标 + 标题层次感。
+    fn render_header(&self, theme: &Theme) -> gpui::AnyElement {
+        let lang = self.language;
+        let kind = &self.node.kind;
+        let icon_name = node_icon(kind);
+        let kind_label = kind_label_str(lang, kind);
+        let title = format!("{} {}", kind_label, t(lang, TKey::PanelNodeSuffix));
+
+        div()
+            .flex()
+            .items_center()
+            .gap(px(10.0))
+            .px(px(16.0))
+            .py(px(12.0))
+            .border_b_1()
+            .border_color(theme.panel_border)
+            .bg(theme.node_title_bg)
+            .child(
+                div()
+                    .w(px(32.0))
+                    .h(px(32.0))
+                    .rounded_md()
+                    .bg(theme.toolbar_accent)
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .child(
+                        Icon::new(icon_name)
+                            .small()
+                            .text_color(theme.toolbar_accent_text),
+                    ),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(2.0))
+                    .child(
+                        div()
+                            .text_size(px(14.0))
+                            .font_semibold()
+                            .text_color(theme.panel_title_text)
+                            .child(title),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(11.0))
+                            .text_color(theme.panel_subtext)
+                            .child(kind.to_string()),
+                    ),
+            )
+            .into_any_element()
+    }
+
     /// schema 驱动统一面板渲染。
     fn render_schema_panel(
         &mut self,
@@ -527,54 +620,47 @@ impl PanelView {
         let mut col = div()
             .flex()
             .flex_col()
-            .gap(px(10.0))
-            .p_3()
-            .size_full()
-            .overflow_hidden();
-
-        // 标题：节点类型 i18n 标签 + "节点"
-        let kind_label = kind_label_str(lang, &kind);
-        let title = format!("{} {}", kind_label, t(lang, TKey::PanelNodeSuffix));
-        col = col.child(
-            div()
-                .text_size(px(15.0))
-                .font_semibold()
-                .text_color(theme.panel_title_text)
-                .child(title),
-        );
+            .gap(px(14.0))
+            .p(px(16.0));
 
         // 节点名称（label 字段）
         col = col.child(
             div()
                 .flex()
                 .flex_col()
-                .gap(px(4.0))
-                .child(
-                    div()
-                        .text_size(px(12.0))
-                        .font_semibold()
-                        .text_color(theme.panel_label_text)
-                        .child(t(lang, TKey::PanelNodeName).to_string()),
-                )
+                .gap(px(6.0))
+                .child(self.render_label(t(lang, TKey::PanelNodeName), theme))
                 .child(Input::new(&self.label_input).appearance(true)),
         );
 
         // 按 schema.fields 渲染每个字段（跳过 label）
-        if let Some(ref fn_) = self.flow_node {
-            let schema = fn_.schema().clone();
-            for (i, field) in schema.fields.iter().enumerate() {
-                if field.key == "label" {
-                    continue;
-                }
-                if i >= self.field_states.len() {
-                    break;
-                }
-                let label = field_label(lang, &kind, &field.key, &field.label);
-                col = col.child(self.render_field(i, field, &label, theme, cx));
+        // 克隆 fields 避免 holding borrow on self.flow_node，以便后续 &mut self 调用
+        let fields: Vec<FieldSpec> = match &self.flow_node {
+            Some(fn_) => fn_.schema().fields.clone(),
+            None => Vec::new(),
+        };
+        for (i, field) in fields.iter().enumerate() {
+            if field.key == "label" {
+                continue;
             }
+            if i >= self.field_states.len() {
+                break;
+            }
+            let label = field_label(lang, &kind, &field.key, &field.label);
+            col = col.child(self.render_field(i, field, &label, theme, cx));
         }
 
         col.into_any_element()
+    }
+
+    /// 渲染统一风格的字段标签。
+    fn render_label(&self, text: &str, theme: &Theme) -> gpui::AnyElement {
+        div()
+            .text_size(px(12.0))
+            .font_semibold()
+            .text_color(theme.panel_label_text)
+            .child(text.to_string())
+            .into_any_element()
     }
 
     /// 渲染单个字段（按 FieldType 分发）。
@@ -587,13 +673,21 @@ impl PanelView {
         cx: &mut Context<Self>,
     ) -> gpui::AnyElement {
         match &field.field_type {
-            FieldType::Text | FieldType::Number => self.render_input_field(field_idx, label, None, theme),
+            FieldType::Text | FieldType::Number => {
+                self.render_input_field(field_idx, label, None, theme)
+            }
             FieldType::TextArea => self.render_input_field(field_idx, label, Some(px(80.0)), theme),
             FieldType::CodeEditor => self.render_input_field(field_idx, label, None, theme),
-            FieldType::CodeBlock => self.render_input_field(field_idx, label, Some(px(120.0)), theme),
+            FieldType::CodeBlock => {
+                self.render_input_field(field_idx, label, Some(px(120.0)), theme)
+            }
             FieldType::Switch => self.render_switch_field(field_idx, label, theme, cx),
-            FieldType::Dropdown(options) => self.render_dropdown_field(field_idx, label, options, theme, cx),
-            FieldType::List(list_spec) => self.render_list_field(field_idx, label, list_spec, theme, cx),
+            FieldType::Dropdown(options) => {
+                self.render_dropdown_field(field_idx, label, options, theme, cx)
+            }
+            FieldType::List(list_spec) => {
+                self.render_list_field(field_idx, label, list_spec, theme, cx)
+            }
         }
     }
 
@@ -616,19 +710,13 @@ impl PanelView {
         div()
             .flex()
             .flex_col()
-            .gap(px(4.0))
-            .child(
-                div()
-                    .text_size(px(12.0))
-                    .font_semibold()
-                    .text_color(theme.panel_label_text)
-                    .child(label.to_string()),
-            )
+            .gap(px(6.0))
+            .child(self.render_label(label, theme))
             .child(input)
             .into_any_element()
     }
 
-    /// 渲染 Switch 字段。
+    /// 渲染 Switch 字段（水平布局：标签左 + 开关右）。
     fn render_switch_field(
         &mut self,
         field_idx: usize,
@@ -646,13 +734,7 @@ impl PanelView {
             .items_center()
             .justify_between()
             .gap(px(8.0))
-            .child(
-                div()
-                    .text_size(px(12.0))
-                    .font_semibold()
-                    .text_color(theme.panel_label_text)
-                    .child(label.to_string()),
-            )
+            .child(self.render_label(label, theme))
             .child(
                 Switch::new(id)
                     .checked(checked)
@@ -663,7 +745,10 @@ impl PanelView {
             .into_any_element()
     }
 
-    /// 渲染 Dropdown 字段（按钮组形式）。
+    /// 渲染 Dropdown 字段（使用 gpui-component Button + DropdownMenu）。
+    ///
+    /// 与工具栏风格一致：secondary 按钮 + 下拉菜单 + checked 标记，
+    /// 替代原来的自定义 div 按钮组，视觉更专业。
     fn render_dropdown_field(
         &mut self,
         field_idx: usize,
@@ -677,54 +762,59 @@ impl PanelView {
             _ => String::new(),
         };
         let lang = self.language;
+        let kind_str = kind_label_str(lang, &self.node.kind);
+        let entity = cx.entity();
 
-        let mut col = div().flex().flex_col().gap(px(4.0));
+        // 查找当前选中项的标签
+        let current_label = options
+            .iter()
+            .find(|opt| opt.value == current)
+            .map(|opt| dropdown_option_label(lang, kind_str, opt))
+            .unwrap_or_else(|| current.clone());
+
+        let btn_id = format!("field-dropdown-{}", field_idx);
+        // 克隆 options 供 move 闭包使用
+        let options_owned: Vec<DropdownOption> = options.to_vec();
+
+        let mut col = div().flex().flex_col().gap(px(6.0));
+        col = col.child(self.render_label(label, theme));
+
         col = col.child(
-            div()
-                .text_size(px(12.0))
-                .font_semibold()
-                .text_color(theme.panel_label_text)
-                .child(label.to_string()),
+            Button::new(btn_id)
+                .label(current_label)
+                .icon(IconName::ChevronDown)
+                .small()
+                .secondary()
+                .w_full()
+                .dropdown_menu(move |menu, _window, _cx| {
+                    let mut menu = menu;
+                    for opt in &options_owned {
+                        let item_label = dropdown_option_label(lang, kind_str, opt);
+                        let val = opt.value.clone();
+                        let is_checked = val == current;
+                        let entity = entity.clone();
+                        menu = menu.item(
+                            PopupMenuItem::new(item_label)
+                                .checked(is_checked)
+                                .on_click(move |_, _, cx| {
+                                    entity.update(cx, |this, cx| {
+                                        this.set_dropdown_field(field_idx, &val, cx);
+                                    });
+                                }),
+                        );
+                    }
+                    menu
+                }),
         );
-
-        let mut btn_row = div().flex().flex_col().gap(px(3.0));
-        for (idx, opt) in options.iter().enumerate() {
-            let is_active = current == opt.value;
-            let bg = if is_active {
-                theme.panel_label_text
-            } else {
-                theme.panel_bg
-            };
-            let text_color = if is_active {
-                theme.panel_bg
-            } else {
-                theme.panel_label_text
-            };
-            let opt_label = dropdown_option_label(lang, &kind_label_str(lang, &self.node.kind), &opt);
-            let val = opt.value.clone();
-            let handler = cx.listener(move |this, _: &gpui::MouseDownEvent, _w, cx| {
-                this.set_dropdown_field(field_idx, &val, cx);
-            });
-            btn_row = btn_row.child(
-                div()
-                    .id(("dropdown-opt", field_idx * 100 + idx))
-                    .px(px(8.0))
-                    .py(px(5.0))
-                    .rounded_md()
-                    .bg(bg)
-                    .border_1()
-                    .border_color(theme.panel_border)
-                    .text_size(px(12.0))
-                    .text_color(text_color)
-                    .child(opt_label)
-                    .on_mouse_down(gpui::MouseButton::Left, handler),
-            );
-        }
-        col = col.child(btn_row);
         col.into_any_element()
     }
 
-    /// 渲染 List 字段（动态行 + 添加/删除按钮）。
+    /// 渲染 List 字段（卡片式行 + gpui-component Button 添加/删除）。
+    ///
+    /// 视觉改进：
+    /// - 每行用卡片式容器（背景色 + 圆角 + 边框），层次感更强
+    /// - Input 使用 flex_1 自适应宽度，不再固定 70px/80px
+    /// - 删除/添加按钮使用 gpui-component Button，风格统一
     fn render_list_field(
         &mut self,
         field_idx: usize,
@@ -739,92 +829,74 @@ impl PanelView {
             _ => return div().into_any_element(),
         };
 
-        let mut col = div().flex().flex_col().gap(px(6.0));
-        col = col.child(
-            div()
-                .text_size(px(12.0))
-                .font_semibold()
-                .text_color(theme.panel_label_text)
-                .child(label.to_string()),
-        );
+        let mut col = div().flex().flex_col().gap(px(8.0));
+        col = col.child(self.render_label(label, theme));
 
-        // 每行渲染 item_fields
+        // 行容器
+        let mut rows_col = div().flex().flex_col().gap(px(6.0));
         for (row_idx, row) in rows.iter().enumerate() {
-            let mut row_div = div().flex().items_center().gap(px(4.0));
+            let mut row_div = div()
+                .flex()
+                .items_center()
+                .gap(px(6.0))
+                .p(px(6.0))
+                .rounded_md()
+                .bg(theme.node_title_bg)
+                .border_1()
+                .border_color(theme.panel_border);
 
             // 序号
             row_div = row_div.child(
                 div()
-                    .w(px(28.0))
+                    .w(px(20.0))
+                    .flex()
+                    .flex_shrink_0()
+                    .items_center()
+                    .justify_center()
                     .text_size(px(11.0))
                     .text_color(theme.panel_subtext)
-                    .child(format!("#{}", row_idx + 1)),
+                    .child(format!("{}", row_idx + 1)),
             );
 
-            // 每个 item_field 一个 Input
+            // 每个 item_field 一个 Input（flex 自适应宽度）
             for (col_idx, _item_field) in list_spec.item_fields.iter().enumerate() {
                 if col_idx >= row.len() {
                     break;
                 }
                 let entity = &row[col_idx];
-                let w = if list_spec.item_fields.len() == 1 {
-                    None
-                } else if col_idx == 0 {
-                    Some(px(70.0))
-                } else {
-                    Some(px(80.0))
-                };
-                let mut input_div = div();
-                if let Some(w) = w {
-                    input_div = input_div.w(w);
-                } else {
-                    input_div = input_div.flex_1();
-                }
-                row_div = row_div.child(input_div.child(Input::new(entity).appearance(true)));
+                row_div = row_div
+                    .child(div().flex_1().child(Input::new(entity).appearance(true)));
             }
 
-            // 删除按钮
-            let del_handler = cx.listener(move |this, _: &gpui::MouseDownEvent, _w, cx| {
-                this.delete_list_item(field_idx, row_idx, cx);
-            });
+            // 删除按钮（使用 gpui-component Button）
+            let del_btn_id = format!("del-list-{}-{}", field_idx, row_idx);
             row_div = row_div.child(
-                div()
-                    .id(("del-list", field_idx * 1000 + row_idx))
-                    .w(px(22.0))
-                    .h(px(22.0))
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .rounded_md()
-                    .bg(theme.delete_btn_bg)
-                    .child(
-                        Icon::new(IconName::Close)
-                            .xsmall()
-                            .text_color(theme.delete_btn_text),
-                    )
-                    .on_mouse_down(gpui::MouseButton::Left, del_handler),
+                Button::new(del_btn_id)
+                    .icon(IconName::Close)
+                    .xsmall()
+                    .ghost()
+                    .on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
+                        this.delete_list_item(field_idx, row_idx, cx);
+                    })),
             );
 
-            col = col.child(row_div);
+            rows_col = rows_col.child(row_div);
         }
+        col = col.child(rows_col);
 
-        // 添加按钮
+        // 添加按钮（使用 gpui-component Button）
         let add_label = t(lang, TKey::PanelAddBranch);
-        let add_handler = cx.listener(move |this, _: &gpui::MouseDownEvent, w, cx| {
-            this.add_list_item(field_idx, w, cx);
-        });
+        let add_btn_id = format!("add-list-{}", field_idx);
         col = col.child(
-            div()
-                .id(("add-list", field_idx))
-                .px(px(8.0))
-                .py(px(5.0))
-                .rounded_md()
-                .bg(theme.toggle_btn_bg)
-                .text_size(px(12.0))
-                .text_color(theme.toggle_btn_text)
-                .text_center()
-                .child(format!("{} +", add_label))
-                .on_mouse_down(gpui::MouseButton::Left, add_handler),
+            Button::new(add_btn_id)
+                .label(format!("{} +", add_label))
+                .icon(IconName::Plus)
+                .small()
+                .ghost()
+                .w_full()
+                .on_click(cx.listener(move |this, _: &ClickEvent, w, cx| {
+                    this.add_list_item(field_idx, w, cx);
+                })),
         );
 
         col.into_any_element()
@@ -959,7 +1031,7 @@ fn sync_list_rows(
     let arr: Vec<&serde_json::Value> = value.as_array().map(|a| a.iter().collect()).unwrap_or_default();
 
     if arr.len() == rows.len() {
-        // 数量一致：仅更新值
+        // 数量一致：仅更新值（比较后更新，避免不必要重绘）
         for (i, item) in arr.iter().enumerate() {
             for (col, item_field) in list_spec.item_fields.iter().enumerate() {
                 if col >= rows[i].len() {
@@ -967,7 +1039,10 @@ fn sync_list_rows(
                 }
                 let val = item.get(&item_field.key).cloned().unwrap_or_else(|| item_field.default.clone());
                 let text = value_to_string(&val);
-                rows[i][col].update(cx, |s, cx| s.set_value(text.as_str(), window, cx));
+                let current = rows[i][col].read(cx).value().to_string();
+                if current != text {
+                    rows[i][col].update(cx, |s, cx| s.set_value(text.as_str(), window, cx));
+                }
             }
         }
     } else {
