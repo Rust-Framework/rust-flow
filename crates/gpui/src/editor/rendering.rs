@@ -346,7 +346,12 @@ impl FlowEditorView {
             })
             .collect();
 
-        div().size_full().relative().children(buttons)
+        div()
+            .absolute()
+            .left_0()
+            .top_0()
+            .size_full()
+            .children(buttons)
     }
 
     /// 渲染所有节点（absolute div 在内容层内）。

@@ -150,7 +150,7 @@ impl FlowEditorView {
             )
             .child(
                 Button::new("tb-reset")
-                    .icon(IconName::Refresh)
+                    .icon(IconName::Undo)
                     .small()
                     .ghost()
                     .tooltip(t(lang, TKey::TbResetView))
@@ -161,7 +161,7 @@ impl FlowEditorView {
             // ====== 布局方向组 ======
             .child(
                 Button::new("tb-dir-h")
-                    .icon(IconName::HeartOff)
+                    .icon(IconName::ArrowRight)
                     .small()
                     .ghost()
                     .selected(layout_direction == LayoutDirection::Horizontal)
