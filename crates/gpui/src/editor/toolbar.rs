@@ -1,26 +1,23 @@
 //! 工具栏：左下角浮动面板，提供缩放、视图、布局方向、边类型、网格开关、
-//! 拖拽开关、主题切换。
+//! 拖拽开关、主题切换、数据源切换。
 //!
-//! 工具栏不受视口缩放影响（在内容层之外）。所有颜色取自 [`Theme`](crate::theme::Theme)，
-//! 支持亮色/暗色主题切换。
+//! 使用 gpui-component `Button` + `Tooltip` + `DropdownMenu` 组件，所有按钮
+//! 提供 i18n tooltip 提示。工具栏不受视口缩放影响（在内容层之外）。所有颜色
+//! 取自 [`Theme`](crate::theme::Theme)，支持亮色/暗色主题切换。
 
 use gpui::{
-    div, px, Context, InteractiveElement, IntoElement, MouseButton, ParentElement, Styled,
-    StatefulInteractiveElement, Window,
+    div, px, ClickEvent, Context, IntoElement, ParentElement, Styled, Window,
 };
-use gpui_component::StyledExt;
+use gpui_component::button::{Button, ButtonVariants};
+use gpui_component::menu::{DropdownMenu, PopupMenuItem};
+use gpui_component::{IconName, Selectable, Sizable};
 use rust_agent_flow::{EdgeType, PointF, RectF, SizeF, Viewport};
 
+use crate::i18n::{t, TKey};
+
+use super::data_source::DataSource;
 use super::flow_editor::{FlowEditorView, LayoutDirection};
 use super::viewport;
-
-/// 透明色（用于未激活 toggle 的占位背景）。
-const TRANSPARENT: gpui::Rgba = gpui::Rgba {
-    r: 1.0,
-    g: 1.0,
-    b: 1.0,
-    a: 0.0,
-};
 
 impl FlowEditorView {
     /// 放大（以视口可见区域中心为锚点）。
@@ -49,7 +46,6 @@ impl FlowEditorView {
 
     /// 适应视图（将所有节点居中显示）。
     pub(crate) fn fit_view(&mut self, cx: &mut Context<Self>) {
-        // 计算所有节点的包围盒。
         let mut bounds = Option::<RectF>::None;
         for node in self.graph.nodes() {
             let nb = node.bounds();
@@ -65,7 +61,6 @@ impl FlowEditorView {
             });
         }
         if let Some(b) = bounds {
-            // 留出 margin，居中到视口原点附近。
             let margin = 60.0;
             self.viewport.offset = PointF::new(margin - b.origin.x, margin - b.origin.y);
             self.viewport.scale = 1.0;
@@ -81,16 +76,20 @@ impl FlowEditorView {
 
     /// 渲染工具栏：左下角横向浮动面板。
     ///
-    /// 不受缩放影响（在内容层之外）。所有颜色取自主题。
+    /// 使用 gpui-component Button 组件，所有按钮提供 i18n tooltip。
+    /// 边类型/点阵密度/数据源使用 DropdownMenu 下拉菜单。
     pub(crate) fn render_toolbar(&self, cx: &Context<Self>) -> impl IntoElement {
+        let theme = self.theme;
+        let lang = self.language;
         let scale_pct = (self.viewport.scale * 100.0) as i32;
-        let t = self.theme;
-
-        let edge_type = self.default_edge_type;
+        let entity = cx.entity();
+        let layout_direction = self.layout_direction;
         let show_grid = self.show_grid;
         let drag_enabled = self.drag_enabled;
-        let is_dark = t.is_dark;
+        let is_dark = theme.is_dark;
         let grid_spacing = self.grid_spacing;
+        let default_edge_type = self.default_edge_type;
+        let data_source = self.data_source;
 
         div()
             .absolute()
@@ -99,364 +98,242 @@ impl FlowEditorView {
             .flex()
             .flex_row()
             .items_center()
-            .gap_0p5()
+            .gap_1()
             .rounded_lg()
-            .bg(t.toolbar_bg)
+            .bg(theme.toolbar_bg)
             .border_1()
-            .border_color(t.toolbar_border)
+            .border_color(theme.toolbar_border)
             .shadow_lg()
             .p_1()
-            // 缩放百分比 + 放大/缩小
+            // ====== 缩放组：放大 + 百分比 + 缩小 ======
             .child(
-                div()
-                    .id("tb-zoom-in")
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .w(px(28.0))
-                    .h(px(28.0))
-                    .rounded_md()
-                    .hover(|s| s.bg(t.toolbar_hover_bg))
-                    .active(|s| s.bg(t.toolbar_active_bg))
-                    .text_xs()
-                    .font_medium()
-                    .text_color(t.toolbar_text)
-                    .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, window, cx| {
+                Button::new("tb-zoom-in")
+                    .icon(IconName::Plus)
+                    .small()
+                    .ghost()
+                    .tooltip(t(lang, TKey::TbZoomIn))
+                    .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
                         this.zoom_in(window, cx);
-                    }))
-                    .child("+"),
+                    })),
             )
             .child(
                 div()
                     .w(px(40.0))
                     .h(px(28.0))
-                    .rounded_md()
                     .flex()
                     .items_center()
                     .justify_center()
                     .text_xs()
-                    .font_medium()
-                    .text_color(t.toolbar_subtext)
+                    .text_color(theme.toolbar_subtext)
                     .child(format!("{}%", scale_pct)),
             )
             .child(
-                div()
-                    .id("tb-zoom-out")
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .w(px(28.0))
-                    .h(px(28.0))
-                    .rounded_md()
-                    .hover(|s| s.bg(t.toolbar_hover_bg))
-                    .active(|s| s.bg(t.toolbar_active_bg))
-                    .text_sm()
-                    .font_medium()
-                    .text_color(t.toolbar_text)
-                    .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, window, cx| {
+                Button::new("tb-zoom-out")
+                    .icon(IconName::Minus)
+                    .small()
+                    .ghost()
+                    .tooltip(t(lang, TKey::TbZoomOut))
+                    .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
                         this.zoom_out(window, cx);
-                    }))
-                    .child("\u{2212}"), // minus
+                    })),
             )
-            // 分隔线
-            .child(divider(t.toolbar_divider))
-            // 适应视图 / 重置
+            // ====== 视图组：适应 + 重置 ======
             .child(
-                div()
-                    .id("tb-fit")
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .w(px(28.0))
-                    .h(px(28.0))
-                    .rounded_md()
-                    .hover(|s| s.bg(t.toolbar_hover_bg))
-                    .active(|s| s.bg(t.toolbar_active_bg))
-                    .text_sm()
-                    .font_medium()
-                    .text_color(t.toolbar_text)
-                    .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, _, cx| {
+                Button::new("tb-fit")
+                    .icon(IconName::Maximize)
+                    .small()
+                    .ghost()
+                    .tooltip(t(lang, TKey::TbFitView))
+                    .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                         this.fit_view(cx);
-                    }))
-                    .child("\u{25A1}"), // fit
+                    })),
             )
             .child(
-                div()
-                    .id("tb-reset")
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .w(px(28.0))
-                    .h(px(28.0))
-                    .rounded_md()
-                    .hover(|s| s.bg(t.toolbar_hover_bg))
-                    .active(|s| s.bg(t.toolbar_active_bg))
-                    .text_sm()
-                    .font_medium()
-                    .text_color(t.toolbar_text)
-                    .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, _, cx| {
+                Button::new("tb-reset")
+                    .icon(IconName::Refresh)
+                    .small()
+                    .ghost()
+                    .tooltip(t(lang, TKey::TbResetView))
+                    .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                         this.reset_view(cx);
-                    }))
-                    .child("\u{27F3}"), // reset
+                    })),
             )
-            // 分隔线
-            .child(divider(t.toolbar_divider))
-            // 布局方向切换
+            // ====== 布局方向组 ======
             .child(
-                div()
-                    .id("tb-dir-h")
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .w(px(28.0))
-                    .h(px(28.0))
-                    .rounded_md()
-                    .bg(if self.layout_direction == LayoutDirection::Horizontal {
-                        t.toolbar_accent
-                    } else {
-                        TRANSPARENT
-                    })
-                    .hover(|s| {
-                        s.bg(if self.layout_direction == LayoutDirection::Horizontal {
-                            t.toolbar_accent
-                        } else {
-                            t.toolbar_hover_bg
-                        })
-                    })
-                    .text_xs()
-                    .font_medium()
-                    .text_color(if self.layout_direction == LayoutDirection::Horizontal {
-                        t.toolbar_accent_text
-                    } else {
-                        t.toolbar_text
-                    })
-                    .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, _, cx| {
+                Button::new("tb-dir-h")
+                    .icon(IconName::HeartOff)
+                    .small()
+                    .ghost()
+                    .selected(layout_direction == LayoutDirection::Horizontal)
+                    .tooltip(t(lang, TKey::TbLayoutHorizontal))
+                    .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                         this.set_layout_direction(LayoutDirection::Horizontal, cx);
-                    }))
-                    .child("\u{2194}"), // ↔
+                    })),
             )
             .child(
-                div()
-                    .id("tb-dir-v")
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .w(px(28.0))
-                    .h(px(28.0))
-                    .rounded_md()
-                    .bg(if self.layout_direction == LayoutDirection::Vertical {
-                        t.toolbar_accent
-                    } else {
-                        TRANSPARENT
-                    })
-                    .hover(|s| {
-                        s.bg(if self.layout_direction == LayoutDirection::Vertical {
-                            t.toolbar_accent
-                        } else {
-                            t.toolbar_hover_bg
-                        })
-                    })
-                    .text_xs()
-                    .font_medium()
-                    .text_color(if self.layout_direction == LayoutDirection::Vertical {
-                        t.toolbar_accent_text
-                    } else {
-                        t.toolbar_text
-                    })
-                    .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, _, cx| {
+                Button::new("tb-dir-v")
+                    .icon(IconName::ArrowDown)
+                    .small()
+                    .ghost()
+                    .selected(layout_direction == LayoutDirection::Vertical)
+                    .tooltip(t(lang, TKey::TbLayoutVertical))
+                    .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                         this.set_layout_direction(LayoutDirection::Vertical, cx);
-                    }))
-                    .child("\u{2195}"), // ↕
+                    })),
             )
-            // 分隔线
-            .child(divider(t.toolbar_divider))
-            // 边类型选择（紧凑下拉式）
+            // ====== 边类型 Dropdown ======
             .child(
-                div()
-                    .id("tb-edge-type")
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .w(px(60.0))
-                    .h(px(28.0))
-                    .rounded_md()
-                    .bg(if matches!(edge_type, EdgeType::SmoothStep) {
-                        t.toolbar_toggle_bg
-                    } else {
-                        TRANSPARENT
-                    })
-                    .hover(|s| s.bg(t.toolbar_toggle_hover_bg))
-                    .text_xs()
-                    .font_medium()
-                    .text_color(if matches!(edge_type, EdgeType::SmoothStep) {
-                        t.toolbar_toggle_text
-                    } else {
-                        t.toolbar_subtext
-                    })
-                    .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, _, cx| {
-                        // 循环切换边类型，同时更新所有已有边
-                        let new_type = match this.default_edge_type {
-                            EdgeType::Straight => EdgeType::Bezier,
-                            EdgeType::Bezier => EdgeType::Step,
-                            EdgeType::Step => EdgeType::SmoothStep,
-                            EdgeType::SmoothStep => EdgeType::Straight,
-                        };
-                        this.default_edge_type = new_type;
-                        for edge in this.graph.edges_mut() {
-                            edge.edge_type = new_type;
+                Button::new("tb-edge-type")
+                    .icon(IconName::Network)
+                    .small()
+                    .ghost()
+                    .tooltip(t(lang, TKey::TbEdgeType))
+                    .dropdown_menu({
+                        let entity = entity.clone();
+                        move |menu, _window, _cx| {
+                            let variants = [
+                                (EdgeType::Bezier, TKey::EdgeBezier),
+                                (EdgeType::Straight, TKey::EdgeStraight),
+                                (EdgeType::Step, TKey::EdgeStep),
+                                (EdgeType::SmoothStep, TKey::EdgeSmoothStep),
+                            ];
+                            let mut menu = menu;
+                            for (et, key) in variants {
+                                let label = t(lang, key);
+                                let entity = entity.clone();
+                                menu = menu.item(
+                                    PopupMenuItem::new(label)
+                                        .checked(et == default_edge_type)
+                                        .on_click(move |_, _, cx| {
+                                            entity.update(cx, |this, cx| {
+                                                this.default_edge_type = et;
+                                                for edge in this.graph.edges_mut() {
+                                                    edge.edge_type = et;
+                                                }
+                                                cx.notify();
+                                            });
+                                        }),
+                                );
+                            }
+                            menu
                         }
-                        cx.notify();
-                    }))
-                    .child(match edge_type {
-                        EdgeType::Bezier => "Bezier",
-                        EdgeType::Straight => "Straight",
-                        EdgeType::Step => "Step",
-                        EdgeType::SmoothStep => "Smooth",
                     }),
             )
-            // 分隔线
-            .child(divider(t.toolbar_divider))
-            // 点阵背景开关
+            // ====== 点阵组：开关 + 密度 Dropdown ======
             .child(
-                div()
-                    .id("tb-grid")
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .w(px(28.0))
-                    .h(px(28.0))
-                    .rounded_md()
-                    .bg(if show_grid {
-                        t.toolbar_toggle_bg
-                    } else {
-                        TRANSPARENT
-                    })
-                    .hover(|s| s.bg(t.toolbar_toggle_hover_bg))
-                    .text_xs()
-                    .font_medium()
-                    .text_color(if show_grid {
-                        t.toolbar_toggle_text
-                    } else {
-                        t.toolbar_subtext
-                    })
-                    .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, _, cx| {
+                Button::new("tb-grid")
+                    .icon(IconName::LayoutDashboard)
+                    .small()
+                    .ghost()
+                    .selected(show_grid)
+                    .tooltip(t(lang, TKey::TbToggleGrid))
+                    .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                         this.show_grid = !this.show_grid;
                         cx.notify();
-                    }))
-                    .child("\u{25A6}"), // ▦ grid symbol
+                    })),
             )
-            // 点阵密度切换（紧凑/标准/稀疏）
             .child(
-                div()
-                    .id("tb-grid-density")
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .w(px(40.0))
-                    .h(px(28.0))
-                    .rounded_md()
-                    .bg(if show_grid {
-                        t.toolbar_toggle_bg
-                    } else {
-                        TRANSPARENT
-                    })
-                    .hover(|s| s.bg(t.toolbar_toggle_hover_bg))
-                    .text_xs()
-                    .font_medium()
-                    .text_color(if show_grid {
-                        t.toolbar_toggle_text
-                    } else {
-                        t.toolbar_subtext
-                    })
-                    .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, _, cx| {
-                        // 循环切换密度：紧凑(20) → 标准(28) → 稀疏(40) → 紧凑
-                        let new_spacing = match this.grid_spacing as i32 {
-                            20 => 28.0,
-                            28 => 40.0,
-                            _ => 20.0,
-                        };
-                        this.set_grid_spacing(new_spacing, cx);
-                    }))
-                    .child(match grid_spacing as i32 {
-                        20 => "D1",
-                        40 => "D3",
-                        _ => "D2",
+                Button::new("tb-grid-density")
+                    .label(density_label(grid_spacing))
+                    .small()
+                    .ghost()
+                    .tooltip(t(lang, TKey::TbGridDensity))
+                    .dropdown_menu({
+                        let entity = entity.clone();
+                        move |menu, _window, _cx| {
+                            let variants = [
+                                (20.0, TKey::GridDensityCompact),
+                                (28.0, TKey::GridDensityNormal),
+                                (40.0, TKey::GridDensitySparse),
+                            ];
+                            let mut menu = menu;
+                            for (spacing, key) in variants {
+                                let label = t(lang, key);
+                                let entity = entity.clone();
+                                menu = menu.item(
+                                    PopupMenuItem::new(label)
+                                        .checked((grid_spacing as i32) == (spacing as i32))
+                                        .on_click(move |_, _, cx| {
+                                            entity.update(cx, |this, cx| {
+                                                this.set_grid_spacing(spacing, cx);
+                                            });
+                                        }),
+                                );
+                            }
+                            menu
+                        }
                     }),
             )
-            // 拖拽开关
+            // ====== 拖拽开关 ======
             .child(
-                div()
-                    .id("tb-drag")
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .w(px(28.0))
-                    .h(px(28.0))
-                    .rounded_md()
-                    .bg(if drag_enabled {
-                        t.toolbar_toggle_bg
-                    } else {
-                        TRANSPARENT
-                    })
-                    .hover(|s| s.bg(t.toolbar_toggle_hover_bg))
-                    .text_xs()
-                    .font_medium()
-                    .text_color(if drag_enabled {
-                        t.toolbar_toggle_text
-                    } else {
-                        t.toolbar_subtext
-                    })
-                    .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, _, cx| {
+                Button::new("tb-drag")
+                    .icon(IconName::Settings)
+                    .small()
+                    .ghost()
+                    .selected(drag_enabled)
+                    .tooltip(t(lang, TKey::TbToggleDrag))
+                    .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                         this.toggle_drag(cx);
-                    }))
-                    .child("\u{270E}"), // ✎ drag/move symbol
+                    })),
             )
-            // 分隔线
-            .child(divider(t.toolbar_divider))
-            // 主题切换
+            // ====== 主题切换 ======
             .child(
-                div()
-                    .id("tb-theme")
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .w(px(28.0))
-                    .h(px(28.0))
-                    .rounded_md()
-                    .hover(|s| s.bg(t.toolbar_hover_bg))
-                    .active(|s| s.bg(t.toolbar_active_bg))
-                    .text_sm()
-                    .font_medium()
-                    .text_color(t.toolbar_text)
-                    .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, _, cx| {
+                Button::new("tb-theme")
+                    .icon(if is_dark { IconName::Sun } else { IconName::Moon })
+                    .small()
+                    .ghost()
+                    .tooltip(t(lang, TKey::TbToggleTheme))
+                    .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                         this.toggle_theme(cx);
-                    }))
-                    .child(if is_dark { "\u{2600}" } else { "\u{263D}" }), // ☀ light / ☽ dark
+                    })),
             )
-            // 语言切换（中/En）
+            // ====== 语言切换 ======
             .child(
-                div()
-                    .id("tb-lang")
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .w(px(36.0))
-                    .h(px(28.0))
-                    .rounded_md()
-                    .hover(|s| s.bg(t.toolbar_hover_bg))
-                    .active(|s| s.bg(t.toolbar_active_bg))
-                    .text_xs()
-                    .font_medium()
-                    .text_color(t.toolbar_text)
-                    .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, _, cx| {
+                Button::new("tb-lang")
+                    .label(if lang.is_zh() { "En" } else { "中" })
+                    .small()
+                    .ghost()
+                    .tooltip(t(lang, TKey::TbToggleLanguage))
+                    .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                         this.toggle_language(cx);
-                    }))
-                    .child(if self.language == crate::i18n::Language::Zh { "En" } else { "中" }),
+                    })),
+            )
+            // ====== 数据源 Dropdown ======
+            .child(
+                Button::new("tb-data-source")
+                    .icon(IconName::Cpu)
+                    .small()
+                    .ghost()
+                    .tooltip(t(lang, TKey::TbDataSource))
+                    .dropdown_menu({
+                        let entity = entity.clone();
+                        move |menu, _window, _cx| {
+                            let mut menu = menu;
+                            for &ds in DataSource::all() {
+                                let label = t(lang, ds.label_key());
+                                let entity = entity.clone();
+                                menu = menu.item(
+                                    PopupMenuItem::new(label)
+                                        .checked(ds == data_source)
+                                        .on_click(move |_, _, cx| {
+                                            entity.update(cx, |this, cx| {
+                                                this.set_data_source(ds, cx);
+                                            });
+                                        }),
+                                );
+                            }
+                            menu
+                        }
+                    }),
             )
     }
 }
 
-/// 工具栏分隔线。
-fn divider(color: gpui::Rgba) -> gpui::Div {
-    div().w(px(1.0)).h(px(20.0)).bg(color)
+/// 返回点阵密度的简短标签（D1/D2/D3）。
+fn density_label(spacing: f32) -> &'static str {
+    match spacing as i32 {
+        20 => "D1",
+        40 => "D3",
+        _ => "D2",
+    }
 }

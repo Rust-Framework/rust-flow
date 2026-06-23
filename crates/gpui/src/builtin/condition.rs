@@ -57,7 +57,8 @@
 use gpui::{div, px, AnyElement, IntoElement, ParentElement, Styled};
 use gpui_component::{Icon, Sizable, StyledExt};
 use rust_agent_flow::{
-    LayoutDirection, Node, NodeSchema, PointF, PortDirection, PortId, PortSide, PortSpec, SizeF,
+    FieldSpec, FieldType, LayoutDirection, ListSpec, Node, NodeSchema, PointF, PortDirection,
+    PortId, PortSide, PortSpec, SizeF,
 };
 
 use crate::i18n::TKey;
@@ -109,7 +110,29 @@ impl ConditionNode {
                 .with_port(PortSpec::new("in", PortDirection::In, PortSide::Auto))
                 .with_port(PortSpec::new("else", PortDirection::Out, PortSide::Auto))
                 .with_port(PortSpec::new("if_0", PortDirection::Out, PortSide::Auto))
-                .with_port(PortSpec::new("if_1", PortDirection::Out, PortSide::Auto)),
+                .with_port(PortSpec::new("if_1", PortDirection::Out, PortSide::Auto))
+                .with_field(
+                    FieldSpec::new("label", "Label", FieldType::Text)
+                        .with_default(serde_json::json!("Condition")),
+                )
+                .with_field(
+                    FieldSpec::new(
+                        "conditions",
+                        "Conditions",
+                        FieldType::List(
+                            ListSpec::new(vec![
+                                FieldSpec::new("id", "ID", FieldType::Text)
+                                    .with_default(serde_json::json!("")),
+                                FieldSpec::new("label", "Expression", FieldType::CodeEditor)
+                                    .with_default(serde_json::json!("")),
+                            ]),
+                        ),
+                    )
+                    .with_default(serde_json::json!([
+                        { "id": "if_0", "label": "condition 0" },
+                        { "id": "if_1", "label": "condition 1" }
+                    ])),
+                ),
         }
     }
 }
@@ -264,23 +287,23 @@ impl IFlowNode for ConditionNode {
 
             // 端口：In 入口 + 单一 Out 出口（使用 else 端口位置）
             let mid_x = w * 0.5;
-            let body_mid_y = title_h + item_h * 0.5;
+            let node_mid_y = h * 0.5;
             match layout {
                 LayoutDirection::Horizontal => {
-                    // In 端口（标题栏左侧中心）
+                    // In 端口（节点左侧垂直中心）
                     container = container.child(make_port(
                         -port_outer_half,
-                        title_h * 0.5 - port_outer_half,
+                        node_mid_y - port_outer_half,
                         port_outer,
                         port_size,
                         in_ring,
                         in_dot,
                         t.port_bg,
                     ));
-                    // Out 端口（主体右侧中心）— 使用 else 颜色
+                    // Out 端口（节点右侧垂直中心）— 使用 else 颜色
                     container = container.child(make_port(
                         w - port_outer_half,
-                        body_mid_y - port_outer_half,
+                        node_mid_y - port_outer_half,
                         port_outer,
                         port_size,
                         else_ring,
@@ -414,12 +437,13 @@ impl IFlowNode for ConditionNode {
 
         // 端口位置（与 port_position 保持一致）
         let mid_x = w * 0.5;
+        let node_mid_y = h * 0.5;
         match layout {
             LayoutDirection::Horizontal => {
-                // In 端口（标题栏左侧中心）— 靛蓝色
+                // In 端口（节点左侧垂直中心）— 靛蓝色
                 container = container.child(make_port(
                     -port_outer_half,
-                    title_h * 0.5 - port_outer_half,
+                    node_mid_y - port_outer_half,
                     port_outer,
                     port_size,
                     in_ring,
@@ -544,21 +568,20 @@ impl IFlowNode for ConditionNode {
         let right = node.position.x + node.size.w;
         let top = node.position.y;
         let mid_x = node.position.x + node.size.w * 0.5;
-        let title_mid_y = node.position.y + TITLE_H * 0.5;
+        let node_mid_y = node.position.y + node.size.h * 0.5;
 
         // ====== 收起状态：In 入口 + 单一 Out 出口（else 位置） ======
-        // 收起时高度 = TITLE_H + ITEM_H，Out 端口位于主体中心
+        // 收起时高度 = TITLE_H + ITEM_H，进出端点均位于节点垂直中心
         if collapsed {
-            let body_mid_y = node.position.y + TITLE_H + ITEM_H * 0.5;
             let bottom = node.position.y + TITLE_H + ITEM_H;
             return match port_id.as_str() {
                 "in" => match layout {
-                    LayoutDirection::Horizontal => Some(PointF::new(left, title_mid_y)),
+                    LayoutDirection::Horizontal => Some(PointF::new(left, node_mid_y)),
                     LayoutDirection::Vertical => Some(PointF::new(mid_x, top)),
                 },
-                // 所有 out 端口（if_0, if_1, ..., else）合并到主体边缘
+                // 所有 out 端口（if_0, if_1, ..., else）合并到节点边缘垂直中心
                 _ => match layout {
-                    LayoutDirection::Horizontal => Some(PointF::new(right, body_mid_y)),
+                    LayoutDirection::Horizontal => Some(PointF::new(right, node_mid_y)),
                     LayoutDirection::Vertical => Some(PointF::new(mid_x, bottom)),
                 },
             };
@@ -572,9 +595,9 @@ impl IFlowNode for ConditionNode {
         let bottom = node.position.y + TITLE_H + ITEM_H * n_br as f32;
 
         match port_id.as_str() {
-            // In：横向左侧中心 / 纵向顶部中心
+            // In：横向节点左侧垂直中心 / 纵向顶部中心
             "in" => match layout {
-                LayoutDirection::Horizontal => Some(PointF::new(left, title_mid_y)),
+                LayoutDirection::Horizontal => Some(PointF::new(left, node_mid_y)),
                 LayoutDirection::Vertical => Some(PointF::new(mid_x, top)),
             },
             // Else 兜底出口（最后一行/最右）：

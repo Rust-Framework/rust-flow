@@ -80,6 +80,11 @@ pub struct Theme {
     pub toolbar_toggle_text: Rgba,
     pub toolbar_toggle_hover_bg: Rgba,
     pub toolbar_divider: Rgba,
+
+    // ====== 边「+」按钮 ======
+    pub edge_plus_bg: Rgba,
+    pub edge_plus_border: Rgba,
+    pub edge_plus_hover_bg: Rgba,
 }
 
 impl Default for Theme {
@@ -151,6 +156,11 @@ impl Theme {
             toolbar_toggle_text: gpui::rgb(0x6366f1),
             toolbar_toggle_hover_bg: gpui::rgb(0xf8fafc),
             toolbar_divider: gpui::rgb(0xe2e8f0),
+
+            // 边「+」按钮
+            edge_plus_bg: gpui::rgb(0xffffff),
+            edge_plus_border: gpui::rgb(0x94a3b8),
+            edge_plus_hover_bg: gpui::rgb(0x6366f1),
         }
     }
 
@@ -216,6 +226,11 @@ impl Theme {
             toolbar_toggle_text: gpui::rgb(0xa5b4fc),
             toolbar_toggle_hover_bg: gpui::rgb(0x334155),
             toolbar_divider: gpui::rgb(0x475569),
+
+            // 边「+」按钮
+            edge_plus_bg: gpui::rgb(0x334155),
+            edge_plus_border: gpui::rgb(0x94a3b8),
+            edge_plus_hover_bg: gpui::rgb(0x818cf8),
         }
     }
 

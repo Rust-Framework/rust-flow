@@ -37,7 +37,8 @@
 use gpui::{div, px, AnyElement, IntoElement, ParentElement, Styled};
 use gpui_component::{Icon, Sizable, StyledExt};
 use rust_agent_flow::{
-    LayoutDirection, Node, NodeSchema, PointF, PortDirection, PortId, PortSide, PortSpec, SizeF,
+    DropdownOption, FieldSpec, FieldType, LayoutDirection, Node, NodeSchema, PointF,
+    PortDirection, PortId, PortSide, PortSpec, SizeF,
 };
 
 use crate::node::{NodeViewCtx, IFlowNode};
@@ -105,7 +106,28 @@ impl LoopNode {
                 .with_port(PortSpec::new("in", PortDirection::In, PortSide::Auto))
                 .with_port(PortSpec::new("done", PortDirection::Out, PortSide::Auto))
                 .with_port(PortSpec::new("loop_body", PortDirection::Out, PortSide::Auto))
-                .with_port(PortSpec::new("loop_in", PortDirection::In, PortSide::Auto)),
+                .with_port(PortSpec::new("loop_in", PortDirection::In, PortSide::Auto))
+                .with_field(
+                    FieldSpec::new("label", "Label", FieldType::Text)
+                        .with_default(serde_json::json!("Loop")),
+                )
+                .with_field(
+                    FieldSpec::new(
+                        "loop_mode",
+                        "Loop Mode",
+                        FieldType::Dropdown(vec![
+                            DropdownOption::new("for_each", "For each item"),
+                            DropdownOption::new("while", "while cond"),
+                            DropdownOption::new("for_loop", "for i in 0..n"),
+                            DropdownOption::new("batch_parallel", "parallel each"),
+                        ]),
+                    )
+                    .with_default(serde_json::json!("for_each")),
+                )
+                .with_field(
+                    FieldSpec::new("loop_expr", "Condition Expression", FieldType::CodeBlock)
+                        .with_default(serde_json::json!("item > 0")),
+                ),
         }
     }
 }
@@ -220,15 +242,15 @@ impl IFlowNode for LoopNode {
         let top = 0.0f32;
         let bottom = h;
         let mid_x = w * 0.5;
-        let title_mid_y = title_h * 0.5;
+        let node_mid_y = h * 0.5;
         let body_mid_y = title_h + body_h * 0.5;
 
         match layout {
             LayoutDirection::Horizontal => {
-                // 主线：In 左 / Done 右（标题栏中心 Y）
+                // 主线：In 左 / Done 右（节点垂直中心 Y）
                 container = container.child(make_port(
                     left - port_outer_half,
-                    title_mid_y - port_outer_half,
+                    node_mid_y - port_outer_half,
                     port_outer,
                     port_size,
                     in_ring,
@@ -237,7 +259,7 @@ impl IFlowNode for LoopNode {
                 ));
                 container = container.child(make_port(
                     right - port_outer_half,
-                    title_mid_y - port_outer_half,
+                    node_mid_y - port_outer_half,
                     port_outer,
                     port_size,
                     done_ring,
@@ -338,20 +360,20 @@ impl IFlowNode for LoopNode {
         let right = node.position.x + node.size.w;
         let top = node.position.y;
         let mid_x = node.position.x + node.size.w * 0.5;
-        let title_mid_y = node.position.y + TITLE_H * 0.5;
+        let node_mid_y = node.position.y + node.size.h * 0.5;
 
         // 使用固定高度，保证端口位置与实际渲染高度一致
         let bottom = node.position.y + TITLE_H + BODY_H;
         let body_mid_y = node.position.y + TITLE_H + BODY_H * 0.5;
 
         match port_id.as_str() {
-            // 主线 In→Done：纵向上进下出，横向左进右出
+            // 主线 In→Done：纵向上进下出，横向左进右出（节点垂直中心）
             "in" => match layout {
-                LayoutDirection::Horizontal => Some(PointF::new(left, title_mid_y)),
+                LayoutDirection::Horizontal => Some(PointF::new(left, node_mid_y)),
                 LayoutDirection::Vertical => Some(PointF::new(mid_x, top)),
             },
             "done" => match layout {
-                LayoutDirection::Horizontal => Some(PointF::new(right, title_mid_y)),
+                LayoutDirection::Horizontal => Some(PointF::new(right, node_mid_y)),
                 LayoutDirection::Vertical => Some(PointF::new(mid_x, bottom)),
             },
             // 循环体支线：loop_body 始终右出，loop_in 始终左进（两种布局一致）

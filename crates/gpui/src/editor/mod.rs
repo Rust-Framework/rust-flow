@@ -10,6 +10,7 @@
 //! - [`ports`]：端口位置计算
 //! - [`viewport`]：视口数学映射
 
+mod data_source;
 mod flow_editor;
 mod grid;
 mod hit_test;
@@ -19,5 +20,6 @@ mod rendering;
 mod toolbar;
 mod viewport;
 
+pub use data_source::DataSource;
 pub use flow_editor::{FlowEditorView, LayoutDirection};
 pub use interaction::InteractionState;

@@ -127,6 +127,97 @@ impl FlowGraph {
         self.edges.values().filter(move |e| e.target == node)
     }
 
+    // ---- FlowDocument 互转 ----
+
+    /// 从 FlowDocument 构建流程图。
+    ///
+    /// 节点 size 为 None 时用通用默认（180×64），由 gpui 层 `sync_node_sizes()` 修正。
+    /// 节点 position 为 None 时保持 zero（由布局引擎计算）。
+    /// 边的 source/target 是节点索引，自动映射为 NodeId。
+    pub fn from_document(doc: &crate::schema::FlowDocument) -> Self {
+        use std::collections::HashMap;
+
+        let mut graph = Self::new();
+        let mut idx_to_id: HashMap<usize, NodeId> = HashMap::new();
+
+        for (idx, node_def) in doc.nodes.iter().enumerate() {
+            let size = node_def
+                .size
+                .unwrap_or_else(|| crate::geometry::SizeF::new(180.0, 64.0));
+            let node_id = graph.add_node_with_size(
+                node_def.kind.clone(),
+                node_def.data.clone(),
+                size,
+            );
+            if let Some(pos) = node_def.position {
+                if let Some(n) = graph.node_mut(node_id) {
+                    n.position = pos;
+                }
+            }
+            idx_to_id.insert(idx, node_id);
+        }
+
+        for edge_def in &doc.edges {
+            let source = match idx_to_id.get(&edge_def.source) {
+                Some(id) => *id,
+                None => continue,
+            };
+            let target = match idx_to_id.get(&edge_def.target) {
+                Some(id) => *id,
+                None => continue,
+            };
+            let mut edge = Edge::new(source, target);
+            edge.source_port = edge_def.source_port.clone();
+            edge.target_port = edge_def.target_port.clone();
+            if let Some(et) = edge_def.edge_type {
+                edge.edge_type = et;
+            }
+            graph.add_edge(edge);
+        }
+
+        graph
+    }
+
+    /// 导出为 FlowDocument（可序列化为 JSON）。
+    ///
+    /// 节点按内部顺序导出，边用节点索引引用。
+    pub fn to_document(&self, name: impl Into<String>) -> crate::schema::FlowDocument {
+        use std::collections::HashMap;
+
+        let mut doc = crate::schema::FlowDocument::new(name);
+        let mut id_to_idx: HashMap<NodeId, usize> = HashMap::new();
+
+        for (idx, node) in self.nodes.values().enumerate() {
+            id_to_idx.insert(node.id, idx);
+            doc.nodes.push(crate::schema::NodeDef {
+                kind: node.kind.clone(),
+                data: node.data.clone(),
+                size: Some(node.size),
+                position: Some(node.position),
+            });
+        }
+
+        for edge in self.edges.values() {
+            let source = match id_to_idx.get(&edge.source) {
+                Some(idx) => *idx,
+                None => continue,
+            };
+            let target = match id_to_idx.get(&edge.target) {
+                Some(idx) => *idx,
+                None => continue,
+            };
+            doc.edges.push(crate::schema::EdgeDef {
+                source,
+                target,
+                source_port: edge.source_port.clone(),
+                target_port: edge.target_port.clone(),
+                edge_type: Some(edge.edge_type),
+            });
+        }
+
+        doc
+    }
+
     /// Collect all Loop nodes and their associated body node groups.
     ///
     /// For each Loop node (identified by having a `loop_body` outgoing edge),

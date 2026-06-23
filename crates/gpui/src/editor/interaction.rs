@@ -44,6 +44,12 @@ pub enum InteractionState {
         from_port: PortId,
         current: PointF,
     },
+    /// 点击边「+」按钮后：等待用户在浮层中选择节点类型。
+    /// `anchor` 为点击时的屏幕坐标，用于浮层定位。
+    AddingNodeFromEdge {
+        edge_id: rust_agent_flow::EdgeId,
+        anchor: PointF,
+    },
 }
 
 impl FlowEditorView {
@@ -75,6 +81,17 @@ impl FlowEditorView {
                 // 点击切换按钮：切换展开/收起状态
                 self.handle_node_action(node_id, NodeAction::ToggleCollapse, cx);
             }
+            (MouseButton::Left, HitResult::EdgePlusButton(edge_id)) => {
+                // 点击边「+」按钮：进入 AddingNodeFromEdge 状态，显示节点选择浮层
+                let anchor = PointF::new(
+                    event.position.x.as_f32(),
+                    event.position.y.as_f32(),
+                );
+                self.interaction = InteractionState::AddingNodeFromEdge {
+                    edge_id,
+                    anchor,
+                };
+            }
             (MouseButton::Left, HitResult::OutPort(node_id, port)) => {
                 self.interaction = InteractionState::DrawingEdge {
                     from_node: node_id,
@@ -101,7 +118,13 @@ impl FlowEditorView {
                 // 点击入端口：暂不处理（可作为连线目标）
             }
             (MouseButton::Left, HitResult::Empty) => {
-                // 左键拖拽空白区域 → 平移画布（屏幕坐标起点）
+                // 点击空白：若当前在 AddingNodeFromEdge 状态，仅退出浮层（不平移）
+                if matches!(self.interaction, InteractionState::AddingNodeFromEdge { .. }) {
+                    self.interaction = InteractionState::Idle;
+                    cx.notify();
+                    return;
+                }
+                // 否则：左键拖拽空白区域 → 平移画布（屏幕坐标起点）
                 let start_screen = PointF::new(
                     event.position.x.as_f32(),
                     event.position.y.as_f32(),
@@ -159,6 +182,9 @@ impl FlowEditorView {
                 *cur = logical;
                 cx.notify();
             }
+            InteractionState::AddingNodeFromEdge { .. } => {
+                // 浮层显示期间不追踪悬停，保持浮层稳定
+            }
             InteractionState::Idle => {
                 // 悬停追踪：hit test → 更新 hovered → 通知视图刷新
                 // 用于显示/隐藏删除按钮等 hover 元素
@@ -168,7 +194,7 @@ impl FlowEditorView {
                     | HitResult::DeleteButton(id)
                     | HitResult::ToggleButton(id) => Some(*id),
                     HitResult::OutPort(id, _) | HitResult::InPort(id, _) => Some(*id),
-                    HitResult::Empty => None,
+                    HitResult::EdgePlusButton(_) | HitResult::Empty => None,
                 };
                 if new_hovered != self.hovered {
                     self.hovered = new_hovered;
@@ -204,7 +230,7 @@ impl FlowEditorView {
             InteractionState::DraggingNode { .. } | InteractionState::Panning { .. } => {
                 self.interaction = InteractionState::Idle;
             }
-            InteractionState::Idle => {}
+            InteractionState::AddingNodeFromEdge { .. } | InteractionState::Idle => {}
         }
         cx.notify();
     }

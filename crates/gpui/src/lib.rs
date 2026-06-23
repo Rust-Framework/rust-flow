@@ -11,7 +11,7 @@ pub mod node;
 pub mod panel;
 pub mod theme;
 
-pub use editor::FlowEditorView;
+pub use editor::{DataSource, FlowEditorView};
 pub use edge::EdgeView;
 pub use i18n::{Language, TKey, t};
 pub use node::{IFlowNode, NodeRegistry, NodeView, NodeViewCtx};

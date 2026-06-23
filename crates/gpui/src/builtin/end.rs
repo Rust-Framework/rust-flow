@@ -6,7 +6,8 @@
 use gpui::{div, px, AnyElement, IntoElement, ParentElement, Styled};
 use gpui_component::{Icon, Sizable, StyledExt};
 use rust_agent_flow::{
-    LayoutDirection, Node, NodeSchema, PortDirection, PortId, PortSide, PortSpec, SizeF, PointF,
+    FieldSpec, FieldType, LayoutDirection, ListSpec, Node, NodeSchema, PortDirection, PortId,
+    PortSide, PortSpec, SizeF, PointF,
 };
 
 use crate::i18n::TKey;
@@ -45,7 +46,26 @@ impl EndNode {
         Self {
             schema: NodeSchema::new("end", "End")
                 .with_size(SizeF::new(160.0, TITLE_H + BODY_H))
-                .with_port(PortSpec::new("in", PortDirection::In, PortSide::Auto)),
+                .with_port(PortSpec::new("in", PortDirection::In, PortSide::Auto))
+                .with_field(
+                    FieldSpec::new("label", "Label", FieldType::Text)
+                        .with_default(serde_json::json!("End")),
+                )
+                .with_field(
+                    FieldSpec::new(
+                        "returns",
+                        "Return Results",
+                        FieldType::List(
+                            ListSpec::new(vec![
+                                FieldSpec::new("name", "Name", FieldType::Text)
+                                    .with_default(serde_json::json!("")),
+                                FieldSpec::new("type", "Type", FieldType::Text)
+                                    .with_default(serde_json::json!("string")),
+                            ]),
+                        ),
+                    )
+                    .with_default(serde_json::json!([])),
+                ),
         }
     }
 }
@@ -138,14 +158,14 @@ impl IFlowNode for EndNode {
                 ),
         );
 
-        // 端口：仅 In
-        let mid_y_title = title_h * 0.5;
+        // 端口：仅 In，横向布局按节点垂直居中（非标题栏居中）
+        let mid_y_node = h * 0.5;
         match layout {
             LayoutDirection::Horizontal => {
                 // In 端口（左侧中心）
                 container = container.child(make_port(
                     -port_outer_half,
-                    mid_y_title - port_outer_half,
+                    mid_y_node - port_outer_half,
                     port_outer,
                     port_size,
                     t.node_in_ring,
@@ -189,12 +209,12 @@ impl IFlowNode for EndNode {
     ) -> Option<PointF> {
         let left = node.position.x;
         let mid_x = node.position.x + node.size.w * 0.5;
-        let title_mid_y = node.position.y + TITLE_H * 0.5;
+        let node_mid_y = node.position.y + node.size.h * 0.5;
         let top = node.position.y;
 
         match port_id.as_str() {
             "in" => match layout {
-                LayoutDirection::Horizontal => Some(PointF::new(left, title_mid_y)),
+                LayoutDirection::Horizontal => Some(PointF::new(left, node_mid_y)),
                 LayoutDirection::Vertical => Some(PointF::new(mid_x, top)),
             },
             _ => None,

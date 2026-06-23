@@ -106,6 +106,41 @@ pub enum TKey {
     VariableCount,
     ParamsCount,
     ReturnsCount,
+    // 工具栏 tooltip
+    TbZoomIn,
+    TbZoomOut,
+    TbFitView,
+    TbResetView,
+    TbLayoutHorizontal,
+    TbLayoutVertical,
+    TbEdgeType,
+    TbToggleGrid,
+    TbGridDensity,
+    TbToggleDrag,
+    TbToggleTheme,
+    TbToggleLanguage,
+    TbDataSource,
+    // 数据源名称
+    DataSourceAgentFlow,
+    DataSourceDataPipeline,
+    DataSourceSimpleFlow,
+    // 节点添加
+    AddNodeTitle,
+    AddNodeAction,
+    AddNodeCondition,
+    AddNodeLoop,
+    AddNodeVariable,
+    AddNodeAdapter,
+    AddNodeAgent,
+    // 边类型名称
+    EdgeBezier,
+    EdgeStraight,
+    EdgeStep,
+    EdgeSmoothStep,
+    // 点阵密度名称
+    GridDensityCompact,
+    GridDensityNormal,
+    GridDensitySparse,
 }
 
 /// 根据语言和翻译键返回对应文案。
@@ -176,6 +211,41 @@ fn t_zh(key: TKey) -> &'static str {
         TKey::VariableCount => "个变量",
         TKey::ParamsCount => "个参数",
         TKey::ReturnsCount => "个返回",
+        // 工具栏 tooltip
+        TKey::TbZoomIn => "放大",
+        TKey::TbZoomOut => "缩小",
+        TKey::TbFitView => "适应视图",
+        TKey::TbResetView => "重置视图",
+        TKey::TbLayoutHorizontal => "横向布局",
+        TKey::TbLayoutVertical => "纵向布局",
+        TKey::TbEdgeType => "边类型",
+        TKey::TbToggleGrid => "点阵背景",
+        TKey::TbGridDensity => "点阵密度",
+        TKey::TbToggleDrag => "拖拽开关",
+        TKey::TbToggleTheme => "切换主题",
+        TKey::TbToggleLanguage => "切换语言",
+        TKey::TbDataSource => "数据源",
+        // 数据源名称
+        TKey::DataSourceAgentFlow => "Agent 编排流程",
+        TKey::DataSourceDataPipeline => "数据处理流水线",
+        TKey::DataSourceSimpleFlow => "简单顺序流",
+        // 节点添加
+        TKey::AddNodeTitle => "添加节点",
+        TKey::AddNodeAction => "动作节点",
+        TKey::AddNodeCondition => "条件节点",
+        TKey::AddNodeLoop => "循环节点",
+        TKey::AddNodeVariable => "变量节点",
+        TKey::AddNodeAdapter => "数据适配节点",
+        TKey::AddNodeAgent => "智能体节点",
+        // 边类型名称
+        TKey::EdgeBezier => "贝塞尔曲线",
+        TKey::EdgeStraight => "直线",
+        TKey::EdgeStep => "直角折线",
+        TKey::EdgeSmoothStep => "圆角折线",
+        // 点阵密度名称
+        TKey::GridDensityCompact => "紧凑",
+        TKey::GridDensityNormal => "标准",
+        TKey::GridDensitySparse => "稀疏",
     }
 }
 
@@ -239,5 +309,40 @@ fn t_en(key: TKey) -> &'static str {
         TKey::VariableCount => "variables",
         TKey::ParamsCount => "params",
         TKey::ReturnsCount => "returns",
+        // 工具栏 tooltip
+        TKey::TbZoomIn => "Zoom In",
+        TKey::TbZoomOut => "Zoom Out",
+        TKey::TbFitView => "Fit View",
+        TKey::TbResetView => "Reset View",
+        TKey::TbLayoutHorizontal => "Horizontal Layout",
+        TKey::TbLayoutVertical => "Vertical Layout",
+        TKey::TbEdgeType => "Edge Type",
+        TKey::TbToggleGrid => "Toggle Grid",
+        TKey::TbGridDensity => "Grid Density",
+        TKey::TbToggleDrag => "Toggle Drag",
+        TKey::TbToggleTheme => "Toggle Theme",
+        TKey::TbToggleLanguage => "Toggle Language",
+        TKey::TbDataSource => "Data Source",
+        // 数据源名称
+        TKey::DataSourceAgentFlow => "Agent Orchestration",
+        TKey::DataSourceDataPipeline => "Data Pipeline",
+        TKey::DataSourceSimpleFlow => "Simple Sequence",
+        // 节点添加
+        TKey::AddNodeTitle => "Add Node",
+        TKey::AddNodeAction => "Action Node",
+        TKey::AddNodeCondition => "Condition Node",
+        TKey::AddNodeLoop => "Loop Node",
+        TKey::AddNodeVariable => "Variable Node",
+        TKey::AddNodeAdapter => "Data Adapter Node",
+        TKey::AddNodeAgent => "Agent Node",
+        // 边类型名称
+        TKey::EdgeBezier => "Bezier",
+        TKey::EdgeStraight => "Straight",
+        TKey::EdgeStep => "Step",
+        TKey::EdgeSmoothStep => "Smooth Step",
+        // 点阵密度名称
+        TKey::GridDensityCompact => "Compact",
+        TKey::GridDensityNormal => "Normal",
+        TKey::GridDensitySparse => "Sparse",
     }
 }

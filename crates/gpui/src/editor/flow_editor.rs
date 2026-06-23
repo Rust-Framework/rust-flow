@@ -29,16 +29,17 @@ use gpui::{
     div, px, Context, CursorStyle, InteractiveElement, IntoElement, MouseButton, ParentElement,
     Pixels, Point, Render, Styled, Window,
 };
-use rust_agent_flow::{EdgeType, FlowGraph, NodeId, PointF, PortId, PortSide, Viewport};
+use rust_agent_flow::{EdgeId, EdgeType, FlowGraph, NodeId, PointF, PortId, PortSide, SizeF, Viewport};
 use rust_agent_flow::{
     LayoutDirection as CoreLayoutDirection, LayoutEngine, LayoutResult, DagreLayout,
 };
 
-use crate::i18n::Language;
+use crate::i18n::{Language, TKey, t};
 use crate::node::{default_syntax_service, NodeAction, NodeRegistry, SharedSyntaxService};
 use crate::panel::PanelView;
 use crate::theme::Theme;
 
+use super::data_source::DataSource;
 use super::interaction::InteractionState;
 
 /// 布局方向。
@@ -76,6 +77,8 @@ pub struct FlowEditorView {
     pub syntax_service: SharedSyntaxService,
     /// 当前 UI 语言（中英文切换）。
     pub language: Language,
+    /// 当前数据源（切换时重建图）。
+    pub data_source: DataSource,
 }
 
 impl FlowEditorView {
@@ -98,6 +101,7 @@ impl FlowEditorView {
             panel_view: None,
             syntax_service: default_syntax_service(),
             language: Language::default(),
+            data_source: DataSource::default(),
         }
     }
 
@@ -233,6 +237,64 @@ impl FlowEditorView {
         self.set_language(self.language.toggle(), cx);
     }
 
+    /// 切换数据源：重建图 + 重置视口/选中状态 + 自动重排。
+    pub fn set_data_source(&mut self, ds: DataSource, cx: &mut Context<Self>) {
+        if self.data_source == ds {
+            return;
+        }
+        self.data_source = ds;
+        self.graph = ds.to_graph();
+        self.selected = None;
+        self.hovered = None;
+        self.panel_view = None;
+        self.viewport = Viewport::default();
+        self.relayout();
+        cx.notify();
+    }
+
+    /// 在边中间插入新节点：拆边 → 插入节点 → 连两条新边。
+    ///
+    /// 用于连线「+」按钮添加节点：点击边中点 plus button → 弹出节点选择面板
+    /// → 选择节点类型 → 调用此方法完成插入。
+    pub(crate) fn insert_node_at_edge(
+        &mut self,
+        edge_id: EdgeId,
+        kind: &str,
+        cx: &mut Context<Self>,
+    ) {
+        // 1. 读取原边信息
+        let (src, src_port, dst, dst_port, edge_type) = match self.graph.edge(edge_id) {
+            Some(e) => (e.source, e.source_port.clone(), e.target, e.target_port.clone(), e.edge_type),
+            None => return,
+        };
+        // 2. 删除原边
+        self.graph.remove_edge(edge_id);
+        // 3. 创建新节点（用 schema default_data + default_size）
+        let flow_node = self.registry.get(kind);
+        let data = flow_node
+            .as_ref()
+            .map(|f| f.schema().default_data())
+            .unwrap_or_else(|| serde_json::json!({"label": kind}));
+        let size = flow_node
+            .as_ref()
+            .map(|f| f.schema().default_size)
+            .unwrap_or_else(|| SizeF::new(180.0, 60.0));
+        let new_id = self.graph.add_node_with_size(kind, data, size);
+        // 4. 连接 src → new → dst
+        let mut e1 = rust_agent_flow::Edge::new(src, new_id);
+        e1.source_port = src_port;
+        e1.edge_type = edge_type;
+        self.graph.add_edge(e1);
+        let mut e2 = rust_agent_flow::Edge::new(new_id, dst);
+        e2.target_port = dst_port;
+        e2.edge_type = edge_type;
+        self.graph.add_edge(e2);
+        // 5. 选中新节点 + 重排
+        self.selected = Some(new_id);
+        self.relayout();
+        cx.notify();
+    }
+
     /// 处理节点动作（由 NodeView/PanelView 的回调调用）。
     pub(crate) fn handle_node_action(
         &mut self,
@@ -317,6 +379,80 @@ impl FlowEditorView {
         self.relayout();
         cx.notify();
     }
+
+    /// 渲染节点类型选择浮层（仅在 AddingNodeFromEdge 状态下显示）。
+    ///
+    /// 浮层定位 = anchor + (10, 10) 偏移，列出 6 种可插入节点类型。
+    /// 点击某项 → 调用 `insert_node_at_edge` → 退出 AddingNodeFromEdge。
+    /// 浮层根 div 拦截鼠标按下事件，防止冒泡到画布 Empty 分支导致浮层关闭。
+    fn render_node_picker(&self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
+        let InteractionState::AddingNodeFromEdge { edge_id, anchor } = &self.interaction else {
+            return None;
+        };
+        let edge_id = *edge_id;
+        let lang = self.language;
+        let theme = self.theme;
+        let bg = theme.panel_bg;
+        let border = theme.panel_border;
+        let text_color = theme.panel_label_text;
+        let hover_bg = theme.toolbar_hover_bg;
+        let subtext = theme.panel_subtext;
+
+        // 6 种可插入节点类型 + 对应 i18n 键
+        let kinds: [(&str, TKey); 6] = [
+            ("action", TKey::AddNodeAction),
+            ("condition", TKey::AddNodeCondition),
+            ("loop", TKey::AddNodeLoop),
+            ("variable", TKey::AddNodeVariable),
+            ("adapter", TKey::AddNodeAdapter),
+            ("agent", TKey::AddNodeAgent),
+        ];
+
+        Some(
+            div()
+                .absolute()
+                .left(px(anchor.x + 10.0))
+                .top(px(anchor.y + 10.0))
+                .w(px(160.0))
+                .bg(bg)
+                .border_1()
+                .border_color(border)
+                .rounded_md()
+                .shadow_lg()
+                .p_2()
+                .flex()
+                .flex_col()
+                .gap_1()
+                .on_mouse_down(MouseButton::Left, |_, _, _| {
+                    // 拦截浮层内点击，防止冒泡到画布的 Empty 分支导致浮层关闭
+                })
+                .child(
+                    div()
+                        .text_sm()
+                        .text_color(subtext)
+                        .child(t(lang, TKey::AddNodeTitle).to_string()),
+                )
+                .children(kinds.iter().enumerate().map(|(idx, &(kind, key))| {
+                    div()
+                        .id(("node-picker", idx))
+                        .px_2()
+                        .py_1()
+                        .rounded_md()
+                        .text_sm()
+                        .text_color(text_color)
+                        .hover(|s| s.bg(hover_bg))
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(move |this, _, _, cx| {
+                                this.insert_node_at_edge(edge_id, kind, cx);
+                                this.interaction = InteractionState::Idle;
+                                cx.notify();
+                            }),
+                        )
+                        .child(t(lang, key).to_string())
+                })),
+        )
+    }
 }
 
 impl Render for FlowEditorView {
@@ -371,10 +507,16 @@ impl Render for FlowEditorView {
 
         container = container.child(content);
 
+        // ====== 边「+」按钮层：在节点层之上，不受 offset 影响 ======
+        // 按钮位置 = viewport.offset + edge_midpoint × scale（屏幕坐标）
+        // 放在节点层之后确保不被节点遮挡
+        container = container.child(self.render_edge_plus_buttons(&body_groups));
+
         // ====== 工具栏：不受缩放影响 ======
         container = container.child(toolbar);
 
         // ====== 属性面板：不受缩放影响 ======
+        // 面板容器拦截鼠标事件，防止点击冒泡到画布导致 selected=None 面板销毁。
         if let Some(panel_view) = panel {
             container = container.child(
                 div()
@@ -382,8 +524,16 @@ impl Render for FlowEditorView {
                     .right_0()
                     .top_0()
                     .bottom_0()
+                    .id("panel-container")
+                    .on_mouse_down(MouseButton::Left, |_, _, _| {})
+                    .on_mouse_down(MouseButton::Middle, |_, _, _| {})
                     .child(panel_view),
             );
+        }
+
+        // ====== 节点选择浮层：仅在 AddingNodeFromEdge 状态下显示 ======
+        if let Some(picker) = self.render_node_picker(cx) {
+            container = container.child(picker);
         }
 
         container

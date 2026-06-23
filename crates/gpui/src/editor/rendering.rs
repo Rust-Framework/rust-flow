@@ -14,6 +14,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use gpui::{canvas, div, px, App, AppContext, Entity, IntoElement, ParentElement, Point, Styled};
+use gpui_component::{Icon, IconName, Sizable};
 use rust_agent_flow::{Edge, EdgeType, FlowGraph, NodeId, PointF, PortSide, RectF};
 
 use crate::edge::{paint_edge_scaled, paint_loop_back_edge};
@@ -267,6 +268,85 @@ impl FlowEditorView {
             },
         )
         .size_full()
+    }
+
+    /// 渲染所有可见边中点的「+」按钮（div 覆盖层）。
+    ///
+    /// 按钮位置 = viewport.offset + edge_midpoint × scale
+    /// 跳过回环边（target_port == "loop_in"）和连接到隐藏循环体节点的边。
+    /// 中点计算与 `hit_test_edge_plus` 保持一致（节点中心中点）。
+    pub(crate) fn render_edge_plus_buttons(
+        &self,
+        body_groups: &HashMap<NodeId, HashSet<NodeId>>,
+    ) -> impl IntoElement {
+        let s = self.scale();
+        let offset_x = self.viewport.offset.x;
+        let offset_y = self.viewport.offset.y;
+        let bg = self.theme.edge_plus_bg;
+        let border = self.theme.edge_plus_border;
+        let text_color = self.theme.toolbar_text;
+
+        // 收集隐藏节点（收起的循环体）
+        let mut hidden_nodes: HashSet<NodeId> = HashSet::new();
+        for (loop_node, body_nodes) in body_groups {
+            if let Some(ln) = self.graph.node(*loop_node) {
+                let body_collapsed = ln
+                    .data
+                    .get("body_collapsed")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                if body_collapsed {
+                    hidden_nodes.extend(body_nodes.iter().copied());
+                }
+            }
+        }
+
+        let buttons: Vec<_> = self
+            .graph
+            .edges()
+            .filter(|edge| edge.target_port.as_deref() != Some("loop_in"))
+            .filter(|edge| {
+                !hidden_nodes.contains(&edge.source) && !hidden_nodes.contains(&edge.target)
+            })
+            .filter_map(|edge| {
+                let src = self.graph.node(edge.source)?;
+                let dst = self.graph.node(edge.target)?;
+                let src_center = PointF::new(
+                    src.position.x + src.size.w * 0.5,
+                    src.position.y + src.size.h * 0.5,
+                );
+                let dst_center = PointF::new(
+                    dst.position.x + dst.size.w * 0.5,
+                    dst.position.y + dst.size.h * 0.5,
+                );
+                let mid = PointF::new(
+                    (src_center.x + dst_center.x) * 0.5,
+                    (src_center.y + dst_center.y) * 0.5,
+                );
+                let screen_x = offset_x + mid.x * s;
+                let screen_y = offset_y + mid.y * s;
+                Some((screen_x, screen_y))
+            })
+            .map(|(x, y)| {
+                div()
+                    .absolute()
+                    .left(px(x - 10.0))
+                    .top(px(y - 10.0))
+                    .w(px(20.0))
+                    .h(px(20.0))
+                    .rounded_full()
+                    .bg(bg)
+                    .border_1()
+                    .border_color(border)
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .text_color(text_color)
+                    .child(Icon::new(IconName::Plus).xsmall())
+            })
+            .collect();
+
+        div().size_full().relative().children(buttons)
     }
 
     /// 渲染所有节点（absolute div 在内容层内）。

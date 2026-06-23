@@ -7,7 +7,7 @@
 //! 端口命中区域：以端口位置为中心，边长 `PORT_HIT_WIDTH * 2` 的正方形。
 //! 按钮命中必须在节点主体命中之前检查，否则按钮区域会被节点主体"吞掉"。
 
-use rust_agent_flow::{point_in_rect, NodeId, PortDirection, PortId, PointF, RectF, SizeF};
+use rust_agent_flow::{point_in_rect, EdgeId, NodeId, PortDirection, PortId, PointF, RectF, SizeF};
 
 use super::flow_editor::{FlowEditorView, LayoutDirection};
 use super::ports::{port_position_by_side, resolve_port, PORT_HIT_WIDTH};
@@ -27,13 +27,21 @@ pub(crate) enum HitResult {
     DeleteButton(NodeId),
     /// 展开/收起切换按钮（仅条件/循环节点）。
     ToggleButton(NodeId),
+    /// 边中点「+」按钮（点击弹出节点选择面板，拆边插入新节点）。
+    EdgePlusButton(EdgeId),
 }
 
 impl FlowEditorView {
     /// 命中测试：返回点击位置的节点和端口（如果有）。
     ///
     /// 遍历所有节点，按优先级检查：端口 > 按钮 > 节点主体。
+    /// 边中点「+」按钮优先级最高（在实际中不与端口冲突，因 plus button 在边中点）。
     pub(crate) fn hit_test(&self, logical: PointF) -> HitResult {
+        // 0. 检查边中点「+」按钮命中
+        if let Some(edge_id) = self.hit_test_edge_plus(logical) {
+            return HitResult::EdgePlusButton(edge_id);
+        }
+
         let layout = self.layout_direction;
 
         for node in self.graph.nodes() {
@@ -141,6 +149,55 @@ impl FlowEditorView {
             );
             if point_in_rect(logical, rect) {
                 return Some(result);
+            }
+        }
+        None
+    }
+
+    /// 边中点「+」按钮命中测试。
+    ///
+    /// 遍历所有可见边，计算每条边的中点（源节点中心与目标节点中心的中点），
+    /// 检查点击是否在 plus button 半径内（12px 逻辑距离）。
+    ///
+    /// 跳过回环边（`target_port == "loop_in"`），因为回环边路径复杂，
+    /// 端口中点与实际路径中点偏差大。
+    fn hit_test_edge_plus(&self, logical: PointF) -> Option<EdgeId> {
+        const RADIUS: f32 = 12.0;
+        let radius_sq = RADIUS * RADIUS;
+
+        for edge in self.graph.edges() {
+            // 跳过回环边
+            if edge.target_port.as_deref() == Some("loop_in") {
+                continue;
+            }
+
+            let src = match self.graph.node(edge.source) {
+                Some(n) => n,
+                None => continue,
+            };
+            let dst = match self.graph.node(edge.target) {
+                Some(n) => n,
+                None => continue,
+            };
+
+            // 边中点 = 源节点中心与目标节点中心的中点
+            let src_center = PointF::new(
+                src.position.x + src.size.w * 0.5,
+                src.position.y + src.size.h * 0.5,
+            );
+            let dst_center = PointF::new(
+                dst.position.x + dst.size.w * 0.5,
+                dst.position.y + dst.size.h * 0.5,
+            );
+            let mid = PointF::new(
+                (src_center.x + dst_center.x) * 0.5,
+                (src_center.y + dst_center.y) * 0.5,
+            );
+
+            let dx = logical.x - mid.x;
+            let dy = logical.y - mid.y;
+            if dx * dx + dy * dy <= radius_sq {
+                return Some(edge.id);
             }
         }
         None

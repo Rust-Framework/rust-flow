@@ -17,7 +17,10 @@ pub mod viewport;
 pub use geometry::{PointF, RectF, SizeF};
 pub use graph::{Edge, EdgeId, EdgeKind, EdgeType, FlowGraph, Node, NodeData, NodeId, NodeKind, PortDirection, PortId, PortSide};
 pub use layout::{DagreLayout, LayoutDirection, LayoutEngine, LayoutResult};
-pub use schema::{NodeSchema, PortSpec};
+pub use schema::{
+    DropdownOption, EdgeDef, FieldSpec, FieldType, FlowDocument, FlowMetadata, ListSpec,
+    NodeDef, NodeSchema, PortSpec,
+};
 pub use viewport::Viewport;
 
 // Re-export geometry algorithms for convenient access from the gpui layer.
