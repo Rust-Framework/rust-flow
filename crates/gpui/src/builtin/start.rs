@@ -1,4 +1,7 @@
 //! Start 节点：流程起点，仅 Out 端口，标题栏 + 主体结构。
+//!
+//! 主体显示「有参数」/「无参数」，取决于 `node.data["params"]` 数组是否存在且非空。
+//! 属性面板支持配置输入参数（name/type/value）和变量定义。
 
 use gpui::{div, px, AnyElement, IntoElement, ParentElement, Styled};
 use gpui_component::{Icon, Sizable, StyledExt};
@@ -6,15 +9,25 @@ use rust_agent_flow::{
     LayoutDirection, Node, NodeSchema, PortDirection, PortId, PortSide, PortSpec, SizeF, PointF,
 };
 
+use crate::i18n::TKey;
 use crate::node::{NodeViewCtx, IFlowNode};
 
-use super::common::{label_of, make_port, node_icon, port_sizes, render_simple_panel, TITLE_ICON_SIZE};
+use super::common::{label_of, make_port, node_icon, port_sizes, TITLE_ICON_SIZE};
 
 /// 标题栏高度（逻辑坐标）。
 const TITLE_H: f32 = 36.0;
 
 /// 主体高度（逻辑坐标）。
 const BODY_H: f32 = 20.0;
+
+/// 判断节点是否有输入参数。
+fn has_params(node: &Node) -> bool {
+    node.data
+        .get("params")
+        .and_then(|v| v.as_array())
+        .map(|arr| !arr.is_empty())
+        .unwrap_or(false)
+}
 
 /// Start 节点：流程起点，仅 Out 端口。
 pub struct StartNode {
@@ -50,14 +63,21 @@ impl IFlowNode for StartNode {
         let body_h = BODY_H * s;
         let t = &ctx.theme;
         let layout = ctx.layout;
+        let lang = ctx.language;
 
         let label = label_of(node);
+        let has_p = has_params(node);
+        let body_text = if has_p {
+            crate::i18n::t(lang, TKey::StartHasParams).to_string()
+        } else {
+            crate::i18n::t(lang, TKey::StartNoParams).to_string()
+        };
 
         let (port_size, port_outer, port_outer_half) = port_sizes(s);
         let border_color = if ctx.selected {
-            t.start_border_selected
+            t.node_border_selected
         } else {
-            t.start_border
+            t.node_border
         };
 
         // 外层容器
@@ -71,7 +91,7 @@ impl IFlowNode for StartNode {
                 .left_0()
                 .w(px(w))
                 .h(px(title_h))
-                .bg(t.start_bg)
+                .bg(t.node_title_bg)
                 .rounded_t_lg()
                 .border_1()
                 .border_color(border_color)
@@ -83,18 +103,18 @@ impl IFlowNode for StartNode {
                 .child(
                     Icon::new(node_icon("start"))
                         .with_size(px(TITLE_ICON_SIZE * s))
-                        .text_color(t.start_text),
+                        .text_color(t.node_title_text),
                 )
                 .child(
                     div()
                         .text_size(px(14.0 * s))
                         .font_semibold()
-                        .text_color(t.start_text)
+                        .text_color(t.node_title_text)
                         .child(label),
                 ),
         );
 
-        // 主体（底部圆角）：提示文案
+        // 主体（底部圆角）：有参/无参提示
         container = container.child(
             div()
                 .absolute()
@@ -102,7 +122,7 @@ impl IFlowNode for StartNode {
                 .top(px(title_h))
                 .w(px(w))
                 .h(px(body_h))
-                .bg(t.start_bg)
+                .bg(t.node_bg)
                 .rounded_b_lg()
                 .border_1()
                 .border_color(border_color)
@@ -113,8 +133,8 @@ impl IFlowNode for StartNode {
                 .child(
                     div()
                         .text_size(px(11.0 * s))
-                        .text_color(t.start_subtext)
-                        .child("▶"),
+                        .text_color(t.node_subtext)
+                        .child(body_text),
                 ),
         );
 
@@ -129,7 +149,7 @@ impl IFlowNode for StartNode {
                     port_outer,
                     port_size,
                     t.node_out_ring,
-                    t.start_out_dot,
+                    t.node_out_dot,
                     t.port_bg,
                 ));
             }
@@ -142,7 +162,7 @@ impl IFlowNode for StartNode {
                     port_outer,
                     port_size,
                     t.node_out_ring,
-                    t.start_out_dot,
+                    t.node_out_dot,
                     t.port_bg,
                 ));
             }
@@ -152,7 +172,9 @@ impl IFlowNode for StartNode {
     }
 
     fn get_panel(&self, node: &Node, ctx: &mut NodeViewCtx) -> AnyElement {
-        render_simple_panel(node, "Start 节点", &ctx.theme)
+        // Start 节点面板由 PanelView 处理（支持参数编辑）
+        let _ = (node, ctx);
+        div().into_any_element()
     }
 
     fn schema(&self) -> &NodeSchema {

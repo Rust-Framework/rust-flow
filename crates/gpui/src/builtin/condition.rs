@@ -178,18 +178,18 @@ impl IFlowNode for ConditionNode {
 
         let (port_size, port_outer, port_outer_half) = port_sizes(s);
         let border_color = if ctx.selected {
-            t.cond_border_selected
+            t.node_border_selected
         } else {
-            t.cond_border
+            t.node_border
         };
 
         // 端口颜色
-        let in_ring = t.cond_in_ring;
-        let in_dot = t.cond_in_dot;
-        let if_ring = t.cond_if_ring;
-        let if_dot = t.cond_if_dot;
-        let else_ring = t.cond_else_ring;
-        let else_dot = t.cond_else_dot;
+        let in_ring = t.node_in_ring;
+        let in_dot = t.node_in_dot;
+        let if_ring = t.node_out_ring;
+        let if_dot = t.node_out_dot;
+        let else_ring = t.node_out_ring;
+        let else_dot = t.node_out_dot;
 
         // 外层容器（不使用 overflow_hidden，避免裁剪半外露的端口圆圈）
         let mut container = div().relative().w(px(w)).h(px(h));
@@ -205,7 +205,7 @@ impl IFlowNode for ConditionNode {
                     .left_0()
                     .w(px(w))
                     .h(px(title_h))
-                    .bg(t.cond_title_bg)
+                    .bg(t.node_title_bg)
                     .rounded_t_lg()
                     .flex()
                     .items_center()
@@ -214,13 +214,13 @@ impl IFlowNode for ConditionNode {
                     .child(
                         Icon::new(node_icon("condition"))
                             .with_size(px(TITLE_ICON_SIZE * s))
-                            .text_color(t.cond_title_text),
+                            .text_color(t.node_title_text),
                     )
                     .child(
                         div()
                             .text_size(px(14.0 * s))
                             .font_semibold()
-                            .text_color(t.cond_title_text)
+                            .text_color(t.node_title_text)
                             .child(label),
                     ),
             );
@@ -234,9 +234,9 @@ impl IFlowNode for ConditionNode {
                     .top(px(title_h))
                     .w(px(w))
                     .h(px(item_h))
-                    .bg(t.cond_item_bg)
+                    .bg(t.node_bg)
                     .border_t_1()
-                    .border_color(t.cond_item_border)
+                    .border_color(t.node_border)
                     .rounded_b_lg()
                     .flex()
                     .items_center()
@@ -244,7 +244,7 @@ impl IFlowNode for ConditionNode {
                     .child(
                         div()
                             .text_size(px(12.0 * s))
-                            .text_color(t.cond_item_text)
+                            .text_color(t.node_subtext)
                             .child(hint),
                     ),
             );
@@ -330,7 +330,7 @@ impl IFlowNode for ConditionNode {
                 .left_0()
                 .w(px(w))
                 .h(px(title_h))
-                .bg(t.cond_title_bg)
+                .bg(t.node_title_bg)
                 .rounded_t_lg()
                 .flex()
                 .items_center()
@@ -339,13 +339,13 @@ impl IFlowNode for ConditionNode {
                 .child(
                     Icon::new(node_icon("condition"))
                         .with_size(px(TITLE_ICON_SIZE * s))
-                        .text_color(t.cond_title_text),
+                        .text_color(t.node_title_text),
                 )
                 .child(
                     div()
                         .text_size(px(14.0 * s))
                         .font_semibold()
-                        .text_color(t.cond_title_text)
+                        .text_color(t.node_title_text)
                         .child(label),
                 ),
         );
@@ -359,16 +359,16 @@ impl IFlowNode for ConditionNode {
                 .top(px(item_top))
                 .w(px(w))
                 .h(px(item_h))
-                .bg(t.cond_item_bg)
+                .bg(t.node_bg)
                 .border_t_1()
-                .border_color(t.cond_item_border)
+                .border_color(t.node_border)
                 .flex()
                 .items_center()
                 .px(px(12.0 * s))
                 .child(
                     div()
                         .text_size(px(12.0 * s))
-                        .text_color(t.cond_item_text)
+                        .text_color(t.node_subtext)
                         .child(format!("If {}", cond_label)),
                 );
             container = container.child(row);
@@ -383,9 +383,9 @@ impl IFlowNode for ConditionNode {
                 .top(px(else_top))
                 .w(px(w))
                 .h(px(item_h))
-                .bg(t.cond_else_bg)
+                .bg(t.node_bg)
                 .border_t_1()
-                .border_color(t.cond_item_border)
+                .border_color(t.node_border)
                 .rounded_b_lg()
                 .flex()
                 .items_center()
@@ -394,7 +394,7 @@ impl IFlowNode for ConditionNode {
                     div()
                         .text_size(px(12.0 * s))
                         .font_semibold()
-                        .text_color(t.cond_item_text)
+                        .text_color(t.node_subtext)
                         .child("Else"),
                 ),
         );

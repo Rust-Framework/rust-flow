@@ -69,13 +69,47 @@ fn build_agent_flow() -> FlowGraph {
     // 节点（尺寸与 schema default_size 对齐）
     let start = graph.add_node_with_size(
         "start",
-        serde_json::json!({ "label": "Start" }),
-        SizeF::new(120.0, 35.0),
+        serde_json::json!({
+            "label": "Start",
+            "params": [
+                { "name": "query", "type": "string", "value": "" },
+                { "name": "context", "type": "object", "value": "{}" }
+            ],
+            "variables": [
+                { "name": "turn", "type": "int", "value": "0" }
+            ]
+        }),
+        SizeF::new(160.0, 56.0),
     );
     let planner = graph.add_node_with_size(
         "action",
         serde_json::json!({ "label": "Planner", "desc": "规划下一步" }),
         SizeF::new(180.0, 35.0),
+    );
+    let variable = graph.add_node_with_size(
+        "variable",
+        serde_json::json!({
+            "label": "Vars",
+            "variables": [
+                { "name": "threshold", "type": "float", "value": "0.8" },
+                { "name": "max_retry", "type": "int", "value": "3" }
+            ]
+        }),
+        SizeF::new(200.0, 64.0),
+    );
+    let agent = graph.add_node_with_size(
+        "agent",
+        serde_json::json!({
+            "label": "Agent",
+            "model": "gpt-4",
+            "prompt": "You are a helpful assistant."
+        }),
+        SizeF::new(200.0, 64.0),
+    );
+    let adapter = graph.add_node_with_size(
+        "adapter",
+        serde_json::json!({ "label": "Adapter", "desc": "JSON → Struct" }),
+        SizeF::new(200.0, 64.0),
     );
     let condition = graph.add_node_with_size(
         "condition",
@@ -120,8 +154,14 @@ fn build_agent_flow() -> FlowGraph {
     );
     let end = graph.add_node_with_size(
         "end",
-        serde_json::json!({ "label": "End" }),
-        SizeF::new(120.0, 35.0),
+        serde_json::json!({
+            "label": "End",
+            "returns": [
+                { "name": "answer", "type": "string", "value": "" },
+                { "name": "status", "type": "int", "value": "0" }
+            ]
+        }),
+        SizeF::new(160.0, 56.0),
     );
 
     // 布局：左→右主流程对齐 y=280（端口 y≈298），分支目标紧凑排列
@@ -136,19 +176,25 @@ fn build_agent_flow() -> FlowGraph {
     //   目标节点 Y 顺序（上→下）：tool(else) → search(if_0) → notify(if_1)
     //   Y 顺序与端口 X 顺序一致 → 连线不交叉
     set_position(&mut graph, start, 80.0, 280.0);
-    set_position(&mut graph, planner, 320.0, 280.0);
-    set_position(&mut graph, condition, 600.0, 280.0);
-    set_position(&mut graph, tool, 880.0, 281.0);      // else 分支：中心 y=298.5 ≈ else 端口 298
-    set_position(&mut graph, search, 880.0, 326.0);    // if_0 分支：中心 y=343.5 ≈ if_0 端口 343
-    set_position(&mut graph, notify, 880.0, 380.0);    // if_1 分支：中心 y=397.5 ≈ if_1 端口 397
-    set_position(&mut graph, loop_node, 1160.0, 280.0);
-    set_position(&mut graph, process, 1440.0, 400.0);  // 循环体：主线下方，loop_body→process→loop_in 回环
-    set_position(&mut graph, summarize, 1720.0, 280.0);
-    set_position(&mut graph, end, 2000.0, 280.0);
+    set_position(&mut graph, variable, 300.0, 200.0);
+    set_position(&mut graph, agent, 300.0, 360.0);
+    set_position(&mut graph, planner, 540.0, 280.0);
+    set_position(&mut graph, condition, 820.0, 280.0);
+    set_position(&mut graph, tool, 1100.0, 281.0);      // else 分支：中心 y=298.5 ≈ else 端口 298
+    set_position(&mut graph, search, 1100.0, 326.0);    // if_0 分支：中心 y=343.5 ≈ if_0 端口 343
+    set_position(&mut graph, notify, 1100.0, 380.0);    // if_1 分支：中心 y=397.5 ≈ if_1 端口 397
+    set_position(&mut graph, adapter, 1380.0, 326.0);   // 适配 Search 结果
+    set_position(&mut graph, loop_node, 1660.0, 280.0);
+    set_position(&mut graph, process, 1940.0, 400.0);  // 循环体：主线下方，loop_body→process→loop_in 回环
+    set_position(&mut graph, summarize, 2220.0, 280.0);
+    set_position(&mut graph, end, 2500.0, 280.0);
 
     // 边：全部使用正交圆角折线（SmoothStep）
     // 主流程
-    add_edge(&mut graph, start, planner, None, None, EdgeType::SmoothStep);
+    add_edge(&mut graph, start, variable, None, None, EdgeType::SmoothStep);
+    add_edge(&mut graph, start, agent, None, None, EdgeType::SmoothStep);
+    add_edge(&mut graph, variable, planner, None, None, EdgeType::SmoothStep);
+    add_edge(&mut graph, agent, planner, None, None, EdgeType::SmoothStep);
     add_edge(&mut graph, planner, condition, None, Some("in"), EdgeType::SmoothStep);
 
     // 条件分支：Condition 的 if_0 → Search，if_1 → Notify，else → ToolCall（全分支覆盖）
@@ -156,8 +202,9 @@ fn build_agent_flow() -> FlowGraph {
     add_edge(&mut graph, condition, notify, Some("if_1"), None, EdgeType::SmoothStep);
     add_edge(&mut graph, condition, tool, Some("else"), None, EdgeType::SmoothStep);
 
-    // 分支汇合：Search/Notify/ToolCall 都连到 Loop 的 in 端口（汇聚点）
-    add_edge(&mut graph, search, loop_node, None, Some("in"), EdgeType::SmoothStep);
+    // 分支汇合：Search → Adapter → Loop，Notify/ToolCall 直接连到 Loop
+    add_edge(&mut graph, search, adapter, None, None, EdgeType::SmoothStep);
+    add_edge(&mut graph, adapter, loop_node, None, Some("in"), EdgeType::SmoothStep);
     add_edge(&mut graph, notify, loop_node, None, Some("in"), EdgeType::SmoothStep);
     add_edge(&mut graph, tool, loop_node, None, Some("in"), EdgeType::SmoothStep);
 

@@ -1,4 +1,7 @@
 //! End 节点：流程终点，仅 In 端口，标题栏 + 主体结构。
+//!
+//! 主体显示「有返回」/「无返回」，取决于 `node.data["returns"]` 数组是否存在且非空。
+//! 属性面板支持配置返回结果（name/type/value）。
 
 use gpui::{div, px, AnyElement, IntoElement, ParentElement, Styled};
 use gpui_component::{Icon, Sizable, StyledExt};
@@ -6,15 +9,25 @@ use rust_agent_flow::{
     LayoutDirection, Node, NodeSchema, PortDirection, PortId, PortSide, PortSpec, SizeF, PointF,
 };
 
+use crate::i18n::TKey;
 use crate::node::{NodeViewCtx, IFlowNode};
 
-use super::common::{label_of, make_port, node_icon, port_sizes, render_simple_panel, TITLE_ICON_SIZE};
+use super::common::{label_of, make_port, node_icon, port_sizes, TITLE_ICON_SIZE};
 
 /// 标题栏高度（逻辑坐标）。
 const TITLE_H: f32 = 36.0;
 
 /// 主体高度（逻辑坐标）。
 const BODY_H: f32 = 20.0;
+
+/// 判断节点是否有返回结果。
+fn has_returns(node: &Node) -> bool {
+    node.data
+        .get("returns")
+        .and_then(|v| v.as_array())
+        .map(|arr| !arr.is_empty())
+        .unwrap_or(false)
+}
 
 /// End 节点：流程终点，仅 In 端口。
 pub struct EndNode {
@@ -50,14 +63,21 @@ impl IFlowNode for EndNode {
         let body_h = BODY_H * s;
         let t = &ctx.theme;
         let layout = ctx.layout;
+        let lang = ctx.language;
 
         let label = label_of(node);
+        let has_r = has_returns(node);
+        let body_text = if has_r {
+            crate::i18n::t(lang, TKey::EndHasReturn).to_string()
+        } else {
+            crate::i18n::t(lang, TKey::EndNoReturn).to_string()
+        };
 
         let (port_size, port_outer, port_outer_half) = port_sizes(s);
         let border_color = if ctx.selected {
-            t.end_border_selected
+            t.node_border_selected
         } else {
-            t.end_border
+            t.node_border
         };
 
         // 外层容器
@@ -71,7 +91,7 @@ impl IFlowNode for EndNode {
                 .left_0()
                 .w(px(w))
                 .h(px(title_h))
-                .bg(t.end_bg)
+                .bg(t.node_title_bg)
                 .rounded_t_lg()
                 .border_1()
                 .border_color(border_color)
@@ -83,18 +103,18 @@ impl IFlowNode for EndNode {
                 .child(
                     Icon::new(node_icon("end"))
                         .with_size(px(TITLE_ICON_SIZE * s))
-                        .text_color(t.end_text),
+                        .text_color(t.node_title_text),
                 )
                 .child(
                     div()
                         .text_size(px(14.0 * s))
                         .font_semibold()
-                        .text_color(t.end_text)
+                        .text_color(t.node_title_text)
                         .child(label),
                 ),
         );
 
-        // 主体（底部圆角）：提示文案
+        // 主体（底部圆角）：有返回/无返回提示
         container = container.child(
             div()
                 .absolute()
@@ -102,7 +122,7 @@ impl IFlowNode for EndNode {
                 .top(px(title_h))
                 .w(px(w))
                 .h(px(body_h))
-                .bg(t.end_bg)
+                .bg(t.node_bg)
                 .rounded_b_lg()
                 .border_1()
                 .border_color(border_color)
@@ -113,8 +133,8 @@ impl IFlowNode for EndNode {
                 .child(
                     div()
                         .text_size(px(11.0 * s))
-                        .text_color(t.end_subtext)
-                        .child("■"),
+                        .text_color(t.node_subtext)
+                        .child(body_text),
                 ),
         );
 
@@ -129,7 +149,7 @@ impl IFlowNode for EndNode {
                     port_outer,
                     port_size,
                     t.node_in_ring,
-                    t.end_in_dot,
+                    t.node_in_dot,
                     t.port_bg,
                 ));
             }
@@ -142,7 +162,7 @@ impl IFlowNode for EndNode {
                     port_outer,
                     port_size,
                     t.node_in_ring,
-                    t.end_in_dot,
+                    t.node_in_dot,
                     t.port_bg,
                 ));
             }
@@ -152,7 +172,9 @@ impl IFlowNode for EndNode {
     }
 
     fn get_panel(&self, node: &Node, ctx: &mut NodeViewCtx) -> AnyElement {
-        render_simple_panel(node, "End 节点", &ctx.theme)
+        // End 节点面板由 PanelView 处理（支持返回结果编辑）
+        let _ = (node, ctx);
+        div().into_any_element()
     }
 
     fn schema(&self) -> &NodeSchema {

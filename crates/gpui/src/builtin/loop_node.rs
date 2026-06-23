@@ -132,18 +132,18 @@ impl IFlowNode for LoopNode {
 
         let (port_size, port_outer, port_outer_half) = port_sizes(s);
         let border_color = if ctx.selected {
-            t.loop_border_selected
+            t.node_border_selected
         } else {
-            t.loop_border
+            t.node_border
         };
 
         // 端口颜色
-        let in_ring = t.loop_in_ring;
-        let in_dot = t.loop_in_dot;
-        let done_ring = t.loop_done_ring;
-        let done_dot = t.loop_done_dot;
-        let body_ring = t.loop_in_ring;
-        let body_dot = t.loop_in_dot;
+        let in_ring = t.node_in_ring;
+        let in_dot = t.node_in_dot;
+        let done_ring = t.node_out_ring;
+        let done_dot = t.node_out_dot;
+        let body_ring = t.node_in_ring;
+        let body_dot = t.node_in_dot;
         let port_bg = t.port_bg;
 
         // 外层容器（不使用 overflow_hidden，避免裁剪半外露的端口圆圈）
@@ -158,7 +158,7 @@ impl IFlowNode for LoopNode {
                 .left_0()
                 .w(px(w))
                 .h(px(title_h))
-                .bg(t.loop_title_bg)
+                .bg(t.node_title_bg)
                 .rounded_t_lg()
                 .flex()
                 .items_center()
@@ -167,13 +167,13 @@ impl IFlowNode for LoopNode {
                 .child(
                     Icon::new(node_icon("loop"))
                         .with_size(px(TITLE_ICON_SIZE * s))
-                        .text_color(t.loop_title_text),
+                        .text_color(t.node_title_text),
                 )
                 .child(
                     div()
                         .text_size(px(14.0 * s))
                         .font_semibold()
-                        .text_color(t.loop_title_text)
+                        .text_color(t.node_title_text)
                         .child(label),
                 ),
         );
@@ -186,9 +186,9 @@ impl IFlowNode for LoopNode {
                 .top(px(title_h))
                 .w(px(w))
                 .h(px(body_h))
-                .bg(t.loop_body_bg)
+                .bg(t.node_bg)
                 .border_t_1()
-                .border_color(t.loop_body_border)
+                .border_color(t.node_border)
                 .rounded_b_lg()
                 .flex()
                 .items_center()
@@ -196,7 +196,7 @@ impl IFlowNode for LoopNode {
                 .child(
                     div()
                         .text_size(px(12.0 * s))
-                        .text_color(t.loop_body_text)
+                        .text_color(t.node_subtext)
                         .child(desc),
                 ),
         );

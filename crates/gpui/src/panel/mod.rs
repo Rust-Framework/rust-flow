@@ -47,6 +47,16 @@ pub struct PanelView {
     loop_expr_input: Entity<InputState>,
     loop_mode: String,
 
+    // Start/End/Variable 节点专用：键值行（name/type/value）
+    // param_rows: Start 输入参数；variable_rows: Start 变量定义 + Variable 节点；return_rows: End 返回结果
+    param_rows: Vec<KvRow>,
+    variable_rows: Vec<KvRow>,
+    return_rows: Vec<KvRow>,
+
+    // Agent 节点专用
+    agent_model_input: Entity<InputState>,
+    agent_prompt_input: Entity<InputState>,
+
     // 同步标记：避免节点更新时回环触发 on_change
     syncing: bool,
 
@@ -55,6 +65,31 @@ pub struct PanelView {
     scroll_handle: ScrollHandle,
 
     _subscriptions: Vec<Subscription>,
+}
+
+/// 键值行：name/type/value 三个输入框，用于参数/变量/返回结果编辑。
+struct KvRow {
+    name: Entity<InputState>,
+    kind: Entity<InputState>,
+    value: Entity<InputState>,
+}
+
+/// 键值行的同步目标：对应 node.data 中的哪个数组键。
+#[derive(Clone, Copy)]
+enum KvTarget {
+    Params,
+    Variables,
+    Returns,
+}
+
+impl KvTarget {
+    fn key(self) -> &'static str {
+        match self {
+            KvTarget::Params => "params",
+            KvTarget::Variables => "variables",
+            KvTarget::Returns => "returns",
+        }
+    }
 }
 
 impl PanelView {
@@ -147,8 +182,83 @@ impl PanelView {
             .unwrap_or("for_each")
             .to_string();
 
+        // Start 节点：输入参数 + 变量定义
+        let mut param_rows: Vec<KvRow> = Vec::new();
+        let mut variable_rows: Vec<KvRow> = Vec::new();
+        let mut return_rows: Vec<KvRow> = Vec::new();
+        let mut sub_kv: Vec<Subscription> = Vec::new();
+
+        if node.kind == "start" {
+            let params = get_kv_list(&node, "params");
+            for (n, k, v) in &params {
+                let row = Self::new_kv_row(n, k, v, window, cx, &mut sub_kv, KvTarget::Params);
+                param_rows.push(row);
+            }
+            let vars = get_kv_list(&node, "variables");
+            for (n, k, v) in &vars {
+                let row = Self::new_kv_row(n, k, v, window, cx, &mut sub_kv, KvTarget::Variables);
+                variable_rows.push(row);
+            }
+        }
+
+        // End 节点：返回结果
+        if node.kind == "end" {
+            let returns = get_kv_list(&node, "returns");
+            for (n, k, v) in &returns {
+                let row = Self::new_kv_row(n, k, v, window, cx, &mut sub_kv, KvTarget::Returns);
+                return_rows.push(row);
+            }
+        }
+
+        // Variable 节点：变量定义
+        if node.kind == "variable" {
+            let vars = get_kv_list(&node, "variables");
+            for (n, k, v) in &vars {
+                let row = Self::new_kv_row(n, k, v, window, cx, &mut sub_kv, KvTarget::Variables);
+                variable_rows.push(row);
+            }
+        }
+
+        // Agent 节点：模型 + 系统提示词
+        let agent_model_input = if node.kind == "agent" {
+            let model = node
+                .data
+                .get("model")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let input = cx.new(|cx| {
+                InputState::new(window, cx)
+                    .default_value(model)
+                    .placeholder("model")
+            });
+            let _sub = cx.subscribe_in(&input, window, Self::on_agent_model_change);
+            input
+        } else {
+            cx.new(|cx| InputState::new(window, cx))
+        };
+
+        let agent_prompt_input = if node.kind == "agent" {
+            let prompt = node
+                .data
+                .get("prompt")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let input = cx.new(|cx| {
+                InputState::new(window, cx)
+                    .default_value(prompt)
+                    .placeholder("system prompt")
+                    .multi_line(true)
+                    .rows(4)
+            });
+            let _sub = cx.subscribe_in(&input, window, Self::on_agent_prompt_change);
+            input
+        } else {
+            cx.new(|cx| InputState::new(window, cx))
+        };
+
         let mut subscriptions = vec![sub_label];
         subscriptions.extend(sub_conds);
+        subscriptions.extend(sub_kv);
 
         Self {
             node,
@@ -161,6 +271,11 @@ impl PanelView {
             condition_inputs,
             loop_expr_input,
             loop_mode,
+            param_rows,
+            variable_rows,
+            return_rows,
+            agent_model_input,
+            agent_prompt_input,
             syncing: false,
             scroll_handle: ScrollHandle::default(),
             _subscriptions: subscriptions,
@@ -195,6 +310,47 @@ impl PanelView {
             }
             state
         })
+    }
+
+    /// 创建一个键值行（name/type/value），并订阅变化事件。
+    fn new_kv_row(
+        name: &str,
+        kind: &str,
+        value: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+        subs: &mut Vec<Subscription>,
+        target: KvTarget,
+    ) -> KvRow {
+        let name_input = cx.new(|cx| {
+            InputState::new(window, cx)
+                .default_value(name)
+                .placeholder("name")
+        });
+        let kind_input = cx.new(|cx| {
+            InputState::new(window, cx)
+                .default_value(kind)
+                .placeholder("type")
+        });
+        let value_input = cx.new(|cx| {
+            InputState::new(window, cx)
+                .default_value(value)
+                .placeholder("value")
+        });
+        subs.push(cx.subscribe_in(&name_input, window, move |this, _, e, w, cx| {
+            this.on_kv_change(target, e, w, cx);
+        }));
+        subs.push(cx.subscribe_in(&kind_input, window, move |this, _, e, w, cx| {
+            this.on_kv_change(target, e, w, cx);
+        }));
+        subs.push(cx.subscribe_in(&value_input, window, move |this, _, e, w, cx| {
+            this.on_kv_change(target, e, w, cx);
+        }));
+        KvRow {
+            name: name_input,
+            kind: kind_input,
+            value: value_input,
+        }
     }
 
     /// 节点数据变化时，从 node 同步到 InputState（避免回环）。
@@ -264,8 +420,78 @@ impl PanelView {
                 .to_string();
         }
 
+        // 同步 Start 参数/变量、End 返回、Variable 变量
+        if matches!(self.node.kind.as_str(), "start" | "end" | "variable") {
+            self.sync_kv_rows(KvTarget::Params, window, cx);
+            self.sync_kv_rows(KvTarget::Variables, window, cx);
+            self.sync_kv_rows(KvTarget::Returns, window, cx);
+        }
+
+        // 同步 Agent 模型/提示词
+        if self.node.kind == "agent" {
+            let model = self
+                .node
+                .data
+                .get("model")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            self.agent_model_input.update(cx, |s, cx| {
+                s.set_value(model, window, cx);
+            });
+            let prompt = self
+                .node
+                .data
+                .get("prompt")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            self.agent_prompt_input.update(cx, |s, cx| {
+                s.set_value(prompt, window, cx);
+            });
+        }
+
         self.syncing = false;
         cx.notify();
+    }
+
+    /// 同步指定目标的键值行（数量变化时重建）。
+    fn sync_kv_rows(
+        &mut self,
+        target: KvTarget,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let rows = match target {
+            KvTarget::Params => &mut self.param_rows,
+            KvTarget::Variables => &mut self.variable_rows,
+            KvTarget::Returns => &mut self.return_rows,
+        };
+
+        // 仅当节点类型匹配该目标时同步
+        let should_sync = match target {
+            KvTarget::Params => self.node.kind == "start",
+            KvTarget::Variables => matches!(self.node.kind.as_str(), "start" | "variable"),
+            KvTarget::Returns => self.node.kind == "end",
+        };
+        if !should_sync {
+            return;
+        }
+
+        let kv_list = get_kv_list(&self.node, target.key());
+        if kv_list.len() == rows.len() {
+            for (i, (n, k, v)) in kv_list.iter().enumerate() {
+                rows[i].name.update(cx, |s, cx| s.set_value(n.as_str(), window, cx));
+                rows[i].kind.update(cx, |s, cx| s.set_value(k.as_str(), window, cx));
+                rows[i].value.update(cx, |s, cx| s.set_value(v.as_str(), window, cx));
+            }
+        } else {
+            rows.clear();
+            let mut subs: Vec<Subscription> = Vec::new();
+            for (n, k, v) in &kv_list {
+                let row = Self::new_kv_row(n, k, v, window, cx, &mut subs, target);
+                rows.push(row);
+            }
+            self._subscriptions.extend(subs);
+        }
     }
 
     // ====== 事件回调 ======
@@ -330,6 +556,60 @@ impl PanelView {
         }
     }
 
+    /// 键值行变化回调：同步到 node.data。
+    fn on_kv_change(
+        &mut self,
+        target: KvTarget,
+        _event: &InputEvent,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.syncing {
+            return;
+        }
+        self.sync_kv_to_node(target, cx);
+    }
+
+    /// Agent 模型变化回调。
+    fn on_agent_model_change(
+        &mut self,
+        _state: &Entity<InputState>,
+        _event: &InputEvent,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.syncing || !matches!(_event, InputEvent::Change) {
+            return;
+        }
+        let value = self.agent_model_input.read(cx).value().to_string();
+        if let Some(on_action) = &self.on_action {
+            on_action(
+                NodeAction::SetData("model".into(), serde_json::json!(value)),
+                cx,
+            );
+        }
+    }
+
+    /// Agent 系统提示词变化回调。
+    fn on_agent_prompt_change(
+        &mut self,
+        _state: &Entity<InputState>,
+        _event: &InputEvent,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.syncing || !matches!(_event, InputEvent::Change) {
+            return;
+        }
+        let value = self.agent_prompt_input.read(cx).value().to_string();
+        if let Some(on_action) = &self.on_action {
+            on_action(
+                NodeAction::SetData("prompt".into(), serde_json::json!(value)),
+                cx,
+            );
+        }
+    }
+
     // ====== 条件分支操作 ======
 
     fn sync_conditions_to_node(&self, cx: &mut Context<Self>) {
@@ -384,6 +664,59 @@ impl PanelView {
             );
         }
     }
+
+    // ====== 键值行操作（参数/变量/返回） ======
+
+    /// 将键值行同步到 node.data。
+    fn sync_kv_to_node(&self, target: KvTarget, cx: &mut Context<Self>) {
+        let rows = match target {
+            KvTarget::Params => &self.param_rows,
+            KvTarget::Variables => &self.variable_rows,
+            KvTarget::Returns => &self.return_rows,
+        };
+        let arr: Vec<serde_json::Value> = rows
+            .iter()
+            .map(|r| {
+                serde_json::json!({
+                    "name": r.name.read(cx).value().to_string(),
+                    "type": r.kind.read(cx).value().to_string(),
+                    "value": r.value.read(cx).value().to_string(),
+                })
+            })
+            .collect();
+        if let Some(on_action) = &self.on_action {
+            on_action(
+                NodeAction::SetData(target.key().into(), serde_json::json!(arr)),
+                cx,
+            );
+        }
+    }
+
+    /// 添加键值行。
+    fn add_kv(&mut self, target: KvTarget, window: &mut Window, cx: &mut Context<Self>) {
+        let mut subs: Vec<Subscription> = Vec::new();
+        let row = Self::new_kv_row("", "", "", window, cx, &mut subs, target);
+        self._subscriptions.extend(subs);
+        match target {
+            KvTarget::Params => self.param_rows.push(row),
+            KvTarget::Variables => self.variable_rows.push(row),
+            KvTarget::Returns => self.return_rows.push(row),
+        }
+        self.sync_kv_to_node(target, cx);
+    }
+
+    /// 删除键值行。
+    fn delete_kv(&mut self, target: KvTarget, idx: usize, cx: &mut Context<Self>) {
+        let rows = match target {
+            KvTarget::Params => &mut self.param_rows,
+            KvTarget::Variables => &mut self.variable_rows,
+            KvTarget::Returns => &mut self.return_rows,
+        };
+        if idx < rows.len() {
+            rows.remove(idx);
+            self.sync_kv_to_node(target, cx);
+        }
+    }
 }
 
 impl Render for PanelView {
@@ -395,6 +728,10 @@ impl Render for PanelView {
         let content = match kind.as_str() {
             "condition" => self.render_condition_panel(&theme, cx),
             "loop" => self.render_loop_panel(&theme, cx),
+            "start" => self.render_start_panel(&theme, cx),
+            "end" => self.render_end_panel(&theme, cx),
+            "variable" => self.render_variable_panel(&theme, cx),
+            "agent" => self.render_agent_panel(&theme, cx),
             _ => self.render_simple_panel(&theme),
         };
 
@@ -700,6 +1037,377 @@ impl PanelView {
 
         col.into_any_element()
     }
+
+    /// 渲染键值表（参数/变量/返回结果通用）。
+    fn render_kv_table(
+        &mut self,
+        theme: &Theme,
+        title: &str,
+        add_label: &str,
+        target: KvTarget,
+        cx: &mut Context<Self>,
+    ) -> gpui::AnyElement {
+        let lang = self.language;
+        let rows = match target {
+            KvTarget::Params => &self.param_rows,
+            KvTarget::Variables => &self.variable_rows,
+            KvTarget::Returns => &self.return_rows,
+        };
+
+        let mut col = div().flex().flex_col().gap(px(6.0));
+
+        // 表头
+        col = col.child(
+            div()
+                .text_size(px(13.0))
+                .font_semibold()
+                .text_color(theme.panel_label_text)
+                .child(title.to_string()),
+        );
+
+        // 表头列名
+        col = col.child(
+            div()
+                .flex()
+                .gap(px(4.0))
+                .child(
+                    div()
+                        .w(px(80.0))
+                        .text_size(px(11.0))
+                        .text_color(theme.panel_subtext)
+                        .child(t(lang, TKey::PanelParamName).to_string()),
+                )
+                .child(
+                    div()
+                        .w(px(60.0))
+                        .text_size(px(11.0))
+                        .text_color(theme.panel_subtext)
+                        .child(t(lang, TKey::PanelParamType).to_string()),
+                )
+                .child(
+                    div()
+                        .flex_1()
+                        .text_size(px(11.0))
+                        .text_color(theme.panel_subtext)
+                        .child(t(lang, TKey::PanelParamValue).to_string()),
+                )
+                .child(div().w(px(24.0))),
+        );
+
+        // 数据行
+        for (i, row) in rows.iter().enumerate() {
+            let delete_handler =
+                cx.listener(move |this, _: &gpui::MouseDownEvent, _window, cx| {
+                    this.delete_kv(target, i, cx);
+                });
+            col = col.child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(4.0))
+                    .child(
+                        div()
+                            .w(px(80.0))
+                            .child(Input::new(&row.name).appearance(true)),
+                    )
+                    .child(
+                        div()
+                            .w(px(60.0))
+                            .child(Input::new(&row.kind).appearance(true)),
+                    )
+                    .child(
+                        div()
+                            .flex_1()
+                            .child(Input::new(&row.value).appearance(true)),
+                    )
+                    .child(
+                        div()
+                            .id(("del_kv", i))
+                            .w(px(24.0))
+                            .h(px(24.0))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .rounded_md()
+                            .bg(theme.delete_btn_bg)
+                            .text_size(px(14.0))
+                            .text_color(theme.delete_btn_text)
+                            .child("×")
+                            .on_mouse_down(gpui::MouseButton::Left, delete_handler),
+                    ),
+            );
+        }
+
+        // 添加按钮
+        let add_handler = cx.listener(move |this, _: &gpui::MouseDownEvent, window, cx| {
+            this.add_kv(target, window, cx);
+        });
+        let add_id = match target {
+            KvTarget::Params => "add_kv_params",
+            KvTarget::Variables => "add_kv_variables",
+            KvTarget::Returns => "add_kv_returns",
+        };
+        col = col.child(
+            div()
+                .id(add_id)
+                .px(px(8.0))
+                .py(px(4.0))
+                .rounded_md()
+                .bg(theme.toggle_btn_bg)
+                .text_size(px(12.0))
+                .text_color(theme.toggle_btn_text)
+                .text_center()
+                .child(add_label.to_string())
+                .on_mouse_down(gpui::MouseButton::Left, add_handler),
+        );
+
+        col.into_any_element()
+    }
+
+    /// 渲染 Start 节点面板：节点名称 + 输入参数表 + 变量定义表。
+    fn render_start_panel(
+        &mut self,
+        theme: &Theme,
+        cx: &mut Context<Self>,
+    ) -> gpui::AnyElement {
+        let lang = self.language;
+        let mut col = div()
+            .flex()
+            .flex_col()
+            .gap(px(12.0))
+            .p_4()
+            .size_full()
+            .overflow_hidden();
+
+        // 标题
+        col = col.child(
+            div()
+                .text_size(px(16.0))
+                .font_semibold()
+                .text_color(theme.panel_title_text)
+                .child(t(lang, TKey::PanelStartTitle).to_string()),
+        );
+
+        // 节点名称
+        col = col.child(
+            div()
+                .flex()
+                .flex_col()
+                .gap(px(4.0))
+                .child(
+                    div()
+                        .text_size(px(13.0))
+                        .font_semibold()
+                        .text_color(theme.panel_label_text)
+                        .child(t(lang, TKey::PanelNodeName).to_string()),
+                )
+                .child(Input::new(&self.label_input).appearance(true)),
+        );
+
+        // 输入参数表
+        col = col.child(self.render_kv_table(
+            theme,
+            t(lang, TKey::PanelParams),
+            t(lang, TKey::PanelAddParam),
+            KvTarget::Params,
+            cx,
+        ));
+
+        // 变量定义表
+        col = col.child(self.render_kv_table(
+            theme,
+            t(lang, TKey::PanelVariables),
+            t(lang, TKey::PanelAddVariable),
+            KvTarget::Variables,
+            cx,
+        ));
+
+        col.into_any_element()
+    }
+
+    /// 渲染 End 节点面板：节点名称 + 返回结果表。
+    fn render_end_panel(
+        &mut self,
+        theme: &Theme,
+        cx: &mut Context<Self>,
+    ) -> gpui::AnyElement {
+        let lang = self.language;
+        let mut col = div()
+            .flex()
+            .flex_col()
+            .gap(px(12.0))
+            .p_4()
+            .size_full()
+            .overflow_hidden();
+
+        // 标题
+        col = col.child(
+            div()
+                .text_size(px(16.0))
+                .font_semibold()
+                .text_color(theme.panel_title_text)
+                .child(t(lang, TKey::PanelEndTitle).to_string()),
+        );
+
+        // 节点名称
+        col = col.child(
+            div()
+                .flex()
+                .flex_col()
+                .gap(px(4.0))
+                .child(
+                    div()
+                        .text_size(px(13.0))
+                        .font_semibold()
+                        .text_color(theme.panel_label_text)
+                        .child(t(lang, TKey::PanelNodeName).to_string()),
+                )
+                .child(Input::new(&self.label_input).appearance(true)),
+        );
+
+        // 返回结果表
+        col = col.child(self.render_kv_table(
+            theme,
+            t(lang, TKey::PanelReturns),
+            t(lang, TKey::PanelAddReturn),
+            KvTarget::Returns,
+            cx,
+        ));
+
+        col.into_any_element()
+    }
+
+    /// 渲染 Variable 节点面板：节点名称 + 变量定义表。
+    fn render_variable_panel(
+        &mut self,
+        theme: &Theme,
+        cx: &mut Context<Self>,
+    ) -> gpui::AnyElement {
+        let lang = self.language;
+        let mut col = div()
+            .flex()
+            .flex_col()
+            .gap(px(12.0))
+            .p_4()
+            .size_full()
+            .overflow_hidden();
+
+        // 标题
+        col = col.child(
+            div()
+                .text_size(px(16.0))
+                .font_semibold()
+                .text_color(theme.panel_title_text)
+                .child(t(lang, TKey::PanelVariableTitle).to_string()),
+        );
+
+        // 节点名称
+        col = col.child(
+            div()
+                .flex()
+                .flex_col()
+                .gap(px(4.0))
+                .child(
+                    div()
+                        .text_size(px(13.0))
+                        .font_semibold()
+                        .text_color(theme.panel_label_text)
+                        .child(t(lang, TKey::PanelNodeName).to_string()),
+                )
+                .child(Input::new(&self.label_input).appearance(true)),
+        );
+
+        // 变量定义表
+        col = col.child(self.render_kv_table(
+            theme,
+            t(lang, TKey::PanelVariables),
+            t(lang, TKey::PanelAddVariable),
+            KvTarget::Variables,
+            cx,
+        ));
+
+        col.into_any_element()
+    }
+
+    /// 渲染 Agent 节点面板：节点名称 + 模型 + 系统提示词。
+    fn render_agent_panel(
+        &mut self,
+        theme: &Theme,
+        cx: &mut Context<Self>,
+    ) -> gpui::AnyElement {
+        let _ = cx;
+        let lang = self.language;
+        let mut col = div()
+            .flex()
+            .flex_col()
+            .gap(px(12.0))
+            .p_4()
+            .size_full()
+            .overflow_hidden();
+
+        // 标题
+        col = col.child(
+            div()
+                .text_size(px(16.0))
+                .font_semibold()
+                .text_color(theme.panel_title_text)
+                .child(t(lang, TKey::PanelAgentTitle).to_string()),
+        );
+
+        // 节点名称
+        col = col.child(
+            div()
+                .flex()
+                .flex_col()
+                .gap(px(4.0))
+                .child(
+                    div()
+                        .text_size(px(13.0))
+                        .font_semibold()
+                        .text_color(theme.panel_label_text)
+                        .child(t(lang, TKey::PanelNodeName).to_string()),
+                )
+                .child(Input::new(&self.label_input).appearance(true)),
+        );
+
+        // 模型
+        col = col.child(
+            div()
+                .flex()
+                .flex_col()
+                .gap(px(4.0))
+                .child(
+                    div()
+                        .text_size(px(13.0))
+                        .font_semibold()
+                        .text_color(theme.panel_label_text)
+                        .child(t(lang, TKey::PanelAgentModel).to_string()),
+                )
+                .child(Input::new(&self.agent_model_input).appearance(true)),
+        );
+
+        // 系统提示词
+        col = col.child(
+            div()
+                .flex()
+                .flex_col()
+                .gap(px(4.0))
+                .child(
+                    div()
+                        .text_size(px(13.0))
+                        .font_semibold()
+                        .text_color(theme.panel_label_text)
+                        .child(t(lang, TKey::PanelAgentPrompt).to_string()),
+                )
+                .child(
+                    Input::new(&self.agent_prompt_input)
+                        .appearance(true)
+                        .h(px(120.0)),
+                ),
+        );
+
+        col.into_any_element()
+    }
 }
 
 // ====== 辅助函数 ======
@@ -719,6 +1427,26 @@ fn desc_of(node: &Node) -> Option<String> {
         .get("desc")
         .and_then(|v| v.as_str())
         .map(|s| s.to_string())
+}
+
+/// 从 node.data 解析键值列表 `(name, type, value)`。
+///
+/// 用于 Start 参数/变量、End 返回结果、Variable 节点变量。
+fn get_kv_list(node: &Node, key: &str) -> Vec<(String, String, String)> {
+    node.data
+        .get(key)
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .map(|item| {
+                    let name = item.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                    let kind = item.get("type").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                    let value = item.get("value").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                    (name, kind, value)
+                })
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 /// 从 node.data 解析条件项列表 `(id, label)`。

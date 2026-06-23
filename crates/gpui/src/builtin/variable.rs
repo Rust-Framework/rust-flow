@@ -1,4 +1,7 @@
-//! Action 节点：顺序执行步骤，In + Out 端口，标题栏 + 主体结构。
+//! Variable 节点：变量定义，In + Out 端口，标题栏 + 主体结构。
+//!
+//! 主体显示变量数量（「N 个变量」/「无变量」）。
+//! 属性面板支持配置变量列表（name/type/value）。
 
 use gpui::{div, px, AnyElement, IntoElement, ParentElement, Styled};
 use gpui_component::{Icon, Sizable, StyledExt};
@@ -6,12 +9,10 @@ use rust_agent_flow::{
     LayoutDirection, Node, NodeSchema, PortDirection, PortId, PortSide, PortSpec, SizeF, PointF,
 };
 
+use crate::i18n::TKey;
 use crate::node::{NodeViewCtx, IFlowNode};
 
-use super::common::{
-    desc_of, label_of, make_port, node_icon, port_sizes, render_delete_button, render_simple_panel,
-    TITLE_ICON_SIZE,
-};
+use super::common::{label_of, make_port, node_icon, port_sizes, render_delete_button, TITLE_ICON_SIZE};
 
 /// 标题栏高度（逻辑坐标）。
 const TITLE_H: f32 = 36.0;
@@ -19,21 +20,30 @@ const TITLE_H: f32 = 36.0;
 /// 主体高度（逻辑坐标）。
 const BODY_H: f32 = 28.0;
 
-/// Action 节点：顺序执行步骤，In + Out 端口。
-pub struct ActionNode {
+/// 从 node.data 解析变量列表长度。
+fn variable_count(node: &Node) -> usize {
+    node.data
+        .get("variables")
+        .and_then(|v| v.as_array())
+        .map(|arr| arr.len())
+        .unwrap_or(0)
+}
+
+/// Variable 节点：变量定义，In + Out 端口。
+pub struct VariableNode {
     schema: NodeSchema,
 }
 
-impl Default for ActionNode {
+impl Default for VariableNode {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl ActionNode {
+impl VariableNode {
     pub fn new() -> Self {
         Self {
-            schema: NodeSchema::new("action", "Action")
+            schema: NodeSchema::new("variable", "Variable")
                 .with_size(SizeF::new(200.0, TITLE_H + BODY_H))
                 .with_port(PortSpec::new("in", PortDirection::In, PortSide::Auto))
                 .with_port(PortSpec::new("out", PortDirection::Out, PortSide::Auto)),
@@ -41,9 +51,9 @@ impl ActionNode {
     }
 }
 
-impl IFlowNode for ActionNode {
+impl IFlowNode for VariableNode {
     fn kind(&self) -> &str {
-        "action"
+        "variable"
     }
 
     fn get_view(&self, node: &Node, ctx: &mut NodeViewCtx) -> AnyElement {
@@ -54,9 +64,15 @@ impl IFlowNode for ActionNode {
         let body_h = BODY_H * s;
         let t = &ctx.theme;
         let layout = ctx.layout;
+        let lang = ctx.language;
 
         let label = label_of(node);
-        let desc = desc_of(node).unwrap_or_default();
+        let n_vars = variable_count(node);
+        let body_text = if n_vars > 0 {
+            format!("{} {}", n_vars, crate::i18n::t(lang, TKey::VariableCount))
+        } else {
+            crate::i18n::t(lang, TKey::VariableCount).to_string()
+        };
 
         let (port_size, port_outer, port_outer_half) = port_sizes(s);
         let border_color = if ctx.selected {
@@ -65,10 +81,9 @@ impl IFlowNode for ActionNode {
             t.node_border
         };
 
-        // 外层容器
         let mut container = div().relative().w(px(w)).h(px(h));
 
-        // 标题栏（顶部圆角）：图标 + 标签
+        // 标题栏
         container = container.child(
             div()
                 .absolute()
@@ -86,7 +101,7 @@ impl IFlowNode for ActionNode {
                 .px(px(12.0 * s))
                 .gap(px(6.0 * s))
                 .child(
-                    Icon::new(node_icon("action"))
+                    Icon::new(node_icon("variable"))
                         .with_size(px(TITLE_ICON_SIZE * s))
                         .text_color(t.node_title_text),
                 )
@@ -99,8 +114,7 @@ impl IFlowNode for ActionNode {
                 ),
         );
 
-        // 主体（底部圆角）：描述文案
-        let body_text = if desc.is_empty() { "Action".to_string() } else { desc };
+        // 主体
         container = container.child(
             div()
                 .absolute()
@@ -128,7 +142,6 @@ impl IFlowNode for ActionNode {
         let mid_y_title = title_h * 0.5;
         match layout {
             LayoutDirection::Horizontal => {
-                // In 端口（左侧中心）
                 container = container.child(make_port(
                     -port_outer_half,
                     mid_y_title - port_outer_half,
@@ -138,7 +151,6 @@ impl IFlowNode for ActionNode {
                     t.node_in_dot,
                     t.port_bg,
                 ));
-                // Out 端口（右侧中心）
                 container = container.child(make_port(
                     w - port_outer_half,
                     mid_y_title - port_outer_half,
@@ -151,7 +163,6 @@ impl IFlowNode for ActionNode {
             }
             LayoutDirection::Vertical => {
                 let mid_x = w * 0.5;
-                // In 端口（顶部中心）
                 container = container.child(make_port(
                     mid_x - port_outer_half,
                     -port_outer_half,
@@ -161,7 +172,6 @@ impl IFlowNode for ActionNode {
                     t.node_in_dot,
                     t.port_bg,
                 ));
-                // Out 端口（底部中心）
                 container = container.child(make_port(
                     mid_x - port_outer_half,
                     h - port_outer_half,
@@ -174,7 +184,6 @@ impl IFlowNode for ActionNode {
             }
         }
 
-        // hover 时叠加删除按钮
         if ctx.hovered {
             container = container.child(render_delete_button(node.size.w, s, t));
         }
@@ -183,7 +192,8 @@ impl IFlowNode for ActionNode {
     }
 
     fn get_panel(&self, node: &Node, ctx: &mut NodeViewCtx) -> AnyElement {
-        render_simple_panel(node, "Action 节点", &ctx.theme)
+        let _ = (node, ctx);
+        div().into_any_element()
     }
 
     fn schema(&self) -> &NodeSchema {

@@ -53,6 +53,9 @@ pub(crate) fn node_icon(kind: &str) -> IconName {
         "action" => IconName::Cpu,
         "condition" => IconName::Network,
         "loop" => IconName::Redo,
+        "variable" => IconName::MemoryStick,
+        "adapter" => IconName::Replace,
+        "agent" => IconName::Bot,
         _ => IconName::Settings,
     }
 }
@@ -182,7 +185,8 @@ fn render_icon_button(
 
 /// 渲染删除按钮（Delete 图标），仅在 hover 时由调用方决定是否渲染。
 ///
-/// 绝对定位在节点右上角：距右边缘 `BTN_MARGIN`，距顶 `BTN_MARGIN`。
+/// 绝对定位在节点右上角：距右边缘 `BTN_MARGIN`，垂直居中于标题栏
+///（与 toggle 按钮对齐）。
 ///
 /// - `node_w`: 节点逻辑宽度（未乘 scale）
 /// - `scale`: 视口缩放比例
@@ -190,7 +194,8 @@ pub(crate) fn render_delete_button(node_w: f32, scale: f32, theme: &Theme) -> An
     let btn_size = DELETE_BTN_SIZE * scale;
     let margin = BTN_MARGIN * scale;
     let left = node_w * scale - btn_size - margin;
-    let top = margin;
+    // 垂直居中于标题栏（与 toggle 按钮一致）
+    let top = (TITLE_H * scale - btn_size) * 0.5;
     render_icon_button(
         left,
         top,
