@@ -421,9 +421,11 @@ pub fn smoothstep_path(
 /// Loop back-edge routing: orthogonal U-shape path from the last loop body
 /// node back to the Loop node's `loop_in` port.
 ///
-/// **Horizontal layout** (5-point path, routes BELOW the body group):
-/// `src → (src.x, bottom_y) → (approach_x, bottom_y) → (approach_x, dst.y) → dst`
-/// Goes DOWN → LEFT → UP → RIGHT, clearing all nodes below.
+/// **Horizontal layout** (6-point path, routes BELOW the body group):
+/// `src → (src.x+gap, src.y) → (src.x+gap, bottom_y) → (approach_x, bottom_y) → (approach_x, dst.y) → dst`
+/// Goes RIGHT → DOWN → LEFT → UP → RIGHT. The source exits from its RIGHT
+/// side (右出), and the path loops below the body group to enter the Loop's
+/// `loop_in` port from the LEFT (左进).
 ///
 /// **Vertical layout** (4-point path, routes to the LEFT of the body group):
 /// `src → (left_x, src.y) → (left_x, dst.y) → dst`
@@ -444,14 +446,17 @@ pub fn loop_back_path(
     let approach_offset = 30.0;
 
     if horizontal {
-        // Horizontal: DOWN → LEFT → UP → RIGHT (5-point U-shape below body group)
+        // Horizontal: RIGHT → DOWN → LEFT → UP → RIGHT (6-point U-shape below body group)
+        // Source exits RIGHT from the body node, loops below, enters loop_in from LEFT.
         let bottom_margin = 40.0;
         // bottom_y must be below both the node bounds and the source point
         let bottom_y = node_bounds.bottom().max(src.y) + bottom_margin;
         let approach_x = dst.x - approach_offset;
+        let right_gap = approach_offset;
         vec![
             src,
-            PointF::new(src.x, bottom_y),
+            PointF::new(src.x + right_gap, src.y),
+            PointF::new(src.x + right_gap, bottom_y),
             PointF::new(approach_x, bottom_y),
             PointF::new(approach_x, dst.y),
             dst,
@@ -592,19 +597,21 @@ mod tests {
     }
 
     #[test]
-    fn loop_back_horizontal_has_no_right_detour() {
-        // Horizontal layout: src is to the right of all nodes.
-        // Path should go straight down — no rightward detour.
+    fn loop_back_horizontal_exits_right() {
+        // Horizontal layout: src exits RIGHT (右出), path has a rightward
+        // first segment before going DOWN. 6-point U-shape.
         let bounds = crate::geometry::RectF::new(
             PointF::new(100.0, 100.0),
             crate::geometry::SizeF::new(180.0, 80.0),
         );
         let src = PointF::new(400.0, 140.0); // right of bounds (right=280)
         let pts = loop_back_path(src, PointF::new(100.0, 140.0), true, bounds);
-        // 5 points: src, (src.x, bottom_y), (left_x, bottom_y), (left_x, dst.y), dst
-        assert_eq!(pts.len(), 5, "horizontal path should have 5 points (no right detour)");
-        // Second point should be directly below src (same x).
-        assert_eq!(pts[1].x, src.x, "second point should be directly below src");
+        // 6 points: src, (src.x+gap, src.y), (src.x+gap, bottom_y),
+        // (approach_x, bottom_y), (approach_x, dst.y), dst
+        assert_eq!(pts.len(), 6, "horizontal path should have 6 points (right→down→left→up→right)");
+        // Second point should be directly right of src (same y) — "right" exit segment.
+        assert_eq!(pts[1].y, src.y, "second point should be at same y as src (rightward exit)");
+        assert!(pts[1].x > src.x, "second point should be right of src");
     }
 
     #[test]

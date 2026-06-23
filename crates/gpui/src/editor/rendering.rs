@@ -66,7 +66,7 @@ fn compute_loop_bounds(graph: &FlowGraph, loop_node: NodeId, body_nodes: &HashSe
 /// **端口策略**（与布局方向协同，减少拐弯）：
 /// - **纵向布局**：body 节点强制 Top/Bottom（垂直子流），与 Loop 的 Bottom→Top 形成 opposite 配对
 /// - **横向布局**：body 节点用默认 Left/Right（水平子流），与 Loop 的 Right→Left 形成 opposite 配对；
-///   回环边 src 例外，强制 Bottom（回环边从下方绕行）
+///   回环边 src 同样用默认 Right（右出左进，回环边从下方绕行）
 fn compute_edge_endpoints(
     edge: &Edge,
     graph: &FlowGraph,
@@ -87,15 +87,10 @@ fn compute_edge_endpoints(
 
     let src_is_body = body_nodes.contains(&edge.source);
     let dst_is_body = body_nodes.contains(&edge.target);
-    let is_loop_back = edge.target_port.as_deref() == Some("loop_in");
 
     // 纵向布局：body 节点始终强制 Top/Bottom（垂直子流）
-    // 横向布局：仅回环边 src 强制 Bottom（回环边从下方绕行），其他用默认 Left/Right
-    let force_src_bottom = src_is_body
-        && match layout {
-            LayoutDirection::Vertical => true,
-            LayoutDirection::Horizontal => is_loop_back,
-        };
+    // 横向布局：body 节点用默认 Left/Right（水平子流），回环边从右侧出、向左绕回
+    let force_src_bottom = src_is_body && matches!(layout, LayoutDirection::Vertical);
     let force_dst_top = dst_is_body && matches!(layout, LayoutDirection::Vertical);
 
     // 源端点
@@ -131,7 +126,7 @@ impl FlowEditorView {
     ///
     /// 边端点通过 [`compute_edge_endpoints`] 计算：
     /// - 纵向布局：body 节点强制 Top/Bottom（垂直子流）
-    /// - 横向布局：body 节点用默认 Left/Right（水平子流），回环边 src 例外（Bottom）
+    /// - 横向布局：body 节点用默认 Left/Right（水平子流），回环边右出左进
     /// - 回环边（target_port == "loop_in"）使用 `loop_back_path` 向下/向左绕过
     pub(crate) fn render_edges(&self) -> impl IntoElement {
         let s = self.scale();

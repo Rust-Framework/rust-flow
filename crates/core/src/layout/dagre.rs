@@ -172,6 +172,15 @@ impl LayoutEngine for DagreLayout {
         // (vertical layout) or Y (horizontal layout) with the loop_body port.
         align_loop_body_target(graph, &mut positions, direction);
 
+        // Post-process: align the forward chain after the Loop's `done` target
+        // so each successor is aligned with its predecessor along the cross-axis.
+        //
+        // `align_loop_done_target` aligns the done target (e.g. Summarize) with
+        // the Loop's done port, but the done target's successors (e.g. End) may
+        // still be at a different cross-axis position, causing bends. This step
+        // follows the single-successor chain and aligns each successor.
+        align_post_done_chain(graph, &mut positions, direction);
+
         LayoutResult { positions }
     }
 }
@@ -587,6 +596,98 @@ fn align_loop_body_target(
                 target_pos.x = loop_pos.x + loop_node.size.w * LOOP_BODY_PORT_X_RATIO
                     - target_node.size.w * 0.5;
             }
+        }
+    }
+}
+
+/// Align the forward chain after the Loop's `done` target so that each
+/// successor is aligned with its predecessor along the cross-axis,
+/// eliminating unnecessary bends in the main flow.
+///
+/// After [`align_loop_done_target`] aligns the done target (e.g. Summarize)
+/// with the Loop's done port, the done target's successors (e.g. End) may
+/// still be at a different cross-axis position, causing the connecting edge
+/// to bend. This function follows the single-successor chain from each done
+/// target and aligns each successor's cross-axis with its predecessor.
+///
+/// **Alignment formula** (simple nodes with center ports):
+/// - Horizontal: `next.y = curr.y + (curr.h - next.h) / 2`
+///   (aligns port Y = center Y for both nodes)
+/// - Vertical: `next.x = curr.x + (curr.w - next.w) / 2`
+///
+/// Only chains with exactly one forward edge at each step are aligned —
+/// branching points are left untouched. Back-edges (`loop_in`) and
+/// `loop_body` edges are excluded. A visited set prevents infinite loops
+/// on cyclic graphs.
+fn align_post_done_chain(
+    graph: &FlowGraph,
+    positions: &mut std::collections::HashMap<crate::graph::NodeId, PointF>,
+    direction: LayoutDirection,
+) {
+    use std::collections::HashSet;
+
+    // Find all done targets (e.g. Summarize).
+    let done_targets: Vec<crate::graph::NodeId> = graph
+        .edges()
+        .filter(|e| e.source_port.as_deref() == Some("done"))
+        .map(|e| e.target)
+        .collect();
+
+    for done_target in done_targets {
+        let mut visited: HashSet<crate::graph::NodeId> = HashSet::new();
+        visited.insert(done_target);
+
+        let mut current = done_target;
+        loop {
+            // Forward edges: exclude back-edges (loop_in) and loop_body edges.
+            let forward_edges: Vec<&crate::graph::Edge> = graph
+                .out_edges(current)
+                .filter(|e| e.target_port.as_deref() != Some("loop_in"))
+                .filter(|e| e.source_port.as_deref() != Some("loop_body"))
+                .collect();
+
+            // Only align when there's exactly one forward edge (no branching).
+            if forward_edges.len() != 1 {
+                break;
+            }
+
+            let next = forward_edges[0].target;
+            // Cycle guard.
+            if !visited.insert(next) {
+                break;
+            }
+
+            let curr_pos = match positions.get(&current) {
+                Some(p) => *p,
+                None => break,
+            };
+            let curr_node = match graph.node(current) {
+                Some(n) => n,
+                None => break,
+            };
+            let next_node = match graph.node(next) {
+                Some(n) => n,
+                None => break,
+            };
+            let next_pos = match positions.get_mut(&next) {
+                Some(p) => p,
+                None => break,
+            };
+
+            match direction {
+                LayoutDirection::Horizontal => {
+                    // Align Y so center ports match:
+                    // next.y + next.h/2 = curr.y + curr.h/2
+                    next_pos.y = curr_pos.y + (curr_node.size.h - next_node.size.h) * 0.5;
+                }
+                LayoutDirection::Vertical => {
+                    // Align X so center ports match:
+                    // next.x + next.w/2 = curr.x + curr.w/2
+                    next_pos.x = curr_pos.x + (curr_node.size.w - next_node.size.w) * 0.5;
+                }
+            }
+
+            current = next;
         }
     }
 }

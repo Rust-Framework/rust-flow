@@ -29,7 +29,9 @@
 //!       │ └──┬─────────────────────┬───┘ │
 //!       │    │ LoopIn        LoopBody│   │
 //!       │    ↑                      ↓    │
-//!       └────┘ (向下绕圈回环) ┌────────┘┘
+//!       │    │                  (→ body node → 右出向下绕回)
+//!       └────┘ ┌─────────────────────────────┐
+//!              │   回环边从 body 右侧出，向下绕过，左进 loop_in
 //! ```
 
 use gpui::{div, px, AnyElement, IntoElement, ParentElement, Styled};
