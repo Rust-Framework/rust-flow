@@ -196,8 +196,15 @@ impl FlowEditorView {
                     HitResult::OutPort(id, _) | HitResult::InPort(id, _) => Some(*id),
                     HitResult::EdgePlusButton(_) | HitResult::Empty => None,
                 };
-                if new_hovered != self.hovered {
+                // 追踪悬停的「+」按钮（用于显示手型 cursor + tooltip）
+                let new_hovered_plus = match &hit {
+                    HitResult::EdgePlusButton(eid) => Some(*eid),
+                    _ => None,
+                };
+                let changed = new_hovered != self.hovered || new_hovered_plus != self.hovered_plus;
+                if changed {
                     self.hovered = new_hovered;
+                    self.hovered_plus = new_hovered_plus;
                     cx.notify();
                 }
             }

@@ -306,7 +306,7 @@ impl FlowEditorView {
             // ====== 数据源 Dropdown ======
             .child(
                 Button::new("tb-data-source")
-                    .icon(IconName::ListSpec)
+                    .icon(IconName::ALargeSmall)
                     .small()
                     .ghost()
                     .tooltip(t(lang, TKey::TbDataSource))

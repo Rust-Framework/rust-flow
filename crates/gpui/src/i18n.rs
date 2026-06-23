@@ -132,6 +132,8 @@ pub enum TKey {
     AddNodeVariable,
     AddNodeAdapter,
     AddNodeAgent,
+    /// 边「+」按钮 tooltip
+    EdgePlusHint,
     // 边类型名称
     EdgeBezier,
     EdgeStraight,
@@ -238,6 +240,7 @@ fn t_zh(key: TKey) -> &'static str {
         TKey::AddNodeVariable => "变量节点",
         TKey::AddNodeAdapter => "数据适配节点",
         TKey::AddNodeAgent => "智能体节点",
+        TKey::EdgePlusHint => "插入节点",
         // 边类型名称
         TKey::EdgeBezier => "贝塞尔曲线",
         TKey::EdgeStraight => "直线",
@@ -337,6 +340,7 @@ fn t_en(key: TKey) -> &'static str {
         TKey::AddNodeVariable => "Variable Node",
         TKey::AddNodeAdapter => "Data Adapter Node",
         TKey::AddNodeAgent => "Agent Node",
+        TKey::EdgePlusHint => "Insert node",
         // 边类型名称
         TKey::EdgeBezier => "Bezier",
         TKey::EdgeStraight => "Straight",

@@ -164,6 +164,8 @@ impl FlowEditorView {
             }
         }
 
+        let horizontal_layout = matches!(layout, LayoutDirection::Horizontal);
+
         // 为每条边计算渲染指令（跳过连接到隐藏循环体节点的边）
         let edge_renders: Vec<EdgeRender> = self
             .graph
@@ -198,7 +200,7 @@ impl FlowEditorView {
                     EdgeRender::LoopBack {
                         src,
                         dst,
-                        horizontal: matches!(layout, LayoutDirection::Horizontal),
+                        horizontal: horizontal_layout,
                         node_bounds,
                         edge_type: edge.edge_type,
                     }
@@ -323,8 +325,8 @@ impl FlowEditorView {
                 !hidden_nodes.contains(&edge.source) && !hidden_nodes.contains(&edge.target)
             })
             .filter_map(|edge| {
-                // 使用端口位置计算按钮位置（靠近源节点出口）
-                let (src, src_side, _, _) = compute_edge_endpoints(
+                // 使用端口位置计算按钮位置
+                let (src, src_side, dst, dst_side) = compute_edge_endpoints(
                     edge,
                     &self.graph,
                     &registry,
@@ -334,16 +336,30 @@ impl FlowEditorView {
                     dst_side_default,
                 );
 
-                // 按源端口 side 的轴向偏移，确保按钮中心在连线路径起始段上。
-                // 修改此常量可调整按钮与源节点的距离（逻辑像素）。
-                let (dx, dy) = match src_side {
+                // 检查源节点是否要求按钮放在目标端（如 Loop 节点）
+                let at_target = self
+                    .graph
+                    .node(edge.source)
+                    .and_then(|n| registry.get(&n.kind))
+                    .map(|fn_| fn_.plus_button_at_target())
+                    .unwrap_or(false);
+
+                // 按端口 side 的轴向偏移 25px，确保按钮中心在连线路径上。
+                // at_target=true → 用目标端口 + dst_side 外法线方向（朝源节点）
+                // at_target=false → 用源端口 + src_side 外法线方向（朝目标节点）
+                let (base, side) = if at_target {
+                    (dst, dst_side)
+                } else {
+                    (src, src_side)
+                };
+                let (dx, dy) = match side {
                     PortSide::Right => (25.0, 0.0),
                     PortSide::Bottom => (0.0, 25.0),
                     PortSide::Left => (-25.0, 0.0),
                     PortSide::Top => (0.0, -25.0),
                     PortSide::Auto => (25.0, 0.0),
                 };
-                let button_pos = PointF::new(src.x + dx, src.y + dy);
+                let button_pos = PointF::new(base.x + dx, base.y + dy);
 
                 let screen_x = offset_x + button_pos.x * s;
                 let screen_y = offset_y + button_pos.y * s;
@@ -375,6 +391,88 @@ impl FlowEditorView {
             .top_0()
             .size_full()
             .children(buttons)
+    }
+
+    /// 渲染悬停「+」按钮时的 tooltip。
+    ///
+    /// 当 `hovered_plus` 为 Some 时，找到对应边的 + 按钮屏幕坐标，
+    /// 在按钮下方渲染一个带背景的小 tooltip 文本。位置计算与
+    /// `render_edge_plus_buttons` / `hit_test_edge_plus` 完全一致。
+    pub(crate) fn render_plus_tooltip(&self) -> Option<impl IntoElement> {
+        let edge_id = self.hovered_plus?;
+        let edge = self.graph.edge(edge_id)?;
+
+        let s = self.scale();
+        let offset_x = self.viewport.offset.x;
+        let offset_y = self.viewport.offset.y;
+        let layout = self.layout_direction;
+        let registry = self.registry.clone();
+        let (src_side_default, dst_side_default) = self.port_sides();
+
+        let all_body_nodes: HashSet<NodeId> = self
+            .cached_body_groups
+            .values()
+            .flat_map(|s| s.iter().copied())
+            .collect();
+
+        let (src, src_side, dst, dst_side) = compute_edge_endpoints(
+            edge,
+            &self.graph,
+            &registry,
+            layout,
+            &all_body_nodes,
+            src_side_default,
+            dst_side_default,
+        );
+
+        // 检查源节点是否要求按钮放在目标端（与 render_edge_plus_buttons 一致）
+        let at_target = self
+            .graph
+            .node(edge.source)
+            .and_then(|n| registry.get(&n.kind))
+            .map(|fn_| fn_.plus_button_at_target())
+            .unwrap_or(false);
+
+        let (base, side) = if at_target {
+            (dst, dst_side)
+        } else {
+            (src, src_side)
+        };
+        // + 按钮位置 = 端口 + 轴向偏移 25px（与 render_edge_plus_buttons 一致）
+        let (dx, dy) = match side {
+            PortSide::Right => (25.0, 0.0),
+            PortSide::Bottom => (0.0, 25.0),
+            PortSide::Left => (-25.0, 0.0),
+            PortSide::Top => (0.0, -25.0),
+            PortSide::Auto => (25.0, 0.0),
+        };
+        let button_pos = PointF::new(base.x + dx, base.y + dy);
+        let screen_x = offset_x + button_pos.x * s;
+        let screen_y = offset_y + button_pos.y * s;
+
+        let hint = crate::i18n::t(self.language, crate::i18n::TKey::EdgePlusHint);
+        let bg = self.theme.edge_plus_bg;
+        let text_color = self.theme.toolbar_text;
+
+        // tooltip 位于 + 按钮右下方，偏移 16px 避免遮挡按钮
+        let tooltip_x = screen_x + 16.0;
+        let tooltip_y = screen_y + 16.0;
+
+        Some(
+            div()
+                .absolute()
+                .left(px(tooltip_x))
+                .top(px(tooltip_y))
+                .px(px(8.0))
+                .py(px(4.0))
+                .rounded(px(4.0))
+                .bg(bg)
+                .border_1()
+                .border_color(self.theme.edge_plus_border)
+                .text_size(px(12.0))
+                .text_color(text_color)
+                .child(hint.to_string()),
+        )
     }
 
     /// 渲染所有节点（absolute div 在内容层内）。

@@ -101,6 +101,7 @@ impl FlowEditorView {
             registry: Arc::new(registry),
             selected: None,
             hovered: None,
+            hovered_plus: None,
             default_edge_type: EdgeType::SmoothStep,
             layout_direction: LayoutDirection::Horizontal,
             show_grid: true,
@@ -288,6 +289,7 @@ impl FlowEditorView {
         self.graph = ds.to_graph();
         self.selected = None;
         self.hovered = None;
+        self.hovered_plus = None;
         self.panel_view = None;
         self.viewport = Viewport::default();
         self.relayout();
@@ -518,8 +520,10 @@ impl Render for FlowEditorView {
         let offset = self.viewport.offset;
 
         // ====== 外层容器：全屏，处理事件 ======
-        // 光标：平移中 → grabbing（ClosedHand），空闲 → grab（OpenHand）
+        // 光标：平移中 → grabbing（ClosedHand），悬停「+」按钮 → pointer（PointingHand），
+        // 空闲 → grab（OpenHand）
         let is_panning = matches!(self.interaction, InteractionState::Panning { .. });
+        let is_on_plus = self.hovered_plus.is_some() && !is_panning;
         let mut container = div()
             .size_full()
             .relative()
@@ -527,6 +531,8 @@ impl Render for FlowEditorView {
             .overflow_hidden()
             .cursor(if is_panning {
                 CursorStyle::ClosedHand
+            } else if is_on_plus {
+                CursorStyle::PointingHand
             } else {
                 CursorStyle::OpenHand
             })
@@ -566,6 +572,13 @@ impl Render for FlowEditorView {
         );
         if !is_interacting {
             container = container.child(self.render_edge_plus_buttons(body_groups));
+        }
+
+        // ====== 「+」按钮 tooltip：悬停时显示 ======
+        if !is_interacting {
+            if let Some(tooltip) = self.render_plus_tooltip() {
+                container = container.child(tooltip);
+            }
         }
 
         // ====== 工具栏：不受缩放影响 ======

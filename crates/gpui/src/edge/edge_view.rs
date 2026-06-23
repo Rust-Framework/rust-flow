@@ -251,6 +251,7 @@ pub(crate) fn paint_loop_back_edge(
     window: &mut Window,
 ) {
     let raw = loop_back_path(src, dst, horizontal, node_bounds);
+    let raw_len = raw.len();
     // Apply rounded corners for SmoothStep and Bezier.
     //
     // Bezier 使用更大圆角半径（24.0 vs SmoothStep 的 12.0），使回环边在
@@ -262,6 +263,7 @@ pub(crate) fn paint_loop_back_edge(
         EdgeType::SmoothStep => round_corners(&raw, 12.0),
         _ => raw,
     };
+    eprintln!("[DEBUG loop_back] edge_type={:?}, raw_len={}, points_len={}, src=({},{}), dst=({},{})", edge_type, raw_len, points.len(), src.x, src.y, dst.x, dst.y);
     // 回环边使用虚线样式，与主流程边区分。
     paint_polyline(&points, false, true, scale, offset, color, window);
     paint_arrow(&points, false, scale, offset, color, window);

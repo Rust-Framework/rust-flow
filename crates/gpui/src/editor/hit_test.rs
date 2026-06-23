@@ -156,15 +156,13 @@ impl FlowEditorView {
 
     /// 边「+」按钮命中测试。
     ///
-    /// 遍历所有可见边，计算每条边的按钮位置（源端口 + 沿端口 side 轴向偏移 10px），
-    /// 检查点击是否在按钮半径内（12px 逻辑距离）。
+    /// 遍历所有可见边，计算每条边的按钮位置，检查点击是否在按钮半径内。
     ///
-    /// 按钮位置计算与 `render_edge_plus_buttons` 保持完全一致，使用精确端口位置
-    /// 和轴向偏移（横向 Right→(10,0)，纵向 Bottom→(0,10)），确保按钮中心在连线
-    /// 路径起始段上。
+    /// 按钮位置计算与 `render_edge_plus_buttons` 保持完全一致：
+    /// - 默认：源端口 + 沿 src_side 轴向偏移 25px
+    /// - `plus_button_at_target()` 为 true 的源节点：目标端口 + 沿 dst_side 轴向偏移 25px
     ///
-    /// 跳过回环边（`target_port == "loop_in"`），因为回环边路径复杂，
-    /// 端口位置与实际路径中点偏差大。
+    /// 跳过回环边（`target_port == "loop_in"`）。
     fn hit_test_edge_plus(&self, logical: PointF) -> Option<EdgeId> {
         const RADIUS: f32 = 12.0;
         const OFFSET: f32 = 25.0;
@@ -184,8 +182,7 @@ impl FlowEditorView {
                 continue;
             }
 
-            // 使用端口位置计算按钮位置（与 render_edge_plus_buttons 完全一致）
-            let (src, src_side, _, _) = super::rendering::compute_edge_endpoints(
+            let (src, src_side, dst, dst_side) = super::rendering::compute_edge_endpoints(
                 edge,
                 &self.graph,
                 &self.registry,
@@ -195,15 +192,27 @@ impl FlowEditorView {
                 dst_side_default,
             );
 
-            // 按源端口 side 的轴向偏移 OFFSET，与渲染端一致
-            let (dx, dy) = match src_side {
+            // 检查源节点是否要求按钮放在目标端（与 render_edge_plus_buttons 一致）
+            let at_target = self
+                .graph
+                .node(edge.source)
+                .and_then(|n| self.registry.get(&n.kind))
+                .map(|fn_| fn_.plus_button_at_target())
+                .unwrap_or(false);
+
+            let (base, side) = if at_target {
+                (dst, dst_side)
+            } else {
+                (src, src_side)
+            };
+            let (dx, dy) = match side {
                 PortSide::Right => (OFFSET, 0.0),
                 PortSide::Bottom => (0.0, OFFSET),
                 PortSide::Left => (-OFFSET, 0.0),
                 PortSide::Top => (0.0, -OFFSET),
                 PortSide::Auto => (OFFSET, 0.0),
             };
-            let button_pos = PointF::new(src.x + dx, src.y + dy);
+            let button_pos = PointF::new(base.x + dx, base.y + dy);
 
             let ddx = logical.x - button_pos.x;
             let ddy = logical.y - button_pos.y;

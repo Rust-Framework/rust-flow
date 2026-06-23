@@ -121,4 +121,15 @@ pub trait IFlowNode: Send + Sync {
     fn content_size(&self, node: &Node) -> SizeF {
         node.size
     }
+
+    /// 边「+」按钮是否应放置在目标节点一侧（而非默认的源节点一侧）。
+    ///
+    /// **默认**：`false`（按钮在源节点出口附近）。
+    ///
+    /// 某些结构化节点（如 Loop）的出口端口位置特殊，按钮放在源端会与
+    /// 节点其他端口或回环边视觉冲突。此类节点应覆写返回 `true`，
+    /// 使按钮显示在目标节点入口附近。
+    fn plus_button_at_target(&self) -> bool {
+        false
+    }
 }
