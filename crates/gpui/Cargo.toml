@@ -17,6 +17,7 @@ gpui-component-assets = { workspace = true }
 anyhow = "1"
 serde_json = "1"
 log = "0.4"
+rhai = { workspace = true }
 
 [features]
 default = []

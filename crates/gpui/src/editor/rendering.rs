@@ -13,11 +13,11 @@
 use std::collections::HashSet;
 use std::sync::Arc;
 
-use gpui::{canvas, div, px, IntoElement, ParentElement, Point, Styled};
+use gpui::{canvas, div, px, App, AppContext, Entity, IntoElement, ParentElement, Point, Styled};
 use rust_agent_flow::{Edge, EdgeType, FlowGraph, NodeId, PointF, PortSide, RectF};
 
 use crate::edge::{paint_edge_scaled, paint_loop_back_edge};
-use crate::node::{IFlowNode, NodeView};
+use crate::node::{ActionCallback, IFlowNode, NodeAction, NodeView};
 use crate::panel::PanelView;
 
 use super::flow_editor::{FlowEditorView, LayoutDirection};
@@ -65,8 +65,8 @@ fn compute_loop_bounds(graph: &FlowGraph, loop_node: NodeId, body_nodes: &HashSe
 ///
 /// **端口策略**（与布局方向协同，减少拐弯）：
 /// - **循环体节点**：始终强制 Top/Bottom（垂直子流，上进下出），无论主布局方向如何。
-///   这样 Loop 的 `loop_body` 出口（Bottom）→ body 入口（Top），
-///   body 出口（Bottom）→ Loop 的 `loop_in` 入口（Top），形成自然的纵向流。
+///   这样 Loop 的 `loop_body` 出口（Right）→ body 入口（Top），
+///   body 出口（Bottom）→ Loop 的 `loop_in` 入口（Left），回环边向下绕回。
 /// - **非循环体节点**：按布局方向使用默认端口对（纵向 Top/Bottom，横向 Left/Right）。
 fn compute_edge_endpoints(
     edge: &Edge,
@@ -136,6 +136,7 @@ impl FlowEditorView {
         let edge_default_color = self.theme.edge_default;
         let edge_loop_back_color = self.theme.edge_loop_back;
         let grid_dot_color = self.theme.grid_dot;
+        let grid_spacing = self.grid_spacing;
 
         // 收集循环体节点分组
         let body_groups = self.graph.loop_body_groups();
@@ -215,7 +216,7 @@ impl FlowEditorView {
                     px(offset_y + bounds.origin.y.as_f32()),
                 );
                 if show_grid {
-                    paint_grid(bounds, s, total_offset, grid_dot_color, window);
+                    paint_grid(bounds, s, grid_spacing, total_offset, grid_dot_color, window);
                 }
                 for er in &edge_renders {
                     match er {
@@ -247,7 +248,10 @@ impl FlowEditorView {
     /// 渲染所有节点（absolute div 在内容层内）。
     ///
     /// 节点最终屏幕坐标 = content_offset + logical_pos × scale
-    pub(crate) fn render_nodes(&self) -> Vec<gpui::AnyElement> {
+    ///
+    /// 为每个节点创建动作回调闭包，捕获 `node_id` 和 `entity`，
+    /// 通过 `cx.update_entity` 调用 `handle_node_action`。
+    pub(crate) fn render_nodes(&self, entity: Entity<Self>) -> Vec<gpui::AnyElement> {
         let selected = self.selected;
         let registry = &self.registry;
         let s = self.scale();
@@ -256,6 +260,7 @@ impl FlowEditorView {
             LayoutDirection::Vertical => rust_agent_flow::LayoutDirection::Vertical,
         };
         let theme = self.theme;
+        let hovered = self.hovered;
 
         // 收集循环体节点（与 render_edges 保持一致）
         let body_groups = self.graph.loop_body_groups();
@@ -270,6 +275,17 @@ impl FlowEditorView {
                 let flow_node = registry.get(&node.kind);
                 let is_selected = selected == Some(node_id);
                 let is_body = all_body_nodes.contains(&node_id);
+                let is_hovered = hovered == Some(node_id);
+
+                // 创建动作回调：闭包捕获 node_id 和 entity
+                let on_action: ActionCallback = {
+                    let entity = entity.clone();
+                    Arc::new(move |action: NodeAction, cx: &mut App| {
+                        cx.update_entity(&entity, |view: &mut FlowEditorView, cx| {
+                            view.handle_node_action(node_id, action, cx);
+                        });
+                    })
+                };
 
                 let view = NodeView::new(node.clone())
                     .with_flow_node_opt(flow_node)
@@ -277,7 +293,9 @@ impl FlowEditorView {
                     .with_scale(s)
                     .with_layout(layout)
                     .with_body_mode(is_body)
-                    .with_theme(theme);
+                    .with_theme(theme)
+                    .with_hovered(is_hovered)
+                    .with_on_action(Some(on_action));
 
                 div()
                     .absolute()
@@ -289,35 +307,79 @@ impl FlowEditorView {
             .collect()
     }
 
-    /// 渲染属性面板。
-    pub(crate) fn render_panel(&self) -> Option<gpui::AnyElement> {
-        let node = self.selected.and_then(|id| self.graph.node(id).cloned())?;
-        let flow_node = self.registry.get(&node.kind);
-        let panel = PanelView::new(node)
-            .with_flow_node_opt(flow_node)
-            .with_theme(self.theme);
-        Some(
-            div()
-                .absolute()
-                .right_0()
-                .top_0()
-                .bottom_0()
-                .child(panel)
-                .into_any_element(),
-        )
+    /// 确保属性面板视图与选中节点同步。
+    ///
+    /// 选中节点变化时创建新 PanelView，节点数据变化时同步更新。
+    /// 返回 `Option<Entity<PanelView>>` 供 render 方法作为 child 添加。
+    pub(crate) fn ensure_panel_view(
+        &mut self,
+        entity: Entity<Self>,
+        window: &mut gpui::Window,
+        cx: &mut gpui::Context<Self>,
+    ) -> Option<Entity<PanelView>> {
+        // 选中节点为 None 时，清理 panel_view
+        let selected_id = match self.selected {
+            Some(id) => id,
+            None => {
+                self.panel_view = None;
+                return None;
+            }
+        };
+
+        let node = self.graph.node(selected_id).cloned()?;
+        // 如果节点已被删除（graph 中不存在），清理 panel_view
+        if self.graph.node(selected_id).is_none() {
+            self.panel_view = None;
+            return None;
+        }
+
+        // 检查是否需要重建 PanelView（选中节点变化或 panel_view 为空）
+        let need_rebuild = self
+            .panel_view
+            .as_ref()
+            .map(|pv| {
+                pv.read(cx).node.id != selected_id
+            })
+            .unwrap_or(true);
+
+        if need_rebuild {
+            let node_id = node.id;
+            let flow_node = self.registry.get(&node.kind);
+
+            // 创建动作回调：闭包捕获 node_id 和 entity
+            let on_action: ActionCallback = {
+                let entity = entity.clone();
+                Arc::new(move |action: NodeAction, cx: &mut App| {
+                    cx.update_entity(&entity, |view: &mut FlowEditorView, cx| {
+                        view.handle_node_action(node_id, action, cx);
+                    });
+                })
+            };
+
+            self.panel_view = Some(PanelView::new(
+                node,
+                flow_node,
+                self.theme,
+                Some(on_action),
+                window,
+                cx,
+            ));
+        } else {
+            // 同步节点数据到现有 PanelView
+            if let Some(pv) = &self.panel_view {
+                pv.update(cx, |view, cx| {
+                    view.sync_from_node(node, window, cx);
+                });
+            }
+        }
+
+        self.panel_view.clone()
     }
 }
 
 // ---- 视图扩展（仅在渲染层使用） ----
 
 impl NodeView {
-    pub(crate) fn with_flow_node_opt(mut self, flow_node: Option<Arc<dyn IFlowNode>>) -> Self {
-        self.flow_node = flow_node;
-        self
-    }
-}
-
-impl PanelView {
     pub(crate) fn with_flow_node_opt(mut self, flow_node: Option<Arc<dyn IFlowNode>>) -> Self {
         self.flow_node = flow_node;
         self

@@ -29,12 +29,13 @@ use gpui::{
     div, px, Context, CursorStyle, InteractiveElement, IntoElement, MouseButton, ParentElement,
     Pixels, Point, Render, Styled, Window,
 };
-use rust_agent_flow::{EdgeType, FlowGraph, NodeId, PointF, PortSide, Viewport};
+use rust_agent_flow::{EdgeType, FlowGraph, NodeId, PointF, PortId, PortSide, Viewport};
 use rust_agent_flow::{
     LayoutDirection as CoreLayoutDirection, LayoutEngine, LayoutResult, DagreLayout,
 };
 
-use crate::node::NodeRegistry;
+use crate::node::{default_syntax_service, NodeAction, NodeRegistry, SharedSyntaxService};
+use crate::panel::PanelView;
 use crate::theme::Theme;
 
 use super::interaction::InteractionState;
@@ -53,16 +54,25 @@ pub struct FlowEditorView {
     pub interaction: InteractionState,
     pub registry: Arc<NodeRegistry>,
     pub selected: Option<NodeId>,
+    /// 当前悬停的节点 ID（用于显示删除按钮等 hover 元素）。
+    pub hovered: Option<NodeId>,
     /// 默认边类型（用于 DrawingEdge 临时连线 + 全局切换）。
     pub default_edge_type: EdgeType,
     /// 布局方向（决定边的端口侧：Horizontal=Right/Left, Vertical=Bottom/Top）。
     pub layout_direction: LayoutDirection,
     /// 是否显示点阵背景。
     pub show_grid: bool,
+    /// 点阵背景逻辑间距（与节点坐标同一空间），控制点阵密度。
+    /// 屏幕间距 = 逻辑间距 × scale，随缩放等比变化。
+    pub grid_spacing: f32,
     /// 是否允许拖拽节点（false 时左键点击节点仅选中，不进入拖拽状态）。
     pub drag_enabled: bool,
     /// 当前主题颜色配置。
     pub theme: Theme,
+    /// 属性面板视图实体（选中节点时创建，取消选中时销毁）。
+    pub panel_view: Option<gpui::Entity<PanelView>>,
+    /// 语法高亮服务（扩展点，默认 `DefaultSyntaxService` 将 rhai 映射到 rust 近似高亮）。
+    pub syntax_service: SharedSyntaxService,
 }
 
 impl FlowEditorView {
@@ -75,11 +85,15 @@ impl FlowEditorView {
             interaction: InteractionState::default(),
             registry: Arc::new(registry),
             selected: None,
+            hovered: None,
             default_edge_type: EdgeType::SmoothStep,
             layout_direction: LayoutDirection::Horizontal,
             show_grid: true,
+            grid_spacing: super::grid::DEFAULT_GRID_SPACING,
             drag_enabled: true,
             theme: Theme::light(),
+            panel_view: None,
+            syntax_service: default_syntax_service(),
         }
     }
 
@@ -166,6 +180,19 @@ impl FlowEditorView {
         cx.notify();
     }
 
+    /// 设置点阵背景逻辑间距，控制点阵密度。值越小点越密。
+    /// 屏幕间距随缩放等比变化（屏幕间距 = 逻辑间距 × scale）。
+    pub fn set_grid_spacing(&mut self, spacing: f32, cx: &mut Context<Self>) {
+        self.grid_spacing = spacing.max(8.0);
+        cx.notify();
+    }
+
+    /// 设置是否显示点阵背景。
+    pub fn set_show_grid(&mut self, show: bool, cx: &mut Context<Self>) {
+        self.show_grid = show;
+        cx.notify();
+    }
+
     /// 切换主题（亮色 ↔ 暗色）。
     pub fn toggle_theme(&mut self, cx: &mut Context<Self>) {
         self.theme = self.theme.toggle();
@@ -177,13 +204,102 @@ impl FlowEditorView {
         self.theme = theme;
         cx.notify();
     }
+
+    /// 注入自定义语法高亮服务（扩展点）。
+    ///
+    /// 默认使用 [`DefaultSyntaxService`]（rhai → rust 近似高亮）。
+    /// 外部 crate 可实现 [`SyntaxService`] trait 提供精确高亮，通过此方法注入。
+    pub fn set_syntax_service(&mut self, service: SharedSyntaxService, cx: &mut Context<Self>) {
+        self.syntax_service = service;
+        // 销毁现有 panel_view，下次 render 时用新服务重建
+        self.panel_view = None;
+        cx.notify();
+    }
+
+    /// 处理节点动作（由 NodeView/PanelView 的回调调用）。
+    pub(crate) fn handle_node_action(
+        &mut self,
+        node_id: NodeId,
+        action: NodeAction,
+        cx: &mut Context<Self>,
+    ) {
+        match action {
+            NodeAction::Delete => self.delete_node(node_id, cx),
+            NodeAction::ToggleCollapse => {
+                if let Some(node) = self.graph.node_mut(node_id) {
+                    let collapsed = node
+                        .data
+                        .get("collapsed")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false);
+                    node.data["collapsed"] = serde_json::json!(!collapsed);
+                }
+                self.relayout();
+                cx.notify();
+            }
+            NodeAction::SetData(key, value) => {
+                if let Some(node) = self.graph.node_mut(node_id) {
+                    node.data[key] = value;
+                }
+                self.sync_node_sizes();
+                self.relayout();
+                cx.notify();
+            }
+        }
+    }
+
+    /// 删除节点：线性桥接 + 级联删边 + 自动重排。
+    ///
+    /// 桥接策略（行业标准，参考 n8n/ReactFlow）：
+    /// - 仅当节点恰好有 1 条入边和 1 条出边时，自动桥接前驱→后继
+    /// - 多端口节点（条件/循环）删除时直接删除所有关联边，不做桥接
+    pub(crate) fn delete_node(&mut self, node_id: NodeId, cx: &mut Context<Self>) {
+        // 收集边信息（避免借用冲突）
+        let in_edges: Vec<(NodeId, Option<PortId>, EdgeType)> = self
+            .graph
+            .in_edges(node_id)
+            .map(|e| (e.source, e.source_port.clone(), e.edge_type))
+            .collect();
+        let out_edges: Vec<(NodeId, Option<PortId>)> = self
+            .graph
+            .out_edges(node_id)
+            .map(|e| (e.target, e.target_port.clone()))
+            .collect();
+
+        // 线性桥接：1 入 1 出 → 创建桥接边
+        if in_edges.len() == 1 && out_edges.len() == 1 {
+            let (src, src_port, edge_type) = &in_edges[0];
+            let (dst, dst_port) = &out_edges[0];
+            let mut bridge = rust_agent_flow::Edge::new(*src, *dst);
+            bridge.source_port = src_port.clone();
+            bridge.target_port = dst_port.clone();
+            bridge.edge_type = *edge_type;
+            self.graph.add_edge(bridge);
+        }
+
+        // 删除节点（级联删除所有关联边）
+        self.graph.remove_node(node_id);
+
+        // 清理选中/悬停状态
+        if self.selected == Some(node_id) {
+            self.selected = None;
+        }
+        if self.hovered == Some(node_id) {
+            self.hovered = None;
+        }
+
+        // 自动重排
+        self.relayout();
+        cx.notify();
+    }
 }
 
 impl Render for FlowEditorView {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let entity = cx.entity();
         let edges = self.render_edges();
-        let nodes = self.render_nodes();
-        let panel = self.render_panel();
+        let nodes = self.render_nodes(entity.clone());
+        let panel = self.ensure_panel_view(entity, window, cx);
         let toolbar = self.render_toolbar(cx);
 
         let offset = self.viewport.offset;
@@ -231,8 +347,15 @@ impl Render for FlowEditorView {
         container = container.child(toolbar);
 
         // ====== 属性面板：不受缩放影响 ======
-        if let Some(panel_el) = panel {
-            container = container.child(panel_el);
+        if let Some(panel_view) = panel {
+            container = container.child(
+                div()
+                    .absolute()
+                    .right_0()
+                    .top_0()
+                    .bottom_0()
+                    .child(panel_view),
+            );
         }
 
         container

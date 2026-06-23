@@ -10,6 +10,8 @@ use gpui::{
 };
 use rust_agent_flow::{NodeId, PortId, PointF};
 
+use crate::node::NodeAction;
+
 use super::flow_editor::FlowEditorView;
 use super::hit_test::HitResult;
 use super::viewport;
@@ -64,6 +66,14 @@ impl FlowEditorView {
                     start_screen,
                     origin: self.viewport.offset,
                 };
+            }
+            (MouseButton::Left, HitResult::DeleteButton(node_id)) => {
+                // 点击删除按钮：删除节点（含线性桥接 + 自动重排）
+                self.delete_node(node_id, cx);
+            }
+            (MouseButton::Left, HitResult::ToggleButton(node_id)) => {
+                // 点击切换按钮：切换展开/收起状态
+                self.handle_node_action(node_id, NodeAction::ToggleCollapse, cx);
             }
             (MouseButton::Left, HitResult::OutPort(node_id, port)) => {
                 self.interaction = InteractionState::DrawingEdge {
@@ -149,7 +159,22 @@ impl FlowEditorView {
                 *cur = logical;
                 cx.notify();
             }
-            InteractionState::Idle => {}
+            InteractionState::Idle => {
+                // 悬停追踪：hit test → 更新 hovered → 通知视图刷新
+                // 用于显示/隐藏删除按钮等 hover 元素
+                let hit = self.hit_test(logical);
+                let new_hovered = match &hit {
+                    HitResult::Node(id)
+                    | HitResult::DeleteButton(id)
+                    | HitResult::ToggleButton(id) => Some(*id),
+                    HitResult::OutPort(id, _) | HitResult::InPort(id, _) => Some(*id),
+                    HitResult::Empty => None,
+                };
+                if new_hovered != self.hovered {
+                    self.hovered = new_hovered;
+                    cx.notify();
+                }
+            }
         }
     }
 

@@ -1,41 +1,47 @@
-//! 命中测试：根据逻辑坐标判断点击的节点/端口/空白区域。
+//! 命中测试：根据逻辑坐标判断点击的节点/端口/按钮/空白区域。
 //!
 //! **多端口支持**：遍历节点 schema 中的所有端口，用 `resolve_port` 计算每个端口的
 //! 精确位置，检查点击是否落在端口的命中区域内（以端口位置为中心的正方形）。
 //!
-//! 命中优先级：端口 > 节点主体 > 空白。
+//! **命中优先级**：端口 > 按钮（删除/切换） > 节点主体 > 空白。
 //! 端口命中区域：以端口位置为中心，边长 `PORT_HIT_WIDTH * 2` 的正方形。
+//! 按钮命中必须在节点主体命中之前检查，否则按钮区域会被节点主体"吞掉"。
 
 use rust_agent_flow::{point_in_rect, NodeId, PortDirection, PortId, PointF, RectF, SizeF};
 
 use super::flow_editor::{FlowEditorView, LayoutDirection};
 use super::ports::{port_position_by_side, resolve_port, PORT_HIT_WIDTH};
+use crate::builtin::common::{BTN_MARGIN, DELETE_BTN_SIZE, TITLE_H, TOGGLE_BTN_SIZE};
 
 /// 命中测试结果。
 pub(crate) enum HitResult {
     /// 空白区域。
     Empty,
-    /// 节点主体（非端口区域）。
+    /// 节点主体（非端口、非按钮区域）。
     Node(NodeId),
     /// 出端口。
     OutPort(NodeId, PortId),
     /// 入端口。
     InPort(NodeId, PortId),
+    /// 删除按钮（仅可删除节点：非 start/end）。
+    DeleteButton(NodeId),
+    /// 展开/收起切换按钮（仅条件/循环节点）。
+    ToggleButton(NodeId),
 }
 
 impl FlowEditorView {
     /// 命中测试：返回点击位置的节点和端口（如果有）。
     ///
-    /// 遍历所有节点，先检查端口命中（精确位置），再检查节点主体命中。
+    /// 遍历所有节点，按优先级检查：端口 > 按钮 > 节点主体。
     pub(crate) fn hit_test(&self, logical: PointF) -> HitResult {
         let layout = self.layout_direction;
 
         for node in self.graph.nodes() {
             let bounds = node.bounds();
 
-            // 1. 检查端口命中（遍历 schema 中的所有端口）
+            // 1. 检查端口命中（遍历节点实例的端口列表，支持动态端口）
             if let Some(flow_node) = self.registry.get(&node.kind) {
-                for port_spec in &flow_node.schema().ports {
+                for port_spec in &flow_node.ports_for_node(node) {
                     let (port_pos, _) = resolve_port(node, &port_spec.id, &self.registry, layout);
                     // 端口命中区域：以端口位置为中心的正方形
                     let hit_rect = RectF::new(
@@ -63,7 +69,38 @@ impl FlowEditorView {
                 }
             }
 
-            // 2. 检查节点主体命中
+            // 2. 检查删除按钮命中（仅可删除节点：非 start/end）
+            if node.kind != "start" && node.kind != "end" {
+                let btn_rect = RectF::new(
+                    PointF::new(
+                        node.position.x + node.size.w - DELETE_BTN_SIZE - BTN_MARGIN,
+                        node.position.y + BTN_MARGIN,
+                    ),
+                    SizeF::new(DELETE_BTN_SIZE, DELETE_BTN_SIZE),
+                );
+                if point_in_rect(logical, btn_rect) {
+                    return HitResult::DeleteButton(node.id);
+                }
+            }
+
+            // 3. 检查切换按钮命中（仅条件/循环节点）
+            if node.kind == "condition" || node.kind == "loop" {
+                let btn_left = node.position.x + node.size.w
+                    - TOGGLE_BTN_SIZE
+                    - BTN_MARGIN
+                    - TOGGLE_BTN_SIZE
+                    - BTN_MARGIN;
+                let btn_top = node.position.y + (TITLE_H - TOGGLE_BTN_SIZE) * 0.5;
+                let btn_rect = RectF::new(
+                    PointF::new(btn_left, btn_top),
+                    SizeF::new(TOGGLE_BTN_SIZE, TOGGLE_BTN_SIZE),
+                );
+                if point_in_rect(logical, btn_rect) {
+                    return HitResult::ToggleButton(node.id);
+                }
+            }
+
+            // 4. 检查节点主体命中
             if point_in_rect(logical, bounds) {
                 return HitResult::Node(node.id);
             }

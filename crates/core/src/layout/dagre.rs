@@ -139,14 +139,11 @@ impl LayoutEngine for DagreLayout {
 
         // Post-process: reserve space for Loop back-edge routing.
         //
-        // The loop back-edge routes around the body group:
-        // - Horizontal: BELOW (down → left → up → right), occupying vertical
-        //   space below the body group.
-        // - Vertical: LEFT (left → up → right), occupying horizontal space
-        //   to the left of the body group.
-        // dagre doesn't know about this routing, so nodes may overlap the
-        // back-edge. This step shifts nodes in the back-edge's routing
-        // direction to clear the path.
+        // The loop back-edge routes BELOW the body group in BOTH layouts
+        // (down → left → up → right), occupying vertical space below the
+        // body group. dagre doesn't know about this routing, so nodes may
+        // overlap the back-edge. This step shifts nodes below the body
+        // group down to clear the path.
         reserve_loop_back_edge_space(graph, &mut positions, direction);
 
         // Post-process: align the Loop node with its incoming source nodes
@@ -287,26 +284,25 @@ const BACK_EDGE_RESERVE: f32 = 100.0;
 /// Reserve space for Loop back-edge routing by shifting nodes in the back-edge's
 /// routing direction.
 ///
-/// **Horizontal layout**: back-edge routes BELOW the body group
+/// **Both layouts**: back-edge routes BELOW the body group
 /// (down → left → up → right). Shifts all non-body, non-Loop nodes whose Y is
 /// below the body group's bottom Y down by `BACK_EDGE_RESERVE`.
 ///
-/// **Vertical layout**: back-edge routes to the LEFT of the body group
-/// (left → up → right). Shifts all non-body, non-Loop nodes whose X is left of
-/// the body group's left X further left by `BACK_EDGE_RESERVE`.
+/// This is consistent with `loop_back_path` (always 5-point below-routing)
+/// and `align_loop_body_target` (always stacks body nodes to the RIGHT of
+/// the Loop, vertically), so the vertical layout uses the same algorithm as
+/// the horizontal layout.
 ///
 /// **Algorithm**:
 /// 1. Find all Loop nodes (sources of `loop_body` edges).
 /// 2. BFS-expand each body group (forward edges, excluding `loop_in`
 ///    back-edges and edges back to the Loop node).
-/// 3. Compute the body group's boundary (bottom Y for horizontal, left X for
-///    vertical) from dagre positions.
-/// 4. Shift all nodes beyond this boundary (excluding body + Loop) in the
-///    routing direction.
+/// 3. Compute the body group's bottom Y from dagre positions.
+/// 4. Shift all nodes below this boundary (excluding body + Loop) down.
 fn reserve_loop_back_edge_space(
     graph: &FlowGraph,
     positions: &mut std::collections::HashMap<crate::graph::NodeId, PointF>,
-    direction: LayoutDirection,
+    _direction: LayoutDirection,
 ) {
     // Use the shared BFS body group computation (single source of truth).
     let loop_groups = graph.loop_body_groups();
@@ -315,71 +311,36 @@ fn reserve_loop_back_edge_space(
         return;
     }
 
-    // For each Loop, shift nodes in the back-edge routing direction.
+    // For each Loop, shift nodes BELOW the body group down (both layouts).
     for (loop_node, body_nodes) in &loop_groups {
-        match direction {
-            LayoutDirection::Horizontal => {
-                // Horizontal: shift nodes BELOW the body group down.
-                let body_bottom = body_nodes
-                    .iter()
-                    .filter_map(|nid| {
-                        let pos = positions.get(nid)?;
-                        let node = graph.node(*nid)?;
-                        Some(pos.y + node.size.h)
-                    })
-                    .fold(f32::MIN, f32::max);
+        // Body group bottom Y = max(body_node.y + body_node.h)
+        let body_bottom = body_nodes
+            .iter()
+            .filter_map(|nid| {
+                let pos = positions.get(nid)?;
+                let node = graph.node(*nid)?;
+                Some(pos.y + node.size.h)
+            })
+            .fold(f32::MIN, f32::max);
 
-                let loop_bottom = match (positions.get(loop_node), graph.node(*loop_node)) {
-                    (Some(pos), Some(node)) => pos.y + node.size.h,
-                    _ => continue,
-                };
+        let loop_bottom = match (positions.get(loop_node), graph.node(*loop_node)) {
+            (Some(pos), Some(node)) => pos.y + node.size.h,
+            _ => continue,
+        };
 
-                let group_bottom = body_bottom.max(loop_bottom);
+        let group_bottom = body_bottom.max(loop_bottom);
 
-                let nodes_to_shift: Vec<crate::graph::NodeId> = positions
-                    .iter()
-                    .filter(|(nid, pos)| {
-                        !body_nodes.contains(nid) && **nid != *loop_node && pos.y > group_bottom
-                    })
-                    .map(|(nid, _)| *nid)
-                    .collect();
+        let nodes_to_shift: Vec<crate::graph::NodeId> = positions
+            .iter()
+            .filter(|(nid, pos)| {
+                !body_nodes.contains(nid) && **nid != *loop_node && pos.y > group_bottom
+            })
+            .map(|(nid, _)| *nid)
+            .collect();
 
-                for nid in nodes_to_shift {
-                    if let Some(pos) = positions.get_mut(&nid) {
-                        pos.y += BACK_EDGE_RESERVE;
-                    }
-                }
-            }
-            LayoutDirection::Vertical => {
-                // Vertical: shift nodes LEFT of the body group further left.
-                let body_left = body_nodes
-                    .iter()
-                    .filter_map(|nid| {
-                        let pos = positions.get(nid)?;
-                        Some(pos.x)
-                    })
-                    .fold(f32::MAX, f32::min);
-
-                let loop_left = match (positions.get(loop_node), graph.node(*loop_node)) {
-                    (Some(pos), _) => pos.x,
-                    _ => continue,
-                };
-
-                let group_left = body_left.min(loop_left);
-
-                let nodes_to_shift: Vec<crate::graph::NodeId> = positions
-                    .iter()
-                    .filter(|(nid, pos)| {
-                        !body_nodes.contains(nid) && **nid != *loop_node && pos.x < group_left
-                    })
-                    .map(|(nid, _)| *nid)
-                    .collect();
-
-                for nid in nodes_to_shift {
-                    if let Some(pos) = positions.get_mut(&nid) {
-                        pos.x -= BACK_EDGE_RESERVE;
-                    }
-                }
+        for nid in nodes_to_shift {
+            if let Some(pos) = positions.get_mut(&nid) {
+                pos.y += BACK_EDGE_RESERVE;
             }
         }
     }
@@ -392,11 +353,11 @@ fn reserve_loop_back_edge_space(
 /// This constant is duplicated here because core crate cannot depend on gpui.
 const LOOP_TITLE_MID_Y: f32 = 18.0;
 
-/// Loop node `loop_body` port X ratio for vertical layout.
-///
-/// `loop_body` port is at `(x + w * 0.25, bottom)` in vertical layout,
-/// offset from center to avoid overlapping with `done` port at `(mid_x, bottom)`.
-const LOOP_BODY_PORT_X_RATIO: f32 = 0.25;
+/// Horizontal gap between Loop node and the first body node (to its right).
+const LOOP_BODY_GAP: f32 = 80.0;
+
+/// Vertical separation between stacked body nodes.
+const LOOP_BODY_VSEP: f32 = 50.0;
 
 /// Align the Loop node's `done` target with the `done` port position to
 /// eliminate unnecessary bends in the done edge.
@@ -534,63 +495,86 @@ fn align_loop_in_sources(
     }
 }
 
-/// Align the Loop node's `loop_body` target with the `loop_body` port position
-/// to eliminate unnecessary bends in the body entry edge.
+/// Reposition the Loop's entire body group: place all body nodes to the
+/// RIGHT of the Loop, stacked vertically (top-to-bottom).
 ///
-/// After dagre layout, the first body node may be at a different cross-axis
-/// position than the Loop's `loop_body` port, causing the loop_body edge to
-/// bend. This step aligns the body target's cross-axis position with the
-/// loop_body port.
+/// **Both layouts** use the same positioning:
+/// 1. The first body node (target of `loop_body` edge) is placed to the
+///    RIGHT of the Loop, with its Top port Y at the Loop's BOTTOM
+///    (`loop_pos.y + loop_node.size.h`). This ensures the `loop_body` edge
+///    exits RIGHT from the Loop and bends DOWN into the body node's Top
+///    port (右出-下拐), rather than being a horizontal line at the same Y.
+/// 2. Each subsequent body node is placed directly below the previous one
+///    with `LOOP_BODY_VSEP` vertical gap.
 ///
-/// Port positions:
-/// - Horizontal: `loop_body` at `(right, body_mid_y)` = `(x + w, y + 58)`
-///   Body uses Left port (default): entry at `(body_x, body_y + body_h / 2)`
-///   Straight: `body_y + body_h / 2 = loop_y + 58`
-/// - Vertical: `loop_body` at `(x + w * 0.25, bottom)` = `(x + w*0.25, y + 80)`
-///   Body uses Top port (forced): entry at `(body_x + body_w / 2, body_y)`
-///   Straight: `body_x + body_w / 2 = loop_x + loop_w * 0.25`
+/// This produces a vertical body sub-flow (上进下出) regardless of the main
+/// layout direction, matching the `force_src_bottom`/`force_dst_top` port
+/// forcing in the rendering layer.
 fn align_loop_body_target(
     graph: &FlowGraph,
     positions: &mut std::collections::HashMap<crate::graph::NodeId, PointF>,
-    direction: LayoutDirection,
+    _direction: LayoutDirection,
 ) {
-    for edge in graph.edges() {
-        if edge.source_port.as_deref() != Some("loop_body") {
-            continue;
-        }
-        let loop_node = match graph.node(edge.source) {
+    let loop_groups = graph.loop_body_groups();
+
+    for (loop_node_id, body_nodes) in &loop_groups {
+        let loop_node = match graph.node(*loop_node_id) {
             Some(n) => n,
             None => continue,
         };
-        let target_node = match graph.node(edge.target) {
-            Some(n) => n,
-            None => continue,
-        };
-        let loop_pos = match positions.get(&edge.source) {
+        let loop_pos = match positions.get(loop_node_id) {
             Some(p) => *p,
             None => continue,
         };
-        let target_pos = match positions.get_mut(&edge.target) {
-            Some(p) => p,
+
+        // Find the first body node (target of loop_body edge)
+        let first_body_id = match graph
+            .edges()
+            .find(|e| e.source == *loop_node_id && e.source_port.as_deref() == Some("loop_body"))
+        {
+            Some(e) => e.target,
             None => continue,
         };
 
-        match direction {
-            LayoutDirection::Horizontal => {
-                // 循环体节点始终从 Top 进入（纵向编排），无论主布局方向。
-                // loop_body port X = loop_pos.x + loop_w * LOOP_BODY_PORT_X_RATIO
-                // Body Top port X = target_pos.x + target.w / 2
-                // Straight: target_pos.x + target.w / 2 = loop_pos.x + loop_w * RATIO
-                target_pos.x = loop_pos.x + loop_node.size.w * LOOP_BODY_PORT_X_RATIO
-                    - target_node.size.w * 0.5;
+        // Position the first body node to the RIGHT of the Loop, at the Loop's
+        // bottom Y level (右下角). This makes the loop_body edge go RIGHT then
+        // DOWN (右出-下拐) from the loop_body port (Y = loop_pos.y + 58) to the
+        // body node's Top port (Y = loop_pos.y + loop_node.size.h).
+        let body_x = loop_pos.x + loop_node.size.w + LOOP_BODY_GAP;
+        let mut current_y = loop_pos.y + loop_node.size.h;
+
+        // Follow the body chain and stack vertically
+        let mut current_id = first_body_id;
+        let mut visited = std::collections::HashSet::new();
+
+        loop {
+            // Prevent infinite loops on cyclic body graphs
+            if !visited.insert(current_id) {
+                break;
             }
-            LayoutDirection::Vertical => {
-                // loop_body port X = loop_pos.x + loop_w * LOOP_BODY_PORT_X_RATIO
-                // Body Top port X = target_pos.x + target.w / 2
-                // Straight: target_pos.x + target.w / 2 = loop_pos.x + loop_w * RATIO
-                target_pos.x = loop_pos.x + loop_node.size.w * LOOP_BODY_PORT_X_RATIO
-                    - target_node.size.w * 0.5;
+
+            let current_node = match graph.node(current_id) {
+                Some(n) => n,
+                None => break,
+            };
+            let current_height = current_node.size.h;
+
+            if let Some(pos) = positions.get_mut(&current_id) {
+                pos.x = body_x;
+                pos.y = current_y;
             }
+
+            // Find next body node in the chain (forward edge within body group)
+            let next_id = match graph
+                .edges()
+                .find(|e| e.source == current_id && body_nodes.contains(&e.target))
+            {
+                Some(e) => e.target,
+                None => break,
+            };
+
+            current_id = next_id;
+            current_y += current_height + LOOP_BODY_VSEP;
         }
     }
 }

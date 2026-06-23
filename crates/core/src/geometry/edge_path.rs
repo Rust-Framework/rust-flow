@@ -421,59 +421,41 @@ pub fn smoothstep_path(
 /// Loop back-edge routing: orthogonal U-shape path from the last loop body
 /// node back to the Loop node's `loop_in` port.
 ///
-/// **Horizontal layout** (5-point path, routes BELOW the body group):
+/// **Both layouts** use the same 5-point path (routes BELOW the body group):
 /// `src → (src.x, bottom_y) → (approach_x, bottom_y) → (approach_x, dst.y) → dst`
-/// Goes DOWN → LEFT → UP → RIGHT. The source exits from its BOTTOM side
-///（下出，因为循环体节点始终纵向编排），and the path loops below the body
-/// group to enter the Loop's `loop_in` port from the LEFT（左进）.
+/// Goes DOWN → LEFT → UP → RIGHT.
 ///
-/// **Vertical layout** (4-point path, routes to the LEFT of the body group):
-/// `src → (left_x, src.y) → (left_x, dst.y) → dst`
-/// Goes LEFT → UP → RIGHT, avoiding the `done` edge which goes straight DOWN
-/// from the Loop node's bottom center. Routing left (instead of below) prevents
-/// the back-edge's horizontal segment from crossing the done edge.
+/// - Source exits from its BOTTOM side（下出，循环体节点始终纵向编排）
+/// - Path loops below the body group
+/// - Enters the Loop's `loop_in` port from the LEFT（左进）
 ///
 /// `node_bounds` should include the loop body area (Loop node + all loop body
 /// nodes), so the path clears everything when routing around.
+///
+/// `horizontal` parameter is kept for API compatibility but no longer affects
+/// the path — both layouts use the same below-routing algorithm.
 pub fn loop_back_path(
     src: PointF,
     dst: PointF,
-    horizontal: bool,
+    _horizontal: bool,
     node_bounds: crate::geometry::RectF,
 ) -> Vec<PointF> {
     // approach_offset must exceed border_radius (12) + arrow_size (8) = 20.
     // Using 30 gives a 18px final segment after rounding, ample for the arrow.
     let approach_offset = 30.0;
 
-    if horizontal {
-        // Horizontal: DOWN → LEFT → UP → RIGHT (5-point U-shape below body group)
-        // Source exits BOTTOM from the body node (循环体始终纵向编排),
-        // loops below, enters loop_in from LEFT.
-        let bottom_margin = 40.0;
-        // bottom_y must be below both the node bounds and the source point
-        let bottom_y = node_bounds.bottom().max(src.y) + bottom_margin;
-        let approach_x = dst.x - approach_offset;
-        vec![
-            src,
-            PointF::new(src.x, bottom_y),
-            PointF::new(approach_x, bottom_y),
-            PointF::new(approach_x, dst.y),
-            dst,
-        ]
-    } else {
-        // Vertical: LEFT → UP → RIGHT (4-point U-shape on left side)
-        // Routes LEFT of the body group to avoid crossing the done edge
-        // (which goes straight DOWN from the Loop node's bottom center).
-        let left_margin = 40.0;
-        // left_x must be left of both the body group and the loop_in port (dst)
-        let left_x = node_bounds.left().min(dst.x) - left_margin - approach_offset;
-        vec![
-            src,
-            PointF::new(left_x, src.y),
-            PointF::new(left_x, dst.y),
-            dst,
-        ]
-    }
+    // Both layouts: DOWN → LEFT → UP → RIGHT (5-point U-shape below body group)
+    let bottom_margin = 40.0;
+    // bottom_y must be below both the node bounds and the source point
+    let bottom_y = node_bounds.bottom().max(src.y) + bottom_margin;
+    let approach_x = dst.x - approach_offset;
+    vec![
+        src,
+        PointF::new(src.x, bottom_y),
+        PointF::new(approach_x, bottom_y),
+        PointF::new(approach_x, dst.y),
+        dst,
+    ]
 }
 
 #[cfg(test)]
@@ -564,18 +546,20 @@ mod tests {
     }
 
     #[test]
-    fn loop_back_vertical_routes_left() {
+    fn loop_back_vertical_routes_below() {
+        // Both layouts now route BELOW (5-point path).
         let bounds = crate::geometry::RectF::new(
             PointF::new(100.0, 100.0),
-            crate::geometry::SizeF::new(180.0, 80.0), // left=100, right=280
+            crate::geometry::SizeF::new(180.0, 80.0),
         );
-        // Vertical layout: path must route to the LEFT of the node bounds.
         let src = PointF::new(190.0, 300.0);
         let dst = PointF::new(100.0, 140.0);
         let pts = loop_back_path(src, dst, false, bounds);
-        let left = bounds.left().min(dst.x);
-        let has_left = pts.iter().any(|p| p.x <= left);
-        assert!(has_left, "vertical U-shape must route to the left of the node");
+        let bottom = bounds.bottom().max(src.y);
+        let has_below = pts.iter().any(|p| p.y >= bottom);
+        assert!(has_below, "vertical U-shape must route below the node");
+        // 5 points for both layouts
+        assert_eq!(pts.len(), 5, "vertical path should have 5 points (down→left→up→right)");
         // Endpoints preserved.
         assert_eq!(*pts.first().unwrap(), src);
         assert_eq!(*pts.last().unwrap(), dst);
@@ -614,26 +598,21 @@ mod tests {
     }
 
     #[test]
-    fn loop_back_vertical_uses_4_point_left_route() {
-        // Vertical layout: path routes LEFT → UP → RIGHT (4-point U-shape).
-        // left_x = min(bounds.left, dst.x) - left_margin - approach_offset
-        //        = min(100, 100) - 40 - 30 = 30
+    fn loop_back_vertical_exits_bottom() {
+        // Both layouts: src exits BOTTOM (下出), 5-point U-shape.
         let bounds = crate::geometry::RectF::new(
             PointF::new(100.0, 100.0),
-            crate::geometry::SizeF::new(180.0, 80.0), // left=100
+            crate::geometry::SizeF::new(180.0, 80.0),
         );
-        let src = PointF::new(190.0, 300.0); // body bottom, inside Loop's x range
-        let dst = PointF::new(100.0, 140.0); // loop_in port on left side
+        let src = PointF::new(190.0, 300.0);
+        let dst = PointF::new(100.0, 140.0);
         let pts = loop_back_path(src, dst, false, bounds);
-        // 4 points: src, (left_x, src.y), (left_x, dst.y), dst
-        assert_eq!(pts.len(), 4, "vertical path should have 4 points (left→up→right)");
-        // Second point should be directly left of src (same y) — "left" segment.
-        assert_eq!(pts[1].y, src.y, "second point should be at same y as src");
-        // left_x = 100 - 40 - 30 = 30
-        assert_eq!(pts[1].x, 30.0, "second point x should be left of bounds");
-        // Third point should be at left_x, dst.y — "up" segment.
-        assert_eq!(pts[2].x, pts[1].x, "third point x should equal left_x");
-        assert_eq!(pts[2].y, dst.y, "third point y should equal dst.y");
+        // 5 points: src, (src.x, bottom_y), (approach_x, bottom_y),
+        // (approach_x, dst.y), dst
+        assert_eq!(pts.len(), 5, "vertical path should have 5 points");
+        // Second point should be directly below src (same x) — "bottom" exit.
+        assert_eq!(pts[1].x, src.x, "second point should be at same x as src");
+        assert!(pts[1].y > src.y, "second point should be below src");
     }
 
     #[test]

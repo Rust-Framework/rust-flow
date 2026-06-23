@@ -62,7 +62,10 @@ use rust_agent_flow::{
 
 use crate::node::{NodeViewCtx, IFlowNode};
 
-use super::common::{label_of, make_port, port_sizes, render_simple_panel};
+use super::common::{
+    label_of, make_port, port_sizes, render_collapse_pill, render_delete_button,
+    render_simple_panel, render_toggle_button, BTN_MARGIN, TOGGLE_BTN_SIZE,
+};
 
 /// 标题栏高度（逻辑坐标）。
 const TITLE_H: f32 = 36.0;
@@ -72,6 +75,14 @@ const TITLE_H: f32 = 36.0;
 /// 这是节点内部布局的基本单位：所有条件项行、端口位置均基于此常量计算，
 /// 与 `node.size.h` 无关。节点总高度由内容推导：`TITLE_H + ITEM_H * n_branches`。
 const ITEM_H: f32 = 36.0;
+
+/// 判断节点是否处于收起状态。
+fn is_collapsed(node: &Node) -> bool {
+    node.data
+        .get("collapsed")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+}
 
 /// Condition 节点：条件分支，结构化布局。
 ///
@@ -146,8 +157,13 @@ impl IFlowNode for ConditionNode {
     fn get_view(&self, node: &Node, ctx: &mut NodeViewCtx) -> AnyElement {
         let s = ctx.scale;
         let w = node.size.w * s;
-        // 使用内容推导高度，而非 node.size.h（保证内部布局独立性）
-        let h = content_height(node) * s;
+        let collapsed = is_collapsed(node);
+        // 收起状态高度 = TITLE_H；展开状态高度 = content_height
+        let h = if collapsed {
+            TITLE_H * s
+        } else {
+            content_height(node) * s
+        };
         let title_h = TITLE_H * s;
         let item_h = ITEM_H * s;
         let conditions = get_conditions(node);
@@ -175,6 +191,108 @@ impl IFlowNode for ConditionNode {
         // 外层容器（不使用 overflow_hidden，避免裁剪半外露的端口圆圈）
         let mut container = div().relative().w(px(w)).h(px(h));
 
+        // ====== 收起状态：仅标题栏 + 合并出口 + "..." 胶囊 ======
+        if collapsed {
+            // 标题栏（圆角完整，因为只有一行）
+            container = container.child(
+                div()
+                    .absolute()
+                    .top_0()
+                    .left_0()
+                    .w(px(w))
+                    .h(px(title_h))
+                    .bg(t.cond_title_bg)
+                    .rounded_lg()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .child(
+                        div()
+                            .text_size(px(14.0 * s))
+                            .font_semibold()
+                            .text_color(t.cond_title_text)
+                            .child(label),
+                    ),
+            );
+
+            // "..." 胶囊（label 右侧，提示收起状态）
+            // 位置：标题栏中心偏右，避开 toggle/delete 按钮区域
+            let pill_left = w * 0.5 - 12.0 * s;
+            let pill_top = (title_h - 16.0 * s) * 0.5;
+            container = container.child(render_collapse_pill(pill_left, pill_top, s, t));
+
+            // 边框
+            container = container.child(
+                div()
+                    .absolute()
+                    .top_0()
+                    .left_0()
+                    .w(px(w))
+                    .h(px(h))
+                    .border_1()
+                    .border_color(border_color)
+                    .rounded_lg(),
+            );
+
+            // 端口：In 入口 + 合并出口（所有 out 端口共用一个位置）
+            let mid_x = w * 0.5;
+            match layout {
+                LayoutDirection::Horizontal => {
+                    // In 端口（标题栏左侧中心）
+                    container = container.child(make_port(
+                        -port_outer_half,
+                        title_h * 0.5 - port_outer_half,
+                        port_outer,
+                        port_size,
+                        in_ring,
+                        in_dot,
+                        t.port_bg,
+                    ));
+                    // 合并出口（标题栏右侧中心）— 使用 if 颜色
+                    container = container.child(make_port(
+                        w - port_outer_half,
+                        title_h * 0.5 - port_outer_half,
+                        port_outer,
+                        port_size,
+                        if_ring,
+                        if_dot,
+                        t.port_bg,
+                    ));
+                }
+                LayoutDirection::Vertical => {
+                    // In 端口（标题栏顶部中心）
+                    container = container.child(make_port(
+                        mid_x - port_outer_half,
+                        -port_outer_half,
+                        port_outer,
+                        port_size,
+                        in_ring,
+                        in_dot,
+                        t.port_bg,
+                    ));
+                    // 合并出口（标题栏底部中心）
+                    container = container.child(make_port(
+                        mid_x - port_outer_half,
+                        title_h - port_outer_half,
+                        port_outer,
+                        port_size,
+                        if_ring,
+                        if_dot,
+                        t.port_bg,
+                    ));
+                }
+            }
+
+            // toggle 按钮（▷，点击展开）
+            container = container.child(render_toggle_button(node.size.w, s, true, t));
+            // delete 按钮（hover 时显示）
+            if ctx.hovered {
+                container = container.child(render_delete_button(node.size.w, s, t));
+            }
+            return container.into_any_element();
+        }
+
+        // ====== 展开状态：标题栏 + 条件项行 + else 行 + 各端口 ======
         // 标题栏（橙色背景，顶部圆角对齐容器圆角）— 仅 In 入口，无出口
         container = container.child(
             div()
@@ -347,6 +465,13 @@ impl IFlowNode for ConditionNode {
             }
         }
 
+        // toggle 按钮（▽，点击收起）
+        container = container.child(render_toggle_button(node.size.w, s, false, t));
+        // hover 时叠加删除按钮
+        if ctx.hovered {
+            container = container.child(render_delete_button(node.size.w, s, t));
+        }
+
         container.into_any_element()
     }
 
@@ -358,21 +483,60 @@ impl IFlowNode for ConditionNode {
         &self.schema
     }
 
+    /// 根据 node.data["conditions"] 动态生成端口列表。
+    ///
+    /// 端口列表 = in + else + if_0, if_1, ...（按 conditions 数组长度）
+    fn ports_for_node(&self, node: &Node) -> Vec<rust_agent_flow::PortSpec> {
+        let conditions = get_conditions(node);
+        let mut ports = vec![
+            PortSpec::new("in", PortDirection::In, PortSide::Auto),
+            PortSpec::new("else", PortDirection::Out, PortSide::Auto),
+        ];
+        for (id, _) in &conditions {
+            ports.push(PortSpec::new(
+                id.as_str(),
+                PortDirection::Out,
+                PortSide::Auto,
+            ));
+        }
+        ports
+    }
+
     fn port_position(
         &self,
         node: &Node,
         port_id: &PortId,
         layout: LayoutDirection,
     ) -> Option<PointF> {
-        let n_br = n_branches(node);
-        let n_cond = get_conditions(node).len();
+        let collapsed = is_collapsed(node);
         let left = node.position.x;
         let right = node.position.x + node.size.w;
         let top = node.position.y;
-        // 使用内容推导高度，保证端口位置与实际渲染高度一致
-        let bottom = node.position.y + content_height(node);
         let mid_x = node.position.x + node.size.w * 0.5;
         let title_mid_y = node.position.y + TITLE_H * 0.5;
+
+        // ====== 收起状态：所有 out 端口合并到标题栏边缘 ======
+        if collapsed {
+            return match port_id.as_str() {
+                "in" => match layout {
+                    LayoutDirection::Horizontal => Some(PointF::new(left, title_mid_y)),
+                    LayoutDirection::Vertical => Some(PointF::new(mid_x, top)),
+                },
+                // 所有 out 端口（if_0, if_1, ..., else）合并到标题栏右边缘垂直居中
+                _ => match layout {
+                    LayoutDirection::Horizontal => Some(PointF::new(right, title_mid_y)),
+                    LayoutDirection::Vertical => {
+                        Some(PointF::new(mid_x, node.position.y + TITLE_H))
+                    }
+                },
+            };
+        }
+
+        // ====== 展开状态：保持现有逻辑 ======
+        let n_br = n_branches(node);
+        let n_cond = get_conditions(node).len();
+        // 使用内容推导高度，保证端口位置与实际渲染高度一致
+        let bottom = node.position.y + content_height(node);
 
         match port_id.as_str() {
             // In：横向左侧中心 / 纵向顶部中心
@@ -415,11 +579,17 @@ impl IFlowNode for ConditionNode {
         }
     }
 
-    /// Condition 节点的实际渲染高度随条件项数量变化：
-    /// `TITLE_H + ITEM_H * n_branches`（n_branches = 条件数 + 1 个 else）。
+    /// Condition 节点的实际渲染高度：
+    /// - 收起状态：`TITLE_H`（仅标题栏）
+    /// - 展开状态：`TITLE_H + ITEM_H * n_branches`（n_branches = 条件数 + 1 个 else）
     ///
     /// 宽度保持 `node.size.w`（由 schema default_size 或创建时指定）。
     fn content_size(&self, node: &Node) -> SizeF {
-        SizeF::new(node.size.w, content_height(node))
+        let h = if is_collapsed(node) {
+            TITLE_H
+        } else {
+            content_height(node)
+        };
+        SizeF::new(node.size.w, h)
     }
 }

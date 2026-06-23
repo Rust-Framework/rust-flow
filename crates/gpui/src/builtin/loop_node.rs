@@ -1,8 +1,8 @@
 //! Loop 节点：循环体，结构化布局。
 //!
-//! **设计语义**（以纵向布局为主要标准）：
-//! - **纵向**：In 顶 / Done 底（主线），LoopBody 右 / LoopIn 左（循环体支线）
-//! - **横向**：In 左 / Done 右（主线），LoopBody 右 / LoopIn 左（循环体支线，固定）
+//! **设计语义**（两种布局一致）：
+//! - 主线：纵向 In 顶 / Done 底；横向 In 左 / Done 右
+//! - 循环体支线：LoopBody 始终右出，LoopIn 始终左进（两种布局一致）
 //!
 //! **外部回环连线**：从 LoopBody 出口 → 外部循环体节点 → 回连到 LoopIn 入口。
 //! 循环体节点始终纵向编排（上进下出），无论主布局方向。
@@ -17,7 +17,7 @@
 //! ├────────────────────────────┤
 //! │      For each item          │  循环条件区域 h=44
 //! └──┬─────────────────────┬───┘
-//!    │ LoopIn        LoopBody│
+//!    │ LoopIn        LoopBody│──→ (body 节点，上进下出)
 //!    ↑                      ↓ Done
 //! ```
 //!
@@ -28,11 +28,10 @@
 //!       │ ├────────────────────────────┤ │
 //!       │ │      For each item          │ │
 //!       │ └──┬─────────────────────┬───┘ │
-//!       │    │ LoopIn        LoopBody│   │
-//!       │    ↑                      ↓    │
-//!       │    │           (→ body node 上进下出 →)
-//!       └────┘ ┌─────────────────────────────┐
-//!              │   回环边从 body 底部出，向下绕过，左进 loop_in
+//!       │    │ LoopIn        LoopBody│──→ (body 节点，上进下出)
+//!       │    ↑                      │
+//!       │    │           回环边从 body 底部出，向下绕过，左进 loop_in
+//!       └────┘
 //! ```
 
 use gpui::{div, px, AnyElement, IntoElement, ParentElement, Styled};
@@ -43,7 +42,10 @@ use rust_agent_flow::{
 
 use crate::node::{NodeViewCtx, IFlowNode};
 
-use super::common::{desc_of, label_of, make_port, port_sizes, render_simple_panel};
+use super::common::{
+    desc_of, label_of, make_port, port_sizes, render_collapse_pill, render_delete_button,
+    render_simple_panel, render_toggle_button,
+};
 
 /// 标题栏高度（逻辑坐标）。
 const TITLE_H: f32 = 36.0;
@@ -52,6 +54,14 @@ const TITLE_H: f32 = 36.0;
 ///
 /// 节点总高度 = `TITLE_H + BODY_H`（由内容推导，非输入）。
 const BODY_H: f32 = 44.0;
+
+/// 判断节点是否处于收起状态。
+fn is_collapsed(node: &Node) -> bool {
+    node.data
+        .get("collapsed")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+}
 
 /// Loop 节点：循环体，结构化布局。
 ///
@@ -91,8 +101,13 @@ impl IFlowNode for LoopNode {
     fn get_view(&self, node: &Node, ctx: &mut NodeViewCtx) -> AnyElement {
         let s = ctx.scale;
         let w = node.size.w * s;
-        // 使用固定高度，而非 node.size.h（保证内部布局独立性）
-        let h = (TITLE_H + BODY_H) * s;
+        let collapsed = is_collapsed(node);
+        // 收起状态高度 = TITLE_H；展开状态高度 = TITLE_H + BODY_H
+        let h = if collapsed {
+            TITLE_H * s
+        } else {
+            (TITLE_H + BODY_H) * s
+        };
         let title_h = TITLE_H * s;
         let body_h = BODY_H * s;
         let layout = ctx.layout;
@@ -108,9 +123,119 @@ impl IFlowNode for LoopNode {
             t.loop_border
         };
 
+        // 端口颜色
+        let in_ring = t.loop_in_ring;
+        let in_dot = t.loop_in_dot;
+        let done_ring = t.loop_done_ring;
+        let done_dot = t.loop_done_dot;
+        let body_ring = t.loop_in_ring;
+        let body_dot = t.loop_in_dot;
+        let port_bg = t.port_bg;
+
         // 外层容器（不使用 overflow_hidden，避免裁剪半外露的端口圆圈）
         let mut container = div().relative().w(px(w)).h(px(h));
 
+        // ====== 收起状态：仅标题栏 + 端口堆叠 + "..." 胶囊 ======
+        if collapsed {
+            // 标题栏（圆角完整，因为只有一行）
+            container = container.child(
+                div()
+                    .absolute()
+                    .top_0()
+                    .left_0()
+                    .w(px(w))
+                    .h(px(title_h))
+                    .bg(t.loop_title_bg)
+                    .rounded_lg()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .child(
+                        div()
+                            .text_size(px(14.0 * s))
+                            .font_semibold()
+                            .text_color(t.loop_title_text)
+                            .child(label),
+                    ),
+            );
+
+            // "..." 胶囊（label 右侧，提示收起状态）
+            let pill_left = w * 0.5 - 12.0 * s;
+            let pill_top = (title_h - 16.0 * s) * 0.5;
+            container = container.child(render_collapse_pill(pill_left, pill_top, s, t));
+
+            // 边框
+            container = container.child(
+                div()
+                    .absolute()
+                    .top_0()
+                    .left_0()
+                    .w(px(w))
+                    .h(px(h))
+                    .border_1()
+                    .border_color(border_color)
+                    .rounded_lg(),
+            );
+
+            // 端口：4 个端口垂直堆叠在标题栏两侧
+            // in: 左边缘 Y=12（上），loop_in: 左边缘 Y=24（下）
+            // done: 右边缘 Y=12（上），loop_body: 右边缘 Y=24（下）
+            let left = 0.0f32;
+            let right = w;
+            let y_upper = 12.0 * s - port_outer_half;
+            let y_lower = 24.0 * s - port_outer_half;
+
+            // in 端口（左上）
+            container = container.child(make_port(
+                left - port_outer_half,
+                y_upper,
+                port_outer,
+                port_size,
+                in_ring,
+                in_dot,
+                port_bg,
+            ));
+            // loop_in 端口（左下）
+            container = container.child(make_port(
+                left - port_outer_half,
+                y_lower,
+                port_outer,
+                port_size,
+                body_ring,
+                body_dot,
+                port_bg,
+            ));
+            // done 端口（右上）
+            container = container.child(make_port(
+                right - port_outer_half,
+                y_upper,
+                port_outer,
+                port_size,
+                done_ring,
+                done_dot,
+                port_bg,
+            ));
+            // loop_body 端口（右下）
+            container = container.child(make_port(
+                right - port_outer_half,
+                y_lower,
+                port_outer,
+                port_size,
+                body_ring,
+                body_dot,
+                port_bg,
+            ));
+
+            // toggle 按钮（▷，点击展开）
+            container = container.child(render_toggle_button(node.size.w, s, true, t));
+            // delete 按钮（hover 时显示）
+            if ctx.hovered {
+                container = container.child(render_delete_button(node.size.w, s, t));
+            }
+            return container.into_any_element();
+        }
+
+        // ====== 展开状态：标题栏 + 循环条件区 + 4 端口 ======
         // 标题栏（蓝色背景，顶部圆角对齐容器圆角）
         container = container.child(
             div()
@@ -178,15 +303,6 @@ impl IFlowNode for LoopNode {
         let title_mid_y = title_h * 0.5;
         let body_mid_y = title_h + body_h * 0.5;
 
-        // 端口颜色
-        let in_ring = t.loop_in_ring;
-        let in_dot = t.loop_in_dot;
-        let done_ring = t.loop_done_ring;
-        let done_dot = t.loop_done_dot;
-        let body_ring = t.loop_in_ring;
-        let body_dot = t.loop_in_dot;
-        let port_bg = t.port_bg;
-
         match layout {
             LayoutDirection::Horizontal => {
                 // 主线：In 左 / Done 右（标题栏中心 Y）
@@ -248,12 +364,11 @@ impl IFlowNode for LoopNode {
                     done_dot,
                     port_bg,
                 ));
-                // 循环体支线：LoopBody 底部偏左（w*0.25），LoopIn 左侧
-                // LoopBody 与 Done 都在底部，错开位置避免重叠
-                let body_port_x = w * 0.25;
+                // 循环体支线：LoopBody 右 / LoopIn 左（与横向布局一致）
+                // 循环体始终纵向编排（上进下出），loop_body 右出，loop_in 左进
                 container = container.child(make_port(
-                    body_port_x - port_outer_half,
-                    bottom - port_outer_half,
+                    right - port_outer_half,
+                    body_mid_y - port_outer_half,
                     port_outer,
                     port_size,
                     body_ring,
@@ -270,6 +385,13 @@ impl IFlowNode for LoopNode {
                     port_bg,
                 ));
             }
+        }
+
+        // toggle 按钮（▽，点击收起）
+        container = container.child(render_toggle_button(node.size.w, s, false, t));
+        // hover 时叠加删除按钮
+        if ctx.hovered {
+            container = container.child(render_delete_button(node.size.w, s, t));
         }
 
         container.into_any_element()
@@ -289,13 +411,31 @@ impl IFlowNode for LoopNode {
         port_id: &PortId,
         layout: LayoutDirection,
     ) -> Option<PointF> {
+        let collapsed = is_collapsed(node);
         let left = node.position.x;
         let right = node.position.x + node.size.w;
         let top = node.position.y;
-        // 使用固定高度，保证端口位置与实际渲染高度一致
-        let bottom = node.position.y + TITLE_H + BODY_H;
         let mid_x = node.position.x + node.size.w * 0.5;
         let title_mid_y = node.position.y + TITLE_H * 0.5;
+
+        // ====== 收起状态：4 端口垂直堆叠在标题栏两侧 ======
+        if collapsed {
+            // in: 左边缘 Y=12（上），loop_in: 左边缘 Y=24（下）
+            // done: 右边缘 Y=12（上），loop_body: 右边缘 Y=24（下）
+            let y_upper = node.position.y + 12.0;
+            let y_lower = node.position.y + 24.0;
+            return match port_id.as_str() {
+                "in" => Some(PointF::new(left, y_upper)),
+                "loop_in" => Some(PointF::new(left, y_lower)),
+                "done" => Some(PointF::new(right, y_upper)),
+                "loop_body" => Some(PointF::new(right, y_lower)),
+                _ => None,
+            };
+        }
+
+        // ====== 展开状态：保持现有逻辑 ======
+        // 使用固定高度，保证端口位置与实际渲染高度一致
+        let bottom = node.position.y + TITLE_H + BODY_H;
         let body_mid_y = node.position.y + TITLE_H + BODY_H * 0.5;
 
         match port_id.as_str() {
@@ -308,17 +448,25 @@ impl IFlowNode for LoopNode {
                 LayoutDirection::Horizontal => Some(PointF::new(right, title_mid_y)),
                 LayoutDirection::Vertical => Some(PointF::new(mid_x, bottom)),
             },
-            // 循环体支线：
-            // - 纵向：LoopBody 底部偏左（w*0.25），与 Done（mid_x）错开；LoopIn 左侧入
-            // - 横向：LoopBody 右侧出；LoopIn 左侧入（回环边从 body 底部向下绕回）
-            "loop_body" => match layout {
-                LayoutDirection::Horizontal => Some(PointF::new(right, body_mid_y)),
-                LayoutDirection::Vertical => {
-                    Some(PointF::new(node.position.x + node.size.w * 0.25, bottom))
-                }
-            },
+            // 循环体支线：loop_body 始终右出，loop_in 始终左进（两种布局一致）
+            // 循环体节点纵向编排（上进下出），回环边从 body 底部向下绕回 loop_in
+            "loop_body" => Some(PointF::new(right, body_mid_y)),
             "loop_in" => Some(PointF::new(left, body_mid_y)),
             _ => None,
         }
+    }
+
+    /// Loop 节点的实际渲染高度：
+    /// - 收起状态：`TITLE_H`（仅标题栏）
+    /// - 展开状态：`TITLE_H + BODY_H`
+    ///
+    /// 宽度保持 `node.size.w`（由 schema default_size 或创建时指定）。
+    fn content_size(&self, node: &Node) -> SizeF {
+        let h = if is_collapsed(node) {
+            TITLE_H
+        } else {
+            TITLE_H + BODY_H
+        };
+        SizeF::new(node.size.w, h)
     }
 }

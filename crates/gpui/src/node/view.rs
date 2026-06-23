@@ -9,7 +9,7 @@ use gpui::{AnyElement, App, IntoElement, ParentElement, RenderOnce, Styled, Wind
 use gpui_component::StyledExt;
 use rust_agent_flow::{LayoutDirection, Node};
 
-use super::{IFlowNode, NodeViewCtx};
+use super::{ActionCallback, IFlowNode, NodeViewCtx};
 
 /// 节点视觉配置：供 [`render_node_card`] 使用，描述节点卡片的外观和端口。
 #[derive(Clone)]
@@ -231,6 +231,10 @@ pub struct NodeView {
     pub body_mode: bool,
     /// 主题颜色配置。
     pub theme: crate::theme::Theme,
+    /// 当前节点是否被鼠标悬停。
+    pub hovered: bool,
+    /// 动作回调。
+    pub on_action: Option<ActionCallback>,
 }
 
 impl NodeView {
@@ -244,6 +248,8 @@ impl NodeView {
             layout: LayoutDirection::Horizontal,
             body_mode: false,
             theme: crate::theme::Theme::default(),
+            hovered: false,
+            on_action: None,
         }
     }
 
@@ -286,6 +292,18 @@ impl NodeView {
         self.theme = theme;
         self
     }
+
+    /// 设置悬停状态。
+    pub fn with_hovered(mut self, hovered: bool) -> Self {
+        self.hovered = hovered;
+        self
+    }
+
+    /// 设置动作回调。
+    pub fn with_on_action(mut self, on_action: Option<ActionCallback>) -> Self {
+        self.on_action = on_action;
+        self
+    }
 }
 
 impl RenderOnce for NodeView {
@@ -295,9 +313,11 @@ impl RenderOnce for NodeView {
                 window,
                 cx,
                 selected: self.selected,
+                hovered: self.hovered,
                 scale: self.scale,
                 layout: self.layout,
                 theme: self.theme,
+                on_action: self.on_action,
             };
             flow_node.get_view(&self.node, &mut ctx)
         } else {

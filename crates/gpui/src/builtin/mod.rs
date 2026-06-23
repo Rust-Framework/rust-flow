@@ -12,7 +12,7 @@ use std::sync::Arc;
 use crate::node::NodeRegistry;
 
 mod action;
-mod common;
+pub(crate) mod common;
 mod condition;
 mod end;
 mod loop_node;

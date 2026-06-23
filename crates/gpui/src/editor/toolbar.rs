@@ -90,6 +90,7 @@ impl FlowEditorView {
         let show_grid = self.show_grid;
         let drag_enabled = self.drag_enabled;
         let is_dark = t.is_dark;
+        let grid_spacing = self.grid_spacing;
 
         div()
             .absolute()
@@ -343,6 +344,44 @@ impl FlowEditorView {
                         cx.notify();
                     }))
                     .child("\u{25A6}"), // ▦ grid symbol
+            )
+            // 点阵密度切换（紧凑/标准/稀疏）
+            .child(
+                div()
+                    .id("tb-grid-density")
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .w(px(40.0))
+                    .h(px(28.0))
+                    .rounded_md()
+                    .bg(if show_grid {
+                        t.toolbar_toggle_bg
+                    } else {
+                        TRANSPARENT
+                    })
+                    .hover(|s| s.bg(t.toolbar_toggle_hover_bg))
+                    .text_xs()
+                    .font_medium()
+                    .text_color(if show_grid {
+                        t.toolbar_toggle_text
+                    } else {
+                        t.toolbar_subtext
+                    })
+                    .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, _, cx| {
+                        // 循环切换密度：紧凑(20) → 标准(28) → 稀疏(40) → 紧凑
+                        let new_spacing = match this.grid_spacing as i32 {
+                            20 => 28.0,
+                            28 => 40.0,
+                            _ => 20.0,
+                        };
+                        this.set_grid_spacing(new_spacing, cx);
+                    }))
+                    .child(match grid_spacing as i32 {
+                        20 => "D1",
+                        40 => "D3",
+                        _ => "D2",
+                    }),
             )
             // 拖拽开关
             .child(

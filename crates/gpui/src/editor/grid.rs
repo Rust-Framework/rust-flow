@@ -2,19 +2,24 @@
 //!
 //! 使用 `paint_quad` 绘制每个点（小圆形 quad），利用 GPUI 的
 //! `snap_bounds` + `snapped_content_mask` 机制确保像素对齐渲染。
-//! 之前使用 `paint_path`（PathBuilder::fill）绘制 3px 菱形，
-//! 由于 `paint_path` 不做设备像素对齐，极小路径在 `insert_primitive`
-//! 的 `intersect` 裁剪后可能被判定为空而跳过，导致点阵不可见。
 //!
-//! 点为固定屏幕尺寸，间距随缩放变化。自适应间距限制可见点数量，
-//! 保证平移时帧率稳定。
+//! **缩放同步**：间距和点大小均以**逻辑坐标**为基准，屏幕值 = 逻辑值 ×
+//! `scale`。放大时屏幕间距增大（点变疏）、点变大；缩小时屏幕间距减小
+//!（点变密）、点变小。点阵与节点内容同步缩放。
+//!
+//! **自适应稀疏化**：当缩放极小（屏幕间距 < 8px）时翻倍逻辑间距，限制
+//! 可见点数量保证帧率。
 
 use gpui::{Bounds, Corners, Edges, Pixels, Point, Rgba, Window, quad};
 
-/// 点阵背景间距（逻辑坐标）。
-pub(crate) const GRID_SPACING: f32 = 40.0;
+/// 默认逻辑点阵间距（逻辑坐标）。
+pub(crate) const DEFAULT_GRID_SPACING: f32 = 28.0;
 
 /// 绘制点阵背景。
+///
+/// `logical_spacing` 为逻辑间距（与节点坐标同一空间），屏幕间距 =
+/// `logical_spacing × scale`，随缩放等比变化。点大小同样随缩放等比变化
+///（屏幕直径 = `3.0 × scale`，钳位 ≥ 1.5px 保证可见）。
 ///
 /// 每个点用 `paint_quad` 绘制为小圆形（通过 `corner_radii` = 半径实现）。
 /// `paint_quad` 内部使用 `snap_bounds`（对齐设备像素）和
@@ -25,6 +30,7 @@ pub(crate) const GRID_SPACING: f32 = 40.0;
 pub(crate) fn paint_grid(
     bounds: Bounds<Pixels>,
     scale: f32,
+    logical_spacing: f32,
     offset: Point<Pixels>,
     dot_color: Rgba,
     window: &mut Window,
@@ -32,16 +38,17 @@ pub(crate) fn paint_grid(
     let w = bounds.size.width.as_f32();
     let h = bounds.size.height.as_f32();
     // 防御：无效 bounds 不绘制
-    if w <= 0.0 || h <= 0.0 || scale <= 0.0 {
+    if w <= 0.0 || h <= 0.0 || scale <= 0.0 || logical_spacing <= 0.0 {
         return;
     }
 
     let ox = offset.x.as_f32();
     let oy = offset.y.as_f32();
 
-    // 自适应间距：屏幕间距过小时翻倍
-    let mut spacing = GRID_SPACING;
-    while spacing * scale < 20.0 {
+    // 逻辑间距固定，屏幕间距 = 逻辑间距 × scale（跟随缩放）
+    let mut spacing = logical_spacing;
+    // 自适应稀疏化：屏幕间距过小时翻倍逻辑间距，限制可见点数量
+    while spacing * scale < 8.0 {
         spacing *= 2.0;
     }
 
@@ -54,8 +61,8 @@ pub(crate) fn paint_grid(
     let start_x = (min_lx / spacing).floor() * spacing;
     let start_y = (min_ly / spacing).floor() * spacing;
 
-    // 点的屏幕尺寸（直径 3px，半径 1.5px）
-    let dot_size = 3.0_f32;
+    // 点的屏幕尺寸随缩放等比变化（逻辑直径 3px × scale），钳位保证可见
+    let dot_size = (3.0 * scale).max(1.5);
     let half = dot_size / 2.0;
 
     let mut gy = start_y;

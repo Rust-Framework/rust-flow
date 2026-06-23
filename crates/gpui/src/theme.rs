@@ -98,6 +98,20 @@ pub struct Theme {
     pub panel_label_text: Rgba,
     pub panel_subtext: Rgba,
 
+    // ====== 节点按钮 ======
+    /// 删除按钮背景色。
+    pub delete_btn_bg: Rgba,
+    /// 删除按钮文字色。
+    pub delete_btn_text: Rgba,
+    /// 切换按钮背景色。
+    pub toggle_btn_bg: Rgba,
+    /// 切换按钮文字色。
+    pub toggle_btn_text: Rgba,
+    /// 收起状态"..."胶囊背景色。
+    pub collapse_pill_bg: Rgba,
+    /// 收起状态"..."胶囊文字色。
+    pub collapse_pill_text: Rgba,
+
     // ====== 工具栏 ======
     pub toolbar_bg: Rgba,
     pub toolbar_border: Rgba,
@@ -210,6 +224,14 @@ impl Theme {
             panel_label_text: gpui::rgb(0x1e293b),
             panel_subtext: gpui::rgb(0x64748b),
 
+            // 节点按钮
+            delete_btn_bg: gpui::rgba(0xef4444dd),
+            delete_btn_text: gpui::rgb(0xffffff),
+            toggle_btn_bg: gpui::rgba(0xffffffaa),
+            toggle_btn_text: gpui::rgb(0x475569),
+            collapse_pill_bg: gpui::rgba(0xffffffcc),
+            collapse_pill_text: gpui::rgb(0x64748b),
+
             // 工具栏
             toolbar_bg: gpui::rgba(0xffffffee),
             toolbar_border: gpui::rgb(0xe2e8f0),
@@ -309,6 +331,14 @@ impl Theme {
             panel_title_text: gpui::rgb(0xf1f5f9),
             panel_label_text: gpui::rgb(0xe2e8f0),
             panel_subtext: gpui::rgb(0x94a3b8),
+
+            // 节点按钮
+            delete_btn_bg: gpui::rgba(0xdc2626dd),
+            delete_btn_text: gpui::rgb(0xffffff),
+            toggle_btn_bg: gpui::rgba(0x334155aa),
+            toggle_btn_text: gpui::rgb(0xcbd5e1),
+            collapse_pill_bg: gpui::rgba(0x334155cc),
+            collapse_pill_text: gpui::rgb(0x94a3b8),
 
             // 工具栏
             toolbar_bg: gpui::rgba(0x1e293bee),

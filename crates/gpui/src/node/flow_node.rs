@@ -4,10 +4,29 @@
 //! 普通节点只需实现 `kind`/`get_view`/`get_panel`/`schema`；
 //! 特殊节点（如条件分支、循环）可覆写 `port_position` 精确控制端口位置。
 
+use std::sync::Arc;
+
 use gpui::{AnyElement, App, Window};
-use rust_agent_flow::{LayoutDirection, Node, NodeSchema, PortId, PointF, SizeF};
+use rust_agent_flow::{LayoutDirection, Node, NodeSchema, PortId, PortSpec, PointF, SizeF};
 
 use crate::theme::Theme;
+
+/// 节点动作：节点视图/属性面板向编辑器发出的操作请求。
+///
+/// 通过 [`NodeViewCtx::on_action`] 回调传递，闭包已捕获 `node_id`，
+/// 调用方无需传入节点 ID。
+#[derive(Clone, Debug)]
+pub enum NodeAction {
+    /// 删除此节点。
+    Delete,
+    /// 切换展开/收起状态。
+    ToggleCollapse,
+    /// 更新 `node.data[key] = value`。
+    SetData(String, serde_json::Value),
+}
+
+/// 动作回调类型：闭包已捕获 `node_id`，接收动作 + `&mut App`。
+pub type ActionCallback = Arc<dyn Fn(NodeAction, &mut App) + Send + Sync>;
 
 /// 节点渲染上下文，提供给 [`IFlowNode`] 方法使用。
 ///
@@ -17,12 +36,17 @@ pub struct NodeViewCtx<'a> {
     pub window: &'a mut Window,
     pub cx: &'a mut App,
     pub selected: bool,
+    /// 当前节点是否被鼠标悬停（用于显示删除按钮等 hover 元素）。
+    pub hovered: bool,
     /// 当前视口缩放比例，节点内部元素应按此缩放。
     pub scale: f32,
     /// 当前布局方向（横向/纵向），节点渲染端口位置应与此一致。
     pub layout: LayoutDirection,
     /// 当前主题颜色配置。
     pub theme: Theme,
+    /// 动作回调：节点视图/面板通过此回调向编辑器发送动作。
+    /// 闭包已捕获 `node_id`，调用方无需传入。
+    pub on_action: Option<ActionCallback>,
 }
 
 /// 节点扩展接口（策略模式）。
@@ -44,6 +68,17 @@ pub trait IFlowNode: Send + Sync {
 
     /// 节点 Schema（端口定义、默认尺寸等）。
     fn schema(&self) -> &NodeSchema;
+
+    /// 返回节点实例的端口列表（可选，支持动态端口）。
+    ///
+    /// 默认返回 `self.schema().ports.clone()`。
+    ///
+    /// 特殊节点（如 Condition）可覆写此方法，根据 `node.data` 动态生成端口列表。
+    /// 例如 Condition 节点的 if_0, if_1, ... 端口数量随 conditions 数组变化。
+    fn ports_for_node(&self, node: &Node) -> Vec<PortSpec> {
+        let _ = node;
+        self.schema().ports.clone()
+    }
 
     /// 自定义端口位置计算（可选，不依赖渲染上下文）。
     ///

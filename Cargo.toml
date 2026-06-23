@@ -5,11 +5,12 @@ resolver = "2"
 [workspace.dependencies]
 gpui = { git = "https://github.com/zed-industries/zed", rev = "1d217ee39d381ac101b7cf49d3d22451ac1093fe" }
 gpui_platform = { git = "https://github.com/zed-industries/zed", rev = "1d217ee39d381ac101b7cf49d3d22451ac1093fe" }
-gpui-component = { git = "https://github.com/longbridge/gpui-component", rev = "e416af7f" }
+gpui-component = { git = "https://github.com/longbridge/gpui-component", rev = "e416af7f", features = ["tree-sitter-rust"] }
 gpui-component-assets = { git = "https://github.com/longbridge/gpui-component", rev = "e416af7f" }
 rust-agent-flow = { path = "crates/core", version = "0.1.0" }
 slotmap = { version = "1.0", features = ["serde"] }
 serde = { version = "1", features = ["derive"] }
+rhai = "1.19"
 
 [patch.crates-io]
 gpui = { git = "https://github.com/zed-industries/zed", rev = "1d217ee39d381ac101b7cf49d3d22451ac1093fe" }
