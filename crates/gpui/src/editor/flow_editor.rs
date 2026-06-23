@@ -245,14 +245,33 @@ impl FlowEditorView {
     }
 
     /// 切换主题（亮色 ↔ 暗色）。
+    ///
+    /// 同时同步 gpui-component 全局主题，使 Button/DropdownMenu 等组件的
+    /// 图标/文字颜色跟随亮暗切换，避免暗色背景下图标不可见。
     pub fn toggle_theme(&mut self, cx: &mut Context<Self>) {
         self.theme = self.theme.toggle();
+        let mode = if self.theme.is_dark {
+            gpui_component::ThemeMode::Dark
+        } else {
+            gpui_component::ThemeMode::Light
+        };
+        gpui_component::Theme::change(mode, None, cx);
+        cx.refresh_windows();
         cx.notify();
     }
 
     /// 设置指定主题。
+    ///
+    /// 同时同步 gpui-component 全局主题（见 [`toggle_theme`]）。
     pub fn set_theme(&mut self, theme: Theme, cx: &mut Context<Self>) {
         self.theme = theme;
+        let mode = if self.theme.is_dark {
+            gpui_component::ThemeMode::Dark
+        } else {
+            gpui_component::ThemeMode::Light
+        };
+        gpui_component::Theme::change(mode, None, cx);
+        cx.refresh_windows();
         cx.notify();
     }
 

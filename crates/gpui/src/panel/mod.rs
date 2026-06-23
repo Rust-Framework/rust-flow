@@ -38,7 +38,7 @@ use gpui_component::{Icon, IconName, Sizable, StyledExt};
 use rust_agent_flow::{DropdownOption, FieldSpec, FieldType, ListSpec, Node};
 
 use crate::builtin::common::node_icon;
-use crate::i18n::{t, Language, TKey};
+use crate::i18n::{kind_label, t, Language, TKey};
 use crate::node::{ActionCallback, IFlowNode, NodeAction, SharedSyntaxService};
 use crate::theme::Theme;
 
@@ -108,10 +108,11 @@ impl PanelView {
         cx: &mut Context<Self>,
     ) -> Self {
         let label = label_of(&node);
+        let label_placeholder = kind_label(language, &node.kind).to_string();
         let label_input = cx.new(|cx| {
             InputState::new(window, cx)
                 .default_value(label.as_str())
-                .placeholder("Label")
+                .placeholder(label_placeholder.as_str())
         });
         let sub_label = cx.subscribe_in(&label_input, window, Self::on_label_change);
 
@@ -559,7 +560,7 @@ impl PanelView {
         let lang = self.language;
         let kind = &self.node.kind;
         let icon_name = node_icon(kind);
-        let kind_label = kind_label_str(lang, kind);
+        let kind_label = kind_label(lang, kind);
         let title = format!("{} {}", kind_label, t(lang, TKey::PanelNodeSuffix));
 
         div()
@@ -762,7 +763,7 @@ impl PanelView {
             _ => String::new(),
         };
         let lang = self.language;
-        let kind_str = kind_label_str(lang, &self.node.kind);
+        let kind_str = kind_label(lang, &self.node.kind);
         let entity = cx.entity();
 
         // 查找当前选中项的标签
@@ -1083,21 +1084,6 @@ fn sync_list_rows(
     }
 }
 
-/// 节点类型 → i18n 标签字符串。
-fn kind_label_str(lang: Language, kind: &str) -> &'static str {
-    match kind {
-        "start" => t(lang, TKey::Start),
-        "end" => t(lang, TKey::End),
-        "action" => t(lang, TKey::Action),
-        "condition" => t(lang, TKey::Condition),
-        "loop" => t(lang, TKey::Loop),
-        "variable" => t(lang, TKey::Variable),
-        "adapter" => t(lang, TKey::DataAdapter),
-        "agent" => t(lang, TKey::Agent),
-        _ => "",
-    }
-}
-
 /// 字段标签 i18n 映射：(kind, field_key) → TKey → 本地化文案。
 fn field_label(lang: Language, kind: &str, field_key: &str, fallback: &str) -> String {
     let tkey = match (kind, field_key) {
@@ -1110,6 +1096,8 @@ fn field_label(lang: Language, kind: &str, field_key: &str, fallback: &str) -> S
         ("agent", "model") => TKey::PanelAgentModel,
         ("agent", "prompt") => TKey::PanelAgentPrompt,
         ("variable", "variables") => TKey::PanelVariables,
+        // desc 字段（action/adapter 共用）
+        ("action", "desc") | ("adapter", "desc") => TKey::PanelDesc,
         _ => return fallback.to_string(),
     };
     t(lang, tkey).to_string()

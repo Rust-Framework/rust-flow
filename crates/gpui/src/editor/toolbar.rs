@@ -6,7 +6,8 @@
 //! 取自 [`Theme`](crate::theme::Theme)，支持亮色/暗色主题切换。
 
 use gpui::{
-    div, px, ClickEvent, Context, IntoElement, ParentElement, Styled, Window,
+    div, px, ClickEvent, Context, InteractiveElement, IntoElement, MouseButton, ParentElement,
+    Styled, Window,
 };
 use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::menu::{DropdownMenu, PopupMenuItem};
@@ -106,6 +107,9 @@ impl FlowEditorView {
             .border_color(theme.toolbar_border)
             .shadow_lg()
             .p_1()
+            // 拦截鼠标事件，防止点击穿透到画布导致 selected=None 面板销毁。
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .on_mouse_down(MouseButton::Middle, |_, _, cx| cx.stop_propagation())
             // ====== 缩放组：放大 + 百分比 + 缩小 ======
             .child(
                 Button::new("tb-zoom-in")

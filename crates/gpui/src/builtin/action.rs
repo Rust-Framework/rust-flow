@@ -10,8 +10,8 @@ use rust_agent_flow::{
 use crate::node::{NodeViewCtx, IFlowNode};
 
 use super::common::{
-    desc_of, label_of, make_port, node_icon, port_sizes, render_delete_button, render_simple_panel,
-    TITLE_ICON_SIZE,
+    desc_of, label_of_localized, make_port, node_icon, port_sizes, render_delete_button,
+    render_simple_panel, TITLE_ICON_SIZE,
 };
 
 /// 标题栏高度（逻辑坐标）。
@@ -40,7 +40,7 @@ impl ActionNode {
                 .with_port(PortSpec::new("out", PortDirection::Out, PortSide::Auto))
                 .with_field(
                     FieldSpec::new("label", "Label", FieldType::Text)
-                        .with_default(serde_json::json!("Action")),
+                        .with_default(serde_json::json!("")),
                 )
                 .with_field(
                     FieldSpec::new("desc", "Description", FieldType::Text)
@@ -64,7 +64,7 @@ impl IFlowNode for ActionNode {
         let t = &ctx.theme;
         let layout = ctx.layout;
 
-        let label = label_of(node);
+        let label = label_of_localized(node, ctx.language);
         let desc = desc_of(node).unwrap_or_default();
 
         let (port_size, port_outer, port_outer_half) = port_sizes(s);
@@ -197,7 +197,7 @@ impl IFlowNode for ActionNode {
     }
 
     fn get_panel(&self, node: &Node, ctx: &mut NodeViewCtx) -> AnyElement {
-        render_simple_panel(node, "Action 节点", &ctx.theme)
+        render_simple_panel(node, ctx.language, &ctx.theme)
     }
 
     fn schema(&self) -> &NodeSchema {

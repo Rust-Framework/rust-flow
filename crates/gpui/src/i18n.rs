@@ -97,6 +97,8 @@ pub enum TKey {
     Collapsed,
     // Condition 收起态提示
     ConditionsCount,
+    // Condition 表达式占位符（未设置时显示）
+    ConditionExprPlaceholder,
     // Start/End 主体提示
     StartHasParams,
     StartNoParams,
@@ -154,6 +156,24 @@ pub fn t(lang: Language, key: TKey) -> &'static str {
     }
 }
 
+/// 节点类型 kind → 本地化显示名称。
+///
+/// 用于节点卡片标题、面板头部等需要显示节点类型名称的场景。
+/// 返回的字符串与 `TKey::Start/End/Action/...` 对应。
+pub fn kind_label(lang: Language, kind: &str) -> &'static str {
+    match kind {
+        "start" => t(lang, TKey::Start),
+        "end" => t(lang, TKey::End),
+        "action" => t(lang, TKey::Action),
+        "condition" => t(lang, TKey::Condition),
+        "loop" => t(lang, TKey::Loop),
+        "variable" => t(lang, TKey::Variable),
+        "adapter" => t(lang, TKey::DataAdapter),
+        "agent" => t(lang, TKey::Agent),
+        _ => "",
+    }
+}
+
 fn t_zh(key: TKey) -> &'static str {
     match key {
         TKey::Start => "开始",
@@ -207,6 +227,7 @@ fn t_zh(key: TKey) -> &'static str {
         TKey::BtnExpandBody => "展开循环体",
         TKey::Collapsed => "已收起",
         TKey::ConditionsCount => "个条件",
+        TKey::ConditionExprPlaceholder => "未设置表达式",
         TKey::StartHasParams => "有参数",
         TKey::StartNoParams => "无参数",
         TKey::EndHasReturn => "有返回",
@@ -307,6 +328,7 @@ fn t_en(key: TKey) -> &'static str {
         TKey::BtnExpandBody => "Expand Body",
         TKey::Collapsed => "Collapsed",
         TKey::ConditionsCount => "conditions",
+        TKey::ConditionExprPlaceholder => "no expression",
         TKey::StartHasParams => "Has Params",
         TKey::StartNoParams => "No Params",
         TKey::EndHasReturn => "Has Return",

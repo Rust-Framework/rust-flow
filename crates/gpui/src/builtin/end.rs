@@ -13,7 +13,7 @@ use rust_agent_flow::{
 use crate::i18n::TKey;
 use crate::node::{NodeViewCtx, IFlowNode};
 
-use super::common::{label_of, make_port, node_icon, port_sizes, TITLE_ICON_SIZE};
+use super::common::{label_of_localized, make_port, node_icon, port_sizes, TITLE_ICON_SIZE};
 
 /// 标题栏高度（逻辑坐标）。
 const TITLE_H: f32 = 36.0;
@@ -49,7 +49,7 @@ impl EndNode {
                 .with_port(PortSpec::new("in", PortDirection::In, PortSide::Auto))
                 .with_field(
                     FieldSpec::new("label", "Label", FieldType::Text)
-                        .with_default(serde_json::json!("End")),
+                        .with_default(serde_json::json!("")),
                 )
                 .with_field(
                     FieldSpec::new(
@@ -85,7 +85,7 @@ impl IFlowNode for EndNode {
         let layout = ctx.layout;
         let lang = ctx.language;
 
-        let label = label_of(node);
+        let label = label_of_localized(node, lang);
         let has_r = has_returns(node);
         let body_text = if has_r {
             crate::i18n::t(lang, TKey::EndHasReturn).to_string()

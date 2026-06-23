@@ -13,7 +13,7 @@ use rust_agent_flow::{
 use crate::i18n::TKey;
 use crate::node::{NodeViewCtx, IFlowNode};
 
-use super::common::{label_of, make_port, node_icon, port_sizes, render_delete_button, TITLE_ICON_SIZE};
+use super::common::{label_of_localized, make_port, node_icon, port_sizes, render_delete_button, TITLE_ICON_SIZE};
 
 /// 标题栏高度（逻辑坐标）。
 const TITLE_H: f32 = 36.0;
@@ -88,7 +88,7 @@ impl IFlowNode for VariableNode {
         let layout = ctx.layout;
         let lang = ctx.language;
 
-        let label = label_of(node);
+        let label = label_of_localized(node, lang);
         let n_vars = variable_count(node);
         let body_text = if n_vars > 0 {
             format!("{} {}", n_vars, crate::i18n::t(lang, TKey::VariableCount))

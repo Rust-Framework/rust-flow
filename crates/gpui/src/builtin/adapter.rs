@@ -13,7 +13,7 @@ use rust_agent_flow::{
 use crate::i18n::TKey;
 use crate::node::{NodeViewCtx, IFlowNode};
 
-use super::common::{desc_of, label_of, make_port, node_icon, port_sizes, render_delete_button, TITLE_ICON_SIZE};
+use super::common::{desc_of, label_of_localized, make_port, node_icon, port_sizes, render_delete_button, TITLE_ICON_SIZE};
 
 /// 标题栏高度（逻辑坐标）。
 const TITLE_H: f32 = 36.0;
@@ -41,7 +41,7 @@ impl AdapterNode {
                 .with_port(PortSpec::new("out", PortDirection::Out, PortSide::Auto))
                 .with_field(
                     FieldSpec::new("label", "Label", FieldType::Text)
-                        .with_default(serde_json::json!("Adapter")),
+                        .with_default(serde_json::json!("")),
                 )
                 .with_field(
                     FieldSpec::new("desc", "Description", FieldType::Text)
@@ -66,7 +66,7 @@ impl IFlowNode for AdapterNode {
         let layout = ctx.layout;
         let lang = ctx.language;
 
-        let label = label_of(node);
+        let label = label_of_localized(node, lang);
         let desc = desc_of(node).unwrap_or_else(|| crate::i18n::t(lang, TKey::DataAdapter).to_string());
 
         let (port_size, port_outer, port_outer_half) = port_sizes(s);

@@ -9,6 +9,7 @@ use gpui_component::{Icon, IconName, Sizable};
 use gpui_component::StyledExt;
 use rust_agent_flow::Node;
 
+use crate::i18n::{kind_label, t, Language, TKey};
 use crate::theme::Theme;
 
 /// 删除按钮尺寸（逻辑坐标，会随缩放自动缩放）。
@@ -26,13 +27,20 @@ pub(crate) const BTN_MARGIN: f32 = 4.0;
 /// 标题栏图标尺寸（逻辑坐标）。
 pub(crate) const TITLE_ICON_SIZE: f32 = 16.0;
 
-/// 从 node.data 取 label，缺省回退到 kind。
-pub(crate) fn label_of(node: &Node) -> String {
-    node.data
+/// 从 node.data 取 label，若为空则回退到本地化的节点类型名称。
+///
+/// 用于节点卡片标题显示：用户未自定义 label 时显示当前语言的类型名，
+/// 切换语言后自动同步。用户自定义 label 后显示自定义文本。
+pub(crate) fn label_of_localized(node: &Node, lang: Language) -> String {
+    let raw = node.data
         .get("label")
         .and_then(|v| v.as_str())
-        .unwrap_or(&node.kind)
-        .to_string()
+        .unwrap_or("");
+    if raw.is_empty() {
+        kind_label(lang, &node.kind).to_string()
+    } else {
+        raw.to_string()
+    }
 }
 
 /// 从 node.data 取 desc。
@@ -62,10 +70,11 @@ pub(crate) fn node_icon(kind: &str) -> IconName {
 
 /// 渲染简单属性面板：显示 kind + label + desc。
 ///
-/// 颜色取自 `theme`，支持主题切换。
-pub(crate) fn render_simple_panel(node: &Node, kind_label_str: &str, theme: &Theme) -> AnyElement {
-    let label = label_of(node);
+/// 颜色取自 `theme`，支持主题切换。所有文案通过 `lang` 本地化。
+pub(crate) fn render_simple_panel(node: &Node, lang: Language, theme: &Theme) -> AnyElement {
+    let label = label_of_localized(node, lang);
     let desc = desc_of(node);
+    let title = format!("{} {}", kind_label(lang, &node.kind), t(lang, TKey::PanelNodeSuffix));
     let mut col = div().flex().flex_col().gap(px(8.0)).p_4();
 
     col = col.child(
@@ -73,26 +82,26 @@ pub(crate) fn render_simple_panel(node: &Node, kind_label_str: &str, theme: &The
             .text_size(px(16.0))
             .font_semibold()
             .text_color(theme.panel_title_text)
-            .child(kind_label_str.to_string()),
+            .child(title),
     );
     col = col.child(
         div()
             .text_size(px(13.0))
             .text_color(theme.panel_subtext)
-            .child(format!("Kind: {}", node.kind)),
+            .child(format!("{}: {}", t(lang, TKey::PanelKind), node.kind)),
     );
     col = col.child(
         div()
             .text_size(px(13.0))
             .text_color(theme.panel_label_text)
-            .child(format!("Label: {}", label)),
+            .child(format!("{}: {}", t(lang, TKey::PanelLabel), label)),
     );
     if let Some(desc) = desc {
         col = col.child(
             div()
                 .text_size(px(13.0))
                 .text_color(theme.panel_subtext)
-                .child(format!("Desc: {}", desc)),
+                .child(format!("{}: {}", t(lang, TKey::PanelDesc), desc)),
         );
     }
 

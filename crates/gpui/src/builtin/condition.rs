@@ -65,7 +65,7 @@ use crate::i18n::TKey;
 use crate::node::{NodeViewCtx, IFlowNode};
 
 use super::common::{
-    label_of, make_port, node_icon, port_sizes, render_delete_button, render_simple_panel,
+    label_of_localized, make_port, node_icon, port_sizes, render_delete_button, render_simple_panel,
     render_toggle_button, TITLE_ICON_SIZE,
 };
 
@@ -113,7 +113,7 @@ impl ConditionNode {
                 .with_port(PortSpec::new("if_1", PortDirection::Out, PortSide::Auto))
                 .with_field(
                     FieldSpec::new("label", "Label", FieldType::Text)
-                        .with_default(serde_json::json!("Condition")),
+                        .with_default(serde_json::json!("")),
                 )
                 .with_field(
                     FieldSpec::new(
@@ -129,8 +129,8 @@ impl ConditionNode {
                         ),
                     )
                     .with_default(serde_json::json!([
-                        { "id": "if_0", "label": "condition 0" },
-                        { "id": "if_1", "label": "condition 1" }
+                        { "id": "if_0", "label": "" },
+                        { "id": "if_1", "label": "" }
                     ])),
                 ),
         }
@@ -155,8 +155,8 @@ fn get_conditions(node: &Node) -> Vec<(String, String)> {
         })
         .unwrap_or_else(|| {
             vec![
-                ("if_0".to_string(), "condition 0".to_string()),
-                ("if_1".to_string(), "condition 1".to_string()),
+                ("if_0".to_string(), String::new()),
+                ("if_1".to_string(), String::new()),
             ]
         })
 }
@@ -195,7 +195,7 @@ impl IFlowNode for ConditionNode {
         } else {
             (TITLE_H + ITEM_H * n_br as f32) * s
         };
-        let label = label_of(node);
+        let label = label_of_localized(node, ctx.language);
         let layout = ctx.layout;
         let t = &ctx.theme;
 
@@ -376,6 +376,15 @@ impl IFlowNode for ConditionNode {
         // 条件项行（浅橙背景）— if_0, if_1, ...
         for (i, (_id, cond_label)) in conditions.iter().enumerate() {
             let item_top = title_h + item_h * i as f32;
+            let cond_text = if cond_label.is_empty() {
+                format!(
+                    "{} ({})",
+                    crate::i18n::t(ctx.language, TKey::If),
+                    crate::i18n::t(ctx.language, TKey::ConditionExprPlaceholder)
+                )
+            } else {
+                format!("{} {}", crate::i18n::t(ctx.language, TKey::If), cond_label)
+            };
             let row = div()
                 .absolute()
                 .left_0()
@@ -392,7 +401,7 @@ impl IFlowNode for ConditionNode {
                     div()
                         .text_size(px(12.0 * s))
                         .text_color(t.node_subtext)
-                        .child(format!("{} {}", crate::i18n::t(ctx.language, TKey::If), cond_label)),
+                        .child(cond_text),
                 );
             container = container.child(row);
         }
@@ -531,7 +540,7 @@ impl IFlowNode for ConditionNode {
     }
 
     fn get_panel(&self, node: &Node, ctx: &mut NodeViewCtx) -> AnyElement {
-        render_simple_panel(node, "Condition 节点（条件分支）", &ctx.theme)
+        render_simple_panel(node, ctx.language, &ctx.theme)
     }
 
     fn schema(&self) -> &NodeSchema {

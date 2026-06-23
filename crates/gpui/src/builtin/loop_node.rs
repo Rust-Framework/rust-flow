@@ -44,8 +44,8 @@ use rust_agent_flow::{
 use crate::node::{NodeViewCtx, IFlowNode};
 
 use super::common::{
-    desc_of, label_of, make_port, node_icon, port_sizes, render_delete_button, render_simple_panel,
-    render_toggle_button, TITLE_ICON_SIZE,
+    desc_of, label_of_localized, make_port, node_icon, port_sizes, render_delete_button,
+    render_simple_panel, render_toggle_button, TITLE_ICON_SIZE,
 };
 
 /// 标题栏高度（逻辑坐标）。
@@ -109,7 +109,7 @@ impl LoopNode {
                 .with_port(PortSpec::new("loop_in", PortDirection::In, PortSide::Auto))
                 .with_field(
                     FieldSpec::new("label", "Label", FieldType::Text)
-                        .with_default(serde_json::json!("Loop")),
+                        .with_default(serde_json::json!("")),
                 )
                 .with_field(
                     FieldSpec::new(
@@ -148,7 +148,7 @@ impl IFlowNode for LoopNode {
         let layout = ctx.layout;
         let t = &ctx.theme;
 
-        let label = label_of(node);
+        let label = label_of_localized(node, ctx.language);
         // 循环条件区文案：优先用 node.data["desc"]（用户自定义），否则按 loop_mode 显示模式标签
         let desc = desc_of(node).unwrap_or_else(|| loop_mode_label(node, ctx.language).to_string());
 
@@ -342,7 +342,7 @@ impl IFlowNode for LoopNode {
     }
 
     fn get_panel(&self, node: &Node, ctx: &mut NodeViewCtx) -> AnyElement {
-        render_simple_panel(node, "Loop 节点（循环）", &ctx.theme)
+        render_simple_panel(node, ctx.language, &ctx.theme)
     }
 
     fn schema(&self) -> &NodeSchema {
