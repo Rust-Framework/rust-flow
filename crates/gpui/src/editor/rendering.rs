@@ -241,6 +241,7 @@ impl FlowEditorView {
                 }
             },
         )
+        .size_full()
     }
 
     /// 渲染所有节点（absolute div 在内容层内）。
