@@ -80,6 +80,18 @@ pub enum FlowIcon {
     Screen,
     /// 垂直双向箭头，用于垂直布局方向按钮。
     Vertical,
+    /// 垃圾桶，用于删除按钮。
+    Trash,
+    /// API 接口，用于适配器节点图标。
+    Api,
+    /// 代码，用于动作节点图标。
+    Code,
+    /// 循环/重复，用于循环节点图标。
+    Repeat,
+    /// 等号/条件，用于条件节点图标。
+    Equal,
+    /// 用户检查，用于用户确认节点图标。
+    UserCheck,
 }
 
 impl IconNamed for FlowIcon {
@@ -90,6 +102,12 @@ impl IconNamed for FlowIcon {
             FlowIcon::Horizontal => "horizontal.svg".into(),
             FlowIcon::Screen => "screen.svg".into(),
             FlowIcon::Vertical => "vertical.svg".into(),
+            FlowIcon::Trash => "trash.svg".into(),
+            FlowIcon::Api => "api.svg".into(),
+            FlowIcon::Code => "code.svg".into(),
+            FlowIcon::Repeat => "repeat.svg".into(),
+            FlowIcon::Equal => "equal.svg".into(),
+            FlowIcon::UserCheck => "user-check.svg".into(),
         }
     }
 }

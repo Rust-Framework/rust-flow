@@ -4,13 +4,33 @@
 //! - 标题栏：图标 + 名称 + 操作按钮（删除/展开收起）
 //! - 主体：根据节点类型不同（Action 显示 desc，Condition 显示条件项，Loop 显示循环条件）
 
-use gpui::{div, px, AnyElement, IntoElement, ParentElement, Styled};
+use gpui::{div, px, AnyElement, IntoElement, ParentElement, SharedString, Styled};
 use gpui_component::{Icon, IconName, Sizable};
 use gpui_component::StyledExt;
 use rust_agent_flow::Node;
 
+use crate::assets::FlowIcon;
 use crate::i18n::{kind_label, t, Language, TKey};
 use crate::theme::Theme;
+
+/// 节点图标：统一包装内置图标（`IconName`）和自定义 SVG 图标（`FlowIcon`）。
+///
+/// 内置图标语义匹配时优先使用；无合适内置图标时使用 assets/ 下的自定义 SVG。
+pub(crate) enum NodeIcon {
+    /// gpui-component 内置图标。
+    Builtin(IconName),
+    /// 自定义 SVG 图标（assets/ 目录）。
+    Custom(FlowIcon),
+}
+
+impl gpui_component::IconNamed for NodeIcon {
+    fn path(self) -> SharedString {
+        match self {
+            NodeIcon::Builtin(icon) => icon.path(),
+            NodeIcon::Custom(icon) => icon.path(),
+        }
+    }
+}
 
 /// 删除按钮尺寸（逻辑坐标，会随缩放自动缩放）。
 pub(crate) const DELETE_BTN_SIZE: f32 = 20.0;
@@ -53,18 +73,18 @@ pub(crate) fn desc_of(node: &Node) -> Option<String> {
 
 /// 节点类型 → 图标映射。
 ///
-/// 返回 `IconName` 用于标题栏左侧图标显示。
-pub(crate) fn node_icon(kind: &str) -> IconName {
+/// 内置图标语义匹配时优先使用（`Builtin`），无合适内置图标时使用自定义 SVG（`Custom`）。
+pub(crate) fn node_icon(kind: &str) -> NodeIcon {
     match kind {
-        "start" => IconName::Play,
-        "end" => IconName::CircleCheck,
-        "action" => IconName::Cpu,
-        "condition" => IconName::Network,
-        "loop" => IconName::Redo,
-        "variable" => IconName::MemoryStick,
-        "adapter" => IconName::Replace,
-        "agent" => IconName::Bot,
-        _ => IconName::Settings,
+        "start" => NodeIcon::Builtin(IconName::Play),
+        "end" => NodeIcon::Builtin(IconName::CircleCheck),
+        "action" => NodeIcon::Custom(FlowIcon::Code),
+        "condition" => NodeIcon::Custom(FlowIcon::Equal),
+        "loop" => NodeIcon::Custom(FlowIcon::Repeat),
+        "variable" => NodeIcon::Builtin(IconName::MemoryStick),
+        "adapter" => NodeIcon::Custom(FlowIcon::Api),
+        "agent" => NodeIcon::Builtin(IconName::Bot),
+        _ => NodeIcon::Builtin(IconName::Settings),
     }
 }
 
@@ -164,11 +184,11 @@ pub(crate) fn port_sizes(scale: f32) -> (f32, f32, f32) {
 /// - `bg`: 背景色
 /// - `text_color`: 图标颜色
 /// - `scale`: 视口缩放比例（用于图标尺寸计算）
-fn render_icon_button(
+fn render_icon_button<I: gpui_component::IconNamed>(
     left: f32,
     top: f32,
     btn_size: f32,
-    icon: IconName,
+    icon: I,
     bg: gpui::Rgba,
     text_color: gpui::Rgba,
 ) -> AnyElement {
@@ -209,7 +229,7 @@ pub(crate) fn render_delete_button(node_w: f32, scale: f32, theme: &Theme) -> An
         left,
         top,
         btn_size,
-        IconName::Delete,
+        FlowIcon::Trash,
         theme.delete_btn_bg,
         theme.delete_btn_text,
     )
