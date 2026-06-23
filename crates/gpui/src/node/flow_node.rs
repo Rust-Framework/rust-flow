@@ -9,6 +9,7 @@ use std::sync::Arc;
 use gpui::{AnyElement, App, Window};
 use rust_agent_flow::{LayoutDirection, Node, NodeSchema, PortId, PortSpec, PointF, SizeF};
 
+use crate::i18n::Language;
 use crate::theme::Theme;
 
 /// 节点动作：节点视图/属性面板向编辑器发出的操作请求。
@@ -44,6 +45,8 @@ pub struct NodeViewCtx<'a> {
     pub layout: LayoutDirection,
     /// 当前主题颜色配置。
     pub theme: Theme,
+    /// 当前语言（中英文切换）。
+    pub language: Language,
     /// 动作回调：节点视图/面板通过此回调向编辑器发送动作。
     /// 闭包已捕获 `node_id`，调用方无需传入。
     pub on_action: Option<ActionCallback>,

@@ -6,12 +6,14 @@
 pub mod builtin;
 pub mod editor;
 pub mod edge;
+pub mod i18n;
 pub mod node;
 pub mod panel;
 pub mod theme;
 
 pub use editor::FlowEditorView;
 pub use edge::EdgeView;
+pub use i18n::{Language, TKey, t};
 pub use node::{IFlowNode, NodeRegistry, NodeView, NodeViewCtx};
 pub use theme::Theme;
 

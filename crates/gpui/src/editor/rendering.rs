@@ -10,7 +10,7 @@
 //!（上进下出），无论主布局方向是横向还是纵向。回环边（目标端口为
 //! `loop_in`）使用 `loop_back_path` 向下绕过 Loop 节点 + 循环体的组合边界。
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use gpui::{canvas, div, px, App, AppContext, Entity, IntoElement, ParentElement, Point, Styled};
@@ -128,7 +128,13 @@ impl FlowEditorView {
     /// - 循环体节点始终强制 Top/Bottom（垂直子流，上进下出），无论主布局方向
     /// - 非循环体节点按布局方向使用默认端口对
     /// - 回环边（target_port == "loop_in"）使用 `loop_back_path` 向下绕过
-    pub(crate) fn render_edges(&self) -> impl IntoElement {
+    ///
+    /// `body_groups` 由调用方（`render`）计算一次并传入，避免与 `render_nodes`
+    /// 重复执行 BFS 遍历（O(V+E)）。
+    pub(crate) fn render_edges(
+        &self,
+        body_groups: &HashMap<NodeId, HashSet<NodeId>>,
+    ) -> impl IntoElement {
         let s = self.scale();
         let (src_side_default, dst_side_default) = self.port_sides();
         let layout = self.layout_direction;
@@ -138,15 +144,33 @@ impl FlowEditorView {
         let grid_dot_color = self.theme.grid_dot;
         let grid_spacing = self.grid_spacing;
 
-        // 收集循环体节点分组
-        let body_groups = self.graph.loop_body_groups();
         let all_body_nodes: HashSet<NodeId> =
             body_groups.values().flat_map(|s| s.iter().copied()).collect();
 
-        // 为每条边计算渲染指令
+        // 收集被收起的循环体节点：当 Loop 节点的 body_collapsed == true 时，
+        // 其循环体节点已隐藏，连接到这些节点的边也不渲染。
+        let mut hidden_nodes: HashSet<NodeId> = HashSet::new();
+        for (loop_node, body_nodes) in body_groups {
+            if let Some(ln) = self.graph.node(*loop_node) {
+                let body_collapsed = ln
+                    .data
+                    .get("body_collapsed")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                if body_collapsed {
+                    hidden_nodes.extend(body_nodes.iter().copied());
+                }
+            }
+        }
+
+        // 为每条边计算渲染指令（跳过连接到隐藏循环体节点的边）
         let edge_renders: Vec<EdgeRender> = self
             .graph
             .edges()
+            .filter(|edge| {
+                // 隐藏连接到已收起循环体节点的边
+                !hidden_nodes.contains(&edge.source) && !hidden_nodes.contains(&edge.target)
+            })
             .map(|edge| {
                 let is_loop_back = edge.target_port.as_deref() == Some("loop_in");
 
@@ -251,7 +275,14 @@ impl FlowEditorView {
     ///
     /// 为每个节点创建动作回调闭包，捕获 `node_id` 和 `entity`，
     /// 通过 `cx.update_entity` 调用 `handle_node_action`。
-    pub(crate) fn render_nodes(&self, entity: Entity<Self>) -> Vec<gpui::AnyElement> {
+    ///
+    /// `body_groups` 由调用方（`render`）计算一次并传入，避免与 `render_edges`
+    /// 重复执行 BFS 遍历（O(V+E)）。
+    pub(crate) fn render_nodes(
+        &self,
+        entity: Entity<Self>,
+        body_groups: &HashMap<NodeId, HashSet<NodeId>>,
+    ) -> Vec<gpui::AnyElement> {
         let selected = self.selected;
         let registry = &self.registry;
         let s = self.scale();
@@ -262,10 +293,24 @@ impl FlowEditorView {
         let theme = self.theme;
         let hovered = self.hovered;
 
-        // 收集循环体节点（与 render_edges 保持一致）
-        let body_groups = self.graph.loop_body_groups();
         let all_body_nodes: HashSet<NodeId> =
             body_groups.values().flat_map(|s| s.iter().copied()).collect();
+
+        // 收集被收起的循环体节点：当 Loop 节点的 body_collapsed == true 时，
+        // 其循环体节点不渲染（隐藏），但保留拓扑边。
+        let mut hidden_nodes: HashSet<NodeId> = HashSet::new();
+        for (loop_node, body_nodes) in body_groups {
+            if let Some(ln) = self.graph.node(*loop_node) {
+                let body_collapsed = ln
+                    .data
+                    .get("body_collapsed")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                if body_collapsed {
+                    hidden_nodes.extend(body_nodes.iter().copied());
+                }
+            }
+        }
 
         self.graph
             .nodes()
@@ -276,6 +321,15 @@ impl FlowEditorView {
                 let is_selected = selected == Some(node_id);
                 let is_body = all_body_nodes.contains(&node_id);
                 let is_hovered = hovered == Some(node_id);
+
+                // 被收起的循环体节点：不渲染（返回空 div 占位，保持布局位置）
+                if hidden_nodes.contains(&node_id) {
+                    return div()
+                        .absolute()
+                        .left(px(pos.x * s))
+                        .top(px(pos.y * s))
+                        .into_any_element();
+                }
 
                 // 创建动作回调：闭包捕获 node_id 和 entity
                 let on_action: ActionCallback = {
@@ -295,7 +349,8 @@ impl FlowEditorView {
                     .with_body_mode(is_body)
                     .with_theme(theme)
                     .with_hovered(is_hovered)
-                    .with_on_action(Some(on_action));
+                    .with_on_action(Some(on_action))
+                    .with_language(self.language);
 
                 div()
                     .absolute()
@@ -362,6 +417,7 @@ impl FlowEditorView {
                 self.theme,
                 Some(on_action),
                 self.syntax_service.clone(),
+                self.language,
                 window,
                 cx,
             ));

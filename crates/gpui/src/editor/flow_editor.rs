@@ -34,6 +34,7 @@ use rust_agent_flow::{
     LayoutDirection as CoreLayoutDirection, LayoutEngine, LayoutResult, DagreLayout,
 };
 
+use crate::i18n::Language;
 use crate::node::{default_syntax_service, NodeAction, NodeRegistry, SharedSyntaxService};
 use crate::panel::PanelView;
 use crate::theme::Theme;
@@ -73,6 +74,8 @@ pub struct FlowEditorView {
     pub panel_view: Option<gpui::Entity<PanelView>>,
     /// 语法高亮服务（扩展点，默认 `DefaultSyntaxService` 将 rhai 映射到 rust 近似高亮）。
     pub syntax_service: SharedSyntaxService,
+    /// 当前 UI 语言（中英文切换）。
+    pub language: Language,
 }
 
 impl FlowEditorView {
@@ -94,6 +97,7 @@ impl FlowEditorView {
             theme: Theme::light(),
             panel_view: None,
             syntax_service: default_syntax_service(),
+            language: Language::default(),
         }
     }
 
@@ -216,6 +220,19 @@ impl FlowEditorView {
         cx.notify();
     }
 
+    /// 切换 UI 语言（中英文）。
+    pub fn set_language(&mut self, language: Language, cx: &mut Context<Self>) {
+        self.language = language;
+        // 销毁现有 panel_view，下次 render 时用新语言重建
+        self.panel_view = None;
+        cx.notify();
+    }
+
+    /// 切换语言（在中/英之间 toggle）。
+    pub fn toggle_language(&mut self, cx: &mut Context<Self>) {
+        self.set_language(self.language.toggle(), cx);
+    }
+
     /// 处理节点动作（由 NodeView/PanelView 的回调调用）。
     pub(crate) fn handle_node_action(
         &mut self,
@@ -227,13 +244,21 @@ impl FlowEditorView {
             NodeAction::Delete => self.delete_node(node_id, cx),
             NodeAction::ToggleCollapse => {
                 if let Some(node) = self.graph.node_mut(node_id) {
-                    let collapsed = node
+                    // Loop 节点：toggle body_collapsed（收起/展开循环体）
+                    // 其他节点（Condition）：toggle collapsed（收起/展开节点自身内容）
+                    let key = if node.kind == "loop" {
+                        "body_collapsed"
+                    } else {
+                        "collapsed"
+                    };
+                    let current = node
                         .data
-                        .get("collapsed")
+                        .get(key)
                         .and_then(|v| v.as_bool())
                         .unwrap_or(false);
-                    node.data["collapsed"] = serde_json::json!(!collapsed);
+                    node.data[key] = serde_json::json!(!current);
                 }
+                self.sync_node_sizes();
                 self.relayout();
                 cx.notify();
             }
@@ -297,8 +322,11 @@ impl FlowEditorView {
 impl Render for FlowEditorView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let entity = cx.entity();
-        let edges = self.render_edges();
-        let nodes = self.render_nodes(entity.clone());
+        // 计算循环体分组一次，传入 render_edges/render_nodes 复用，
+        // 避免每帧重复执行 BFS 遍历（O(V+E)）。
+        let body_groups = self.graph.loop_body_groups();
+        let edges = self.render_edges(&body_groups);
+        let nodes = self.render_nodes(entity.clone(), &body_groups);
         let panel = self.ensure_panel_view(entity, window, cx);
         let toolbar = self.render_toolbar(cx);
 

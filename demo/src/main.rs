@@ -17,12 +17,15 @@
 //! - 点击节点：显示右侧属性面板
 
 use gpui::AppContext;
+use gpui_component_assets::Assets;
 use rust_agent_flow::{Edge, EdgeType, FlowGraph, PointF, SizeF};
 use rust_agent_flow_gpui::FlowEditorView;
 
 fn main() {
-    gpui_platform::application().run(move |cx: &mut gpui::App| {
-        rust_agent_flow_gpui::init(cx);
+    gpui_platform::application()
+        .with_assets(Assets)
+        .run(move |cx: &mut gpui::App| {
+            rust_agent_flow_gpui::init(cx);
 
         cx.spawn(async move |cx| {
             cx.open_window(gpui::WindowOptions::default(), |window, cx| {

@@ -147,7 +147,7 @@ impl Theme {
 
             // 画布
             canvas_bg: gpui::rgb(0xf8fafc),
-            grid_dot: gpui::rgb(0x94a3b8),
+            grid_dot: gpui::Rgba { r: 0x94 as f32 / 255.0, g: 0xa3 as f32 / 255.0, b: 0xb8 as f32 / 255.0, a: 0.35 },
 
             // 边
             edge_default: gpui::Rgba {
@@ -255,7 +255,7 @@ impl Theme {
 
             // 画布
             canvas_bg: gpui::rgb(0x1e293b),
-            grid_dot: gpui::rgb(0x475569),
+            grid_dot: gpui::Rgba { r: 0x47 as f32 / 255.0, g: 0x55 as f32 / 255.0, b: 0x69 as f32 / 255.0, a: 0.4 },
 
             // 边
             edge_default: gpui::Rgba {

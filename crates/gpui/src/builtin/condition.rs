@@ -55,16 +55,17 @@
 //! ```
 
 use gpui::{div, px, AnyElement, IntoElement, ParentElement, Styled};
-use gpui_component::StyledExt;
+use gpui_component::{Icon, Sizable, StyledExt};
 use rust_agent_flow::{
     LayoutDirection, Node, NodeSchema, PointF, PortDirection, PortId, PortSide, PortSpec, SizeF,
 };
 
+use crate::i18n::TKey;
 use crate::node::{NodeViewCtx, IFlowNode};
 
 use super::common::{
-    label_of, make_port, port_sizes, render_collapse_pill, render_delete_button,
-    render_simple_panel, render_toggle_button,
+    label_of, make_port, node_icon, port_sizes, render_delete_button, render_simple_panel,
+    render_toggle_button, TITLE_ICON_SIZE,
 };
 
 /// 标题栏高度（逻辑坐标）。
@@ -158,17 +159,19 @@ impl IFlowNode for ConditionNode {
         let s = ctx.scale;
         let w = node.size.w * s;
         let collapsed = is_collapsed(node);
-        // 收起状态高度 = TITLE_H；展开状态高度 = content_height
-        let h = if collapsed {
-            TITLE_H * s
-        } else {
-            content_height(node) * s
-        };
         let title_h = TITLE_H * s;
         let item_h = ITEM_H * s;
         let conditions = get_conditions(node);
         let n_cond = conditions.len();
-        let n_br = n_branches(node);
+        // n_br = n_cond + 1（else 兜底），直接推导避免重复调用 get_conditions
+        let n_br = n_cond + 1;
+        // 收起状态高度 = TITLE_H + ITEM_H（标题栏 + 主体，跟其他节点一样规格）
+        // 展开状态高度 = TITLE_H + ITEM_H * n_br（标题栏 + 条件项行 + else 行）
+        let h = if collapsed {
+            (TITLE_H + ITEM_H) * s
+        } else {
+            (TITLE_H + ITEM_H * n_br as f32) * s
+        };
         let label = label_of(node);
         let layout = ctx.layout;
         let t = &ctx.theme;
@@ -191,9 +194,10 @@ impl IFlowNode for ConditionNode {
         // 外层容器（不使用 overflow_hidden，避免裁剪半外露的端口圆圈）
         let mut container = div().relative().w(px(w)).h(px(h));
 
-        // ====== 收起状态：仅标题栏 + 合并出口 + "..." 胶囊 ======
+        // ====== 收起状态：标题栏 + 主体（提示文案）+ In/Out 端口 ======
+        // 收起时跟其他节点一样规格：标题栏 + 主体，单一出口
         if collapsed {
-            // 标题栏（圆角完整，因为只有一行）
+            // 标题栏（顶部圆角）：图标 + 标签
             container = container.child(
                 div()
                     .absolute()
@@ -202,10 +206,16 @@ impl IFlowNode for ConditionNode {
                     .w(px(w))
                     .h(px(title_h))
                     .bg(t.cond_title_bg)
-                    .rounded_lg()
+                    .rounded_t_lg()
                     .flex()
                     .items_center()
-                    .justify_center()
+                    .px(px(12.0 * s))
+                    .gap(px(6.0 * s))
+                    .child(
+                        Icon::new(node_icon("condition"))
+                            .with_size(px(TITLE_ICON_SIZE * s))
+                            .text_color(t.cond_title_text),
+                    )
                     .child(
                         div()
                             .text_size(px(14.0 * s))
@@ -215,11 +225,29 @@ impl IFlowNode for ConditionNode {
                     ),
             );
 
-            // "..." 胶囊（label 右侧，提示收起状态）
-            // 位置：标题栏中心偏右，避开 toggle/delete 按钮区域
-            let pill_left = w * 0.5 - 12.0 * s;
-            let pill_top = (title_h - 16.0 * s) * 0.5;
-            container = container.child(render_collapse_pill(pill_left, pill_top, s, t));
+            // 主体（提示文案，底部圆角）— 显示条件数量
+            let hint = format!("{} {}", n_cond, crate::i18n::t(ctx.language, TKey::ConditionsCount));
+            container = container.child(
+                div()
+                    .absolute()
+                    .left_0()
+                    .top(px(title_h))
+                    .w(px(w))
+                    .h(px(item_h))
+                    .bg(t.cond_item_bg)
+                    .border_t_1()
+                    .border_color(t.cond_item_border)
+                    .rounded_b_lg()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .child(
+                        div()
+                            .text_size(px(12.0 * s))
+                            .text_color(t.cond_item_text)
+                            .child(hint),
+                    ),
+            );
 
             // 边框
             container = container.child(
@@ -234,8 +262,9 @@ impl IFlowNode for ConditionNode {
                     .rounded_lg(),
             );
 
-            // 端口：In 入口 + 合并出口（所有 out 端口共用一个位置）
+            // 端口：In 入口 + 单一 Out 出口（使用 else 端口位置）
             let mid_x = w * 0.5;
+            let body_mid_y = title_h + item_h * 0.5;
             match layout {
                 LayoutDirection::Horizontal => {
                     // In 端口（标题栏左侧中心）
@@ -248,14 +277,14 @@ impl IFlowNode for ConditionNode {
                         in_dot,
                         t.port_bg,
                     ));
-                    // 合并出口（标题栏右侧中心）— 使用 if 颜色
+                    // Out 端口（主体右侧中心）— 使用 else 颜色
                     container = container.child(make_port(
                         w - port_outer_half,
-                        title_h * 0.5 - port_outer_half,
+                        body_mid_y - port_outer_half,
                         port_outer,
                         port_size,
-                        if_ring,
-                        if_dot,
+                        else_ring,
+                        else_dot,
                         t.port_bg,
                     ));
                 }
@@ -270,14 +299,14 @@ impl IFlowNode for ConditionNode {
                         in_dot,
                         t.port_bg,
                     ));
-                    // 合并出口（标题栏底部中心）
+                    // Out 端口（主体底部中心）— 使用 else 颜色
                     container = container.child(make_port(
                         mid_x - port_outer_half,
-                        title_h - port_outer_half,
+                        h - port_outer_half,
                         port_outer,
                         port_size,
-                        if_ring,
-                        if_dot,
+                        else_ring,
+                        else_dot,
                         t.port_bg,
                     ));
                 }
@@ -293,7 +322,7 @@ impl IFlowNode for ConditionNode {
         }
 
         // ====== 展开状态：标题栏 + 条件项行 + else 行 + 各端口 ======
-        // 标题栏（橙色背景，顶部圆角对齐容器圆角）— 仅 In 入口，无出口
+        // 标题栏（橙色背景，顶部圆角对齐容器圆角）：图标 + 标签 — 仅 In 入口，无出口
         container = container.child(
             div()
                 .absolute()
@@ -305,7 +334,13 @@ impl IFlowNode for ConditionNode {
                 .rounded_t_lg()
                 .flex()
                 .items_center()
-                .justify_center()
+                .px(px(12.0 * s))
+                .gap(px(6.0 * s))
+                .child(
+                    Icon::new(node_icon("condition"))
+                        .with_size(px(TITLE_ICON_SIZE * s))
+                        .text_color(t.cond_title_text),
+                )
                 .child(
                     div()
                         .text_size(px(14.0 * s))
@@ -511,28 +546,30 @@ impl IFlowNode for ConditionNode {
         let mid_x = node.position.x + node.size.w * 0.5;
         let title_mid_y = node.position.y + TITLE_H * 0.5;
 
-        // ====== 收起状态：所有 out 端口合并到标题栏边缘 ======
+        // ====== 收起状态：In 入口 + 单一 Out 出口（else 位置） ======
+        // 收起时高度 = TITLE_H + ITEM_H，Out 端口位于主体中心
         if collapsed {
+            let body_mid_y = node.position.y + TITLE_H + ITEM_H * 0.5;
+            let bottom = node.position.y + TITLE_H + ITEM_H;
             return match port_id.as_str() {
                 "in" => match layout {
                     LayoutDirection::Horizontal => Some(PointF::new(left, title_mid_y)),
                     LayoutDirection::Vertical => Some(PointF::new(mid_x, top)),
                 },
-                // 所有 out 端口（if_0, if_1, ..., else）合并到标题栏右边缘垂直居中
+                // 所有 out 端口（if_0, if_1, ..., else）合并到主体边缘
                 _ => match layout {
-                    LayoutDirection::Horizontal => Some(PointF::new(right, title_mid_y)),
-                    LayoutDirection::Vertical => {
-                        Some(PointF::new(mid_x, node.position.y + TITLE_H))
-                    }
+                    LayoutDirection::Horizontal => Some(PointF::new(right, body_mid_y)),
+                    LayoutDirection::Vertical => Some(PointF::new(mid_x, bottom)),
                 },
             };
         }
 
         // ====== 展开状态：保持现有逻辑 ======
-        let n_br = n_branches(node);
+        // 先计算 n_cond，再推导 n_br = n_cond + 1，避免重复调用 get_conditions
         let n_cond = get_conditions(node).len();
-        // 使用内容推导高度，保证端口位置与实际渲染高度一致
-        let bottom = node.position.y + content_height(node);
+        let n_br = n_cond + 1;
+        // 内联 content_height：复用 n_br，避免重复调用 get_conditions
+        let bottom = node.position.y + TITLE_H + ITEM_H * n_br as f32;
 
         match port_id.as_str() {
             // In：横向左侧中心 / 纵向顶部中心
@@ -576,13 +613,13 @@ impl IFlowNode for ConditionNode {
     }
 
     /// Condition 节点的实际渲染高度：
-    /// - 收起状态：`TITLE_H`（仅标题栏）
+    /// - 收起状态：`TITLE_H + ITEM_H`（标题栏 + 主体，跟其他节点一样规格）
     /// - 展开状态：`TITLE_H + ITEM_H * n_branches`（n_branches = 条件数 + 1 个 else）
     ///
     /// 宽度保持 `node.size.w`（由 schema default_size 或创建时指定）。
     fn content_size(&self, node: &Node) -> SizeF {
         let h = if is_collapsed(node) {
-            TITLE_H
+            TITLE_H + ITEM_H
         } else {
             content_height(node)
         };

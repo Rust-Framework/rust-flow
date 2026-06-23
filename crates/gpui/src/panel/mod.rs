@@ -20,6 +20,7 @@ use gpui_component::input::{Input, InputEvent, InputState};
 use gpui_component::StyledExt;
 use rust_agent_flow::Node;
 
+use crate::i18n::{t, Language, TKey};
 use crate::node::{ActionCallback, IFlowNode, NodeAction, SharedSyntaxService};
 use crate::theme::Theme;
 
@@ -33,6 +34,8 @@ pub struct PanelView {
     pub on_action: Option<ActionCallback>,
     /// 语法高亮服务（用于 CodeEditor 语言映射）。
     pub syntax_service: SharedSyntaxService,
+    /// 当前 UI 语言。
+    pub language: Language,
 
     // 通用字段：节点名称
     label_input: Entity<InputState>,
@@ -64,10 +67,11 @@ impl PanelView {
         theme: Theme,
         on_action: Option<ActionCallback>,
         syntax_service: SharedSyntaxService,
+        language: Language,
         window: &mut Window,
         cx: &mut App,
     ) -> Entity<Self> {
-        cx.new(|cx| Self::build(node, flow_node, theme, on_action, syntax_service, window, cx))
+        cx.new(|cx| Self::build(node, flow_node, theme, on_action, syntax_service, language, window, cx))
     }
 
     fn build(
@@ -76,6 +80,7 @@ impl PanelView {
         theme: Theme,
         on_action: Option<ActionCallback>,
         syntax_service: SharedSyntaxService,
+        language: Language,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -151,6 +156,7 @@ impl PanelView {
             theme,
             on_action,
             syntax_service,
+            language,
             label_input,
             condition_inputs,
             loop_expr_input,
@@ -412,6 +418,7 @@ impl PanelView {
         theme: &Theme,
         cx: &mut Context<Self>,
     ) -> gpui::AnyElement {
+        let lang = self.language;
         let mut col = div()
             .flex()
             .flex_col()
@@ -426,7 +433,7 @@ impl PanelView {
                 .text_size(px(16.0))
                 .font_semibold()
                 .text_color(theme.panel_title_text)
-                .child("Condition 节点（条件分支）"),
+                .child(t(lang, TKey::PanelConditionTitle).to_string()),
         );
 
         // Kind 信息
@@ -434,7 +441,7 @@ impl PanelView {
             div()
                 .text_size(px(13.0))
                 .text_color(theme.panel_subtext)
-                .child(format!("Kind: {}", self.node.kind)),
+                .child(format!("{}: {}", t(lang, TKey::PanelKind), self.node.kind)),
         );
 
         // 节点名称
@@ -448,7 +455,7 @@ impl PanelView {
                         .text_size(px(13.0))
                         .font_semibold()
                         .text_color(theme.panel_label_text)
-                        .child("节点名称"),
+                        .child(t(lang, TKey::PanelNodeName).to_string()),
                 )
                 .child(Input::new(&self.label_input).appearance(true)),
         );
@@ -459,14 +466,12 @@ impl PanelView {
                 .text_size(px(13.0))
                 .font_semibold()
                 .text_color(theme.panel_label_text)
-                .child("条件分支"),
+                .child(t(lang, TKey::PanelConditions).to_string()),
         );
 
         for (i, cond_input) in self.condition_inputs.iter().enumerate() {
             let delete_handler = cx.listener(move |this, _: &gpui::MouseDownEvent, _window, cx| {
                 this.delete_branch(i, cx);
-                // 触发 sync_from_node 重建 InputState 列表
-                // delete_branch 内部已调用 sync_conditions_to_node
             });
 
             col = col.child(
@@ -479,7 +484,7 @@ impl PanelView {
                             .text_size(px(12.0))
                             .text_color(theme.panel_subtext)
                             .w(px(40.0))
-                            .child(format!("If {}", i + 1)),
+                            .child(format!("{} {}", t(lang, TKey::If), i + 1)),
                     )
                     .child(div().flex_1().child(Input::new(cond_input).appearance(true).h(px(56.0))))
                     .child(
@@ -511,7 +516,7 @@ impl PanelView {
                 .text_size(px(12.0))
                 .text_color(theme.toggle_btn_text)
                 .text_center()
-                .child("+ 添加分支")
+                .child(t(lang, TKey::PanelAddBranch).to_string())
                 .on_mouse_down(gpui::MouseButton::Left, add_handler),
         );
 
@@ -520,7 +525,7 @@ impl PanelView {
             div()
                 .text_size(px(12.0))
                 .text_color(theme.panel_subtext)
-                .child("Else 分支为自动兜底，无需配置条件"),
+                .child(t(lang, TKey::PanelElseHint).to_string()),
         );
 
         col.into_any_element()
@@ -532,6 +537,7 @@ impl PanelView {
         theme: &Theme,
         cx: &mut Context<Self>,
     ) -> gpui::AnyElement {
+        let lang = self.language;
         let mut col = div()
             .flex()
             .flex_col()
@@ -546,7 +552,7 @@ impl PanelView {
                 .text_size(px(16.0))
                 .font_semibold()
                 .text_color(theme.panel_title_text)
-                .child("Loop 节点（循环）"),
+                .child(t(lang, TKey::PanelLoopTitle).to_string()),
         );
 
         // Kind 信息
@@ -554,7 +560,7 @@ impl PanelView {
             div()
                 .text_size(px(13.0))
                 .text_color(theme.panel_subtext)
-                .child(format!("Kind: {}", self.node.kind)),
+                .child(format!("{}: {}", t(lang, TKey::PanelKind), self.node.kind)),
         );
 
         // 节点名称
@@ -568,7 +574,7 @@ impl PanelView {
                         .text_size(px(13.0))
                         .font_semibold()
                         .text_color(theme.panel_label_text)
-                        .child("节点名称"),
+                        .child(t(lang, TKey::PanelNodeName).to_string()),
                 )
                 .child(Input::new(&self.label_input).appearance(true)),
         );
@@ -579,14 +585,14 @@ impl PanelView {
                 .text_size(px(13.0))
                 .font_semibold()
                 .text_color(theme.panel_label_text)
-                .child("循环模式"),
+                .child(t(lang, TKey::PanelLoopMode).to_string()),
         );
 
         let modes = [
-            ("for_each", "数组循环 (For Each)"),
-            ("while", "条件循环 (While)"),
-            ("for_loop", "计次循环 (For Loop)"),
-            ("batch_parallel", "批量/并行循环"),
+            ("for_each", t(lang, TKey::LoopForEach)),
+            ("while", t(lang, TKey::LoopWhile)),
+            ("for_loop", t(lang, TKey::LoopForLoop)),
+            ("batch_parallel", t(lang, TKey::LoopParallel)),
         ];
 
         let mut mode_row = div().flex().flex_col().gap(px(4.0));
@@ -634,7 +640,7 @@ impl PanelView {
                         .text_size(px(13.0))
                         .font_semibold()
                         .text_color(theme.panel_label_text)
-                        .child("条件表达式 (rhai)"),
+                        .child(t(lang, TKey::PanelLoopExpr).to_string()),
                 )
                 .child(
                     Input::new(&self.loop_expr_input)
@@ -648,30 +654,39 @@ impl PanelView {
 
     /// 渲染简单只读面板（用于 Start/End/Action 等无需编辑的节点）。
     fn render_simple_panel(&self, theme: &Theme) -> gpui::AnyElement {
+        let lang = self.language;
         let label = label_of(&self.node);
         let desc = desc_of(&self.node);
         let mut col = div().flex().flex_col().gap(px(8.0)).p_4().size_full();
 
+        // 标题：类型 + "节点"
+        let kind_label = match self.node.kind.as_str() {
+            "start" => t(lang, TKey::Start),
+            "end" => t(lang, TKey::End),
+            "action" => t(lang, TKey::Action),
+            _ => self.node.kind.as_str(),
+        };
+        let title = format!("{} {}", kind_label, t(lang, TKey::PanelNodeSuffix));
         col = col.child(
             div()
                 .text_size(px(16.0))
                 .font_semibold()
                 .text_color(theme.panel_title_text)
-                .child(format!("{} 节点", self.node.kind)),
+                .child(title),
         );
 
         col = col.child(
             div()
                 .text_size(px(13.0))
                 .text_color(theme.panel_subtext)
-                .child(format!("Kind: {}", self.node.kind)),
+                .child(format!("{}: {}", t(lang, TKey::PanelKind), self.node.kind)),
         );
 
         col = col.child(
             div()
                 .text_size(px(13.0))
                 .text_color(theme.panel_label_text)
-                .child(format!("Label: {}", label)),
+                .child(format!("{}: {}", t(lang, TKey::PanelLabel), label)),
         );
 
         if let Some(desc) = desc {
@@ -679,7 +694,7 @@ impl PanelView {
                 div()
                     .text_size(px(13.0))
                     .text_color(theme.panel_subtext)
-                    .child(format!("Desc: {}", desc)),
+                    .child(format!("{}: {}", t(lang, TKey::PanelDesc), desc)),
             );
         }
 

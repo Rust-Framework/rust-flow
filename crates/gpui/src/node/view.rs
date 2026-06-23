@@ -235,6 +235,8 @@ pub struct NodeView {
     pub hovered: bool,
     /// 动作回调。
     pub on_action: Option<ActionCallback>,
+    /// 当前 UI 语言。
+    pub language: crate::i18n::Language,
 }
 
 impl NodeView {
@@ -250,6 +252,7 @@ impl NodeView {
             theme: crate::theme::Theme::default(),
             hovered: false,
             on_action: None,
+            language: crate::i18n::Language::default(),
         }
     }
 
@@ -271,6 +274,11 @@ impl NodeView {
 
     pub fn with_flow_node(mut self, flow_node: Arc<dyn IFlowNode>) -> Self {
         self.flow_node = Some(flow_node);
+        self
+    }
+
+    pub fn with_language(mut self, language: crate::i18n::Language) -> Self {
+        self.language = language;
         self
     }
 
@@ -317,6 +325,7 @@ impl RenderOnce for NodeView {
                 scale: self.scale,
                 layout: self.layout,
                 theme: self.theme,
+                language: self.language,
                 on_action: self.on_action,
             };
             flow_node.get_view(&self.node, &mut ctx)

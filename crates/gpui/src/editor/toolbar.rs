@@ -433,6 +433,26 @@ impl FlowEditorView {
                     }))
                     .child(if is_dark { "\u{2600}" } else { "\u{263D}" }), // ☀ light / ☽ dark
             )
+            // 语言切换（中/En）
+            .child(
+                div()
+                    .id("tb-lang")
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .w(px(36.0))
+                    .h(px(28.0))
+                    .rounded_md()
+                    .hover(|s| s.bg(t.toolbar_hover_bg))
+                    .active(|s| s.bg(t.toolbar_active_bg))
+                    .text_xs()
+                    .font_medium()
+                    .text_color(t.toolbar_text)
+                    .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, _, cx| {
+                        this.toggle_language(cx);
+                    }))
+                    .child(if self.language == crate::i18n::Language::Zh { "En" } else { "中" }),
+            )
     }
 }
 
