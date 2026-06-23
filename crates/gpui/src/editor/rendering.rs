@@ -361,6 +361,7 @@ impl FlowEditorView {
                 flow_node,
                 self.theme,
                 Some(on_action),
+                self.syntax_service.clone(),
                 window,
                 cx,
             ));

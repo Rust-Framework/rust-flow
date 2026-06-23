@@ -13,7 +13,7 @@
 use std::sync::Arc;
 
 use gpui::{
-    div, px, App, AppContext, Context, Entity, EventEmitter, InteractiveElement, IntoElement,
+    div, px, App, AppContext, Context, Entity, InteractiveElement, IntoElement,
     ParentElement, Render, ScrollHandle, Styled, Subscription, Window,
 };
 use gpui_component::input::{Input, InputEvent, InputState};
@@ -47,7 +47,8 @@ pub struct PanelView {
     // 同步标记：避免节点更新时回环触发 on_change
     syncing: bool,
 
-    // 滚动句柄（面板内容可能超长）
+    // 滚动句柄（面板内容可能超长，预留用于未来滚动支持）
+    #[allow(dead_code)]
     scroll_handle: ScrollHandle,
 
     _subscriptions: Vec<Subscription>,
@@ -219,16 +220,18 @@ impl PanelView {
                     });
                 }
             } else {
-                // 数量变化：重建 condition_inputs
-                // 注意：这里不重建 subscription，因为新 InputState 的变化
-                // 会在下次 sync 时通过值更新反映。为简化，重建时重新订阅。
+                // 数量变化：重建 condition_inputs（保持 CodeEditor 模式）
                 self.condition_inputs.clear();
                 for (_id, cond_label) in &conditions {
-                    let cond_input = cx.new(|cx| {
-                        InputState::new(window, cx)
-                            .default_value(cond_label.as_str())
-                            .placeholder("条件表达式")
-                    });
+                    let cond_input = Self::new_rhai_input(
+                        &self.syntax_service,
+                        cond_label,
+                        "条件表达式",
+                        2,
+                        false,
+                        window,
+                        cx,
+                    );
                     let _sub = cx.subscribe_in(&cond_input, window, Self::on_condition_change);
                     self.condition_inputs.push(cond_input);
                 }
@@ -343,11 +346,15 @@ impl PanelView {
 
     /// 添加条件分支。
     pub fn add_branch(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let new_input = cx.new(|cx| {
-            InputState::new(window, cx)
-                .default_value("")
-                .placeholder("条件表达式")
-        });
+        let new_input = Self::new_rhai_input(
+            &self.syntax_service,
+            "",
+            "条件表达式",
+            2,
+            false,
+            window,
+            cx,
+        );
         let _sub = cx.subscribe_in(&new_input, window, Self::on_condition_change);
         self.condition_inputs.push(new_input);
         self.sync_conditions_to_node(cx);
@@ -455,9 +462,8 @@ impl PanelView {
                 .child("条件分支"),
         );
 
-        let n_conditions = self.condition_inputs.len();
         for (i, cond_input) in self.condition_inputs.iter().enumerate() {
-            let delete_handler = cx.listener(move |this, _: &gpui::ClickEvent, window, cx| {
+            let delete_handler = cx.listener(move |this, _: &gpui::MouseDownEvent, _window, cx| {
                 this.delete_branch(i, cx);
                 // 触发 sync_from_node 重建 InputState 列表
                 // delete_branch 内部已调用 sync_conditions_to_node
@@ -475,7 +481,7 @@ impl PanelView {
                             .w(px(40.0))
                             .child(format!("If {}", i + 1)),
                     )
-                    .child(div().flex_1().child(Input::new(cond_input).appearance(true)))
+                    .child(div().flex_1().child(Input::new(cond_input).appearance(true).h(px(56.0))))
                     .child(
                         div()
                             .id(("delete_branch", i))
@@ -492,7 +498,7 @@ impl PanelView {
         }
 
         // 添加分支按钮
-        let add_handler = cx.listener(|this, _: &gpui::ClickEvent, window, cx| {
+        let add_handler = cx.listener(|this, _: &gpui::MouseDownEvent, window, cx| {
             this.add_branch(window, cx);
         });
         col = col.child(
@@ -584,7 +590,7 @@ impl PanelView {
         ];
 
         let mut mode_row = div().flex().flex_col().gap(px(4.0));
-        for (mode_key, mode_label) in &modes {
+        for (idx, (mode_key, mode_label)) in modes.iter().enumerate() {
             let is_active = self.loop_mode == *mode_key;
             let bg = if is_active {
                 theme.panel_label_text
@@ -597,12 +603,12 @@ impl PanelView {
                 theme.panel_label_text
             };
             let key = mode_key.to_string();
-            let mode_handler = cx.listener(move |this, _: &gpui::ClickEvent, _window, cx| {
+            let mode_handler = cx.listener(move |this, _: &gpui::MouseDownEvent, _window, cx| {
                 this.set_loop_mode(&key, cx);
             });
             mode_row = mode_row.child(
                 div()
-                    .id(("mode", key.as_str()))
+                    .id(("mode", idx))
                     .px(px(8.0))
                     .py(px(6.0))
                     .rounded_md()
@@ -633,7 +639,7 @@ impl PanelView {
                 .child(
                     Input::new(&self.loop_expr_input)
                         .appearance(true)
-                        .h(px(80.0)),
+                        .h(px(120.0)),
                 ),
         );
 

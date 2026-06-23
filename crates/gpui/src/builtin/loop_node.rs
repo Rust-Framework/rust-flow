@@ -63,6 +63,20 @@ fn is_collapsed(node: &Node) -> bool {
         .unwrap_or(false)
 }
 
+/// 根据 `loop_mode` 返回节点循环条件区的默认显示文案。
+///
+/// 当节点未设置 `desc` 时，用此文案作为循环条件区的提示文字，
+/// 直观体现当前循环模式语义。
+fn loop_mode_label(node: &Node) -> &'static str {
+    match node.data.get("loop_mode").and_then(|v| v.as_str()) {
+        Some("for_each") => "For each item",
+        Some("for_loop") => "for i in 0..n",
+        Some("while") => "while cond",
+        Some("batch_parallel") => "parallel each",
+        _ => "For each item",
+    }
+}
+
 /// Loop 节点：循环体，结构化布局。
 ///
 /// - 纵向：标题栏 In(顶) + Done(底)，循环条件区 LoopBody(右) + LoopIn(左)
@@ -114,7 +128,8 @@ impl IFlowNode for LoopNode {
         let t = &ctx.theme;
 
         let label = label_of(node);
-        let desc = desc_of(node).unwrap_or_else(|| "For each item".to_string());
+        // 循环条件区文案：优先用 node.data["desc"]（用户自定义），否则按 loop_mode 显示模式标签
+        let desc = desc_of(node).unwrap_or_else(|| loop_mode_label(node).to_string());
 
         let (port_size, port_outer, port_outer_half) = port_sizes(s);
         let border_color = if ctx.selected {

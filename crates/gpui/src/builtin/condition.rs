@@ -64,7 +64,7 @@ use crate::node::{NodeViewCtx, IFlowNode};
 
 use super::common::{
     label_of, make_port, port_sizes, render_collapse_pill, render_delete_button,
-    render_simple_panel, render_toggle_button, BTN_MARGIN, TOGGLE_BTN_SIZE,
+    render_simple_panel, render_toggle_button,
 };
 
 /// 标题栏高度（逻辑坐标）。
@@ -318,7 +318,7 @@ impl IFlowNode for ConditionNode {
         // 条件项行（浅橙背景）— if_0, if_1, ...
         for (i, (_id, cond_label)) in conditions.iter().enumerate() {
             let item_top = title_h + item_h * i as f32;
-            let mut row = div()
+            let row = div()
                 .absolute()
                 .left_0()
                 .top(px(item_top))
@@ -336,10 +336,6 @@ impl IFlowNode for ConditionNode {
                         .text_color(t.cond_item_text)
                         .child(format!("If {}", cond_label)),
                 );
-            // 如果没有 else 行（理论上不会发生），最后一行需要底部圆角
-            if n_cond == n_br - 1 && i == n_cond - 1 && n_br == n_cond {
-                row = row.rounded_b_lg();
-            }
             container = container.child(row);
         }
 

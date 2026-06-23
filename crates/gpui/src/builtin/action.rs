@@ -22,7 +22,7 @@ impl ActionNode {
     pub fn new() -> Self {
         Self {
             schema: NodeSchema::new("action", "Action")
-                .with_size(SizeF::new(180.0, 35.0))
+                .with_size(SizeF::new(200.0, 56.0))
                 .with_port(PortSpec::new("in", PortDirection::In, PortSide::Auto))
                 .with_port(PortSpec::new("out", PortDirection::Out, PortSide::Auto)),
         }
