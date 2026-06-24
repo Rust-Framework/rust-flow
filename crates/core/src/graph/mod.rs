@@ -38,7 +38,7 @@ impl FlowGraph {
             kind: kind.into(),
             data,
             position: crate::geometry::PointF::zero(),
-            size: crate::geometry::SizeF::new(180.0, 35.0),
+            size: crate::geometry::SizeF::new(180.0, 64.0),
         })
     }
 

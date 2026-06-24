@@ -37,6 +37,7 @@ use rust_agent_flow::{
 
 use crate::i18n::{Language, TKey, t};
 use crate::node::{default_syntax_service, NodeRegistry, SharedSyntaxService};
+use crate::data_type::SharedDataTypeProvider;
 use crate::panel::PanelEntity;
 use crate::theme::Theme;
 
@@ -86,11 +87,27 @@ pub struct FlowEditorView {
     /// 拖动/平移等不改变图结构的交互不会触发更新，避免每帧重复 O(V+E) 遍历。
     /// 供 `render`、`hit_test_edge_plus` 等复用，保证渲染与命中测试一致。
     pub cached_body_groups: HashMap<NodeId, HashSet<NodeId>>,
+    /// 缓存的「所有循环体节点」集合（`cached_body_groups` 的扁平化）。
+    ///
+    /// 在 `relayout` 末尾与 `cached_body_groups` 一同更新，避免 `render_edges`、
+    /// `render_nodes`、`render_edge_plus_buttons`、`hit_test_edge_plus` 等方法
+    /// 每帧重复 flat_map 收集（每帧原需构建 4-5 次 HashSet）。
+    pub cached_all_body_nodes: HashSet<NodeId>,
+    /// 缓存的「已隐藏节点」集合（收起的循环体节点）。
+    ///
+    /// 在 `relayout` 末尾更新。当 Loop 节点 `body_collapsed == true` 时，
+    /// 其循环体节点已隐藏，连接到这些节点的边也不渲染。
+    pub cached_hidden_nodes: HashSet<NodeId>,
     /// 自定义工具栏扩展（由调用侧通过 `add_toolbar_provider` 注入）。
     ///
     /// 工具项渲染在内置工具栏末尾，以竖线分隔符区隔。
     /// 多次调用 `add_toolbar_provider` 可注入多个 provider，按注入顺序渲染。
     pub custom_toolbar: Vec<SharedToolbarProvider>,
+    /// 自定义数据类型提供程序（由调用侧通过 `set_data_type_provider` 注入）。
+    ///
+    /// 为 Start 节点属性面板提供自定义复杂数据类型（如 DataModel）。
+    /// 不注入时仅有内置类型（Boolean/String/Number/DateTime/DynamicObject）可用。
+    pub data_type_provider: Option<SharedDataTypeProvider>,
 }
 
 impl FlowEditorView {
@@ -115,7 +132,10 @@ impl FlowEditorView {
             syntax_service: default_syntax_service(),
             language: Language::default(),
             cached_body_groups: HashMap::new(),
+            cached_all_body_nodes: HashSet::new(),
+            cached_hidden_nodes: HashSet::new(),
             custom_toolbar: Vec::new(),
+            data_type_provider: None,
         }
     }
 
@@ -154,6 +174,28 @@ impl FlowEditorView {
 
         // 更新缓存的循环体分组：图结构/布局变化后重新计算。
         self.cached_body_groups = self.graph.loop_body_groups();
+
+        // 派生缓存：所有循环体节点（扁平化）+ 已隐藏节点（收起的循环体）。
+        // 避免每帧在 render_edges/render_nodes/render_edge_plus_buttons/
+        // hit_test_edge_plus 中重复构建（原每帧 4-5 次 HashSet 收集）。
+        self.cached_all_body_nodes = self
+            .cached_body_groups
+            .values()
+            .flat_map(|s| s.iter().copied())
+            .collect();
+        self.cached_hidden_nodes = HashSet::new();
+        for (loop_node, body_nodes) in &self.cached_body_groups {
+            if let Some(ln) = self.graph.node(*loop_node) {
+                let body_collapsed = ln
+                    .data
+                    .get("body_collapsed")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                if body_collapsed {
+                    self.cached_hidden_nodes.extend(body_nodes.iter().copied());
+                }
+            }
+        }
     }
 
     /// 同步所有节点的 `size` 为实际渲染尺寸（`IFlowNode::content_size`）。
@@ -301,6 +343,21 @@ impl FlowEditorView {
         cx.notify();
     }
 
+    /// 注入自定义数据类型提供程序（扩展点）。
+    ///
+    /// 为 Start 节点属性面板提供自定义复杂数据类型（如 DataModel）。
+    /// 不注入时仅有内置类型（Boolean/String/Number/DateTime/DynamicObject）可用。
+    /// 注入后销毁现有 panel_view，下次 render 时用新类型重建。
+    pub fn set_data_type_provider(
+        &mut self,
+        provider: SharedDataTypeProvider,
+        cx: &mut Context<Self>,
+    ) {
+        self.data_type_provider = Some(provider);
+        self.panel_view = None;
+        cx.notify();
+    }
+
     /// 切换 UI 语言（中英文）。
     pub fn set_language(&mut self, language: Language, cx: &mut Context<Self>) {
         self.language = language;
@@ -401,7 +458,7 @@ impl Render for FlowEditorView {
         // 缓存在 relayout 末尾更新，拖动/平移等不改变图结构的交互不会触发更新。
         let body_groups = &self.cached_body_groups;
         let edges = self.render_edges(body_groups);
-        let nodes = self.render_nodes(entity.clone(), body_groups);
+        let nodes = self.render_nodes(entity.clone());
         let toolbar = self.render_toolbar(cx);
 
         let offset = self.viewport.offset;
@@ -458,7 +515,7 @@ impl Render for FlowEditorView {
             InteractionState::DraggingNode { .. } | InteractionState::Panning { .. }
         );
         if !is_interacting {
-            container = container.child(self.render_edge_plus_buttons(body_groups));
+            container = container.child(self.render_edge_plus_buttons());
         }
 
         // ====== 「+」按钮 tooltip：悬停时显示 ======

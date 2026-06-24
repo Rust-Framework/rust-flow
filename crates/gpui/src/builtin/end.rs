@@ -13,10 +13,7 @@ use rust_agent_flow::{
 use crate::i18n::TKey;
 use crate::node::{NodeViewCtx, IFlowNode};
 
-use super::common::{label_of_localized, make_port, node_icon, port_sizes, TITLE_ICON_SIZE};
-
-/// 标题栏高度（逻辑坐标）。
-const TITLE_H: f32 = 36.0;
+use super::common::{label_of_localized, make_port, node_icon, port_sizes, TITLE_H, TITLE_ICON_SIZE};
 
 /// 主体高度（逻辑坐标）。
 const BODY_H: f32 = 20.0;

@@ -5,6 +5,7 @@
 
 pub mod assets;
 pub mod builtin;
+pub mod data_type;
 pub mod editor;
 pub mod edge;
 pub mod i18n;
@@ -13,6 +14,10 @@ pub mod panel;
 pub mod theme;
 
 pub use assets::{CombinedAssets, FlowIcon};
+pub use data_type::{
+    DataTypeCategory, DataTypeField, DataTypeRegistry, IDataType, IDataTypeProvider,
+    SharedDataTypeProvider,
+};
 pub use editor::{FlowEditorView, SharedToolbarProvider, ToolbarCtx, ToolbarProvider};
 pub use edge::EdgeView;
 pub use i18n::{Language, TKey, t};

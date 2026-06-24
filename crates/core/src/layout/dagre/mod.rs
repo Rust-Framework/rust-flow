@@ -159,12 +159,16 @@ impl LayoutEngine for DagreLayout {
         // 5. Loop `done` target alignment — straighten done edge.
         // 6. Loop `loop_body` target alignment — position body group right of Loop.
         // 7. Post-done chain alignment — straighten forward chain after done target.
+
+        // 计算 loop_body_groups 一次，供步骤 3/6 复用（避免重复 BFS 遍历）。
+        let loop_groups = graph.loop_body_groups();
+
         reorder_branch_targets(graph, &mut positions, direction);
         align_linear_chain(graph, &mut positions, direction);
-        reserve_loop_back_edge_space(graph, &mut positions, direction);
+        reserve_loop_back_edge_space(graph, &mut positions, direction, &loop_groups);
         align_loop_in_sources(graph, &mut positions, direction);
         align_loop_done_target(graph, &mut positions, direction);
-        align_loop_body_target(graph, &mut positions, direction);
+        align_loop_body_target(graph, &mut positions, direction, &loop_groups);
         align_post_done_chain(graph, &mut positions, direction);
 
         LayoutResult { positions }

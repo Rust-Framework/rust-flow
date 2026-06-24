@@ -173,7 +173,7 @@ impl NodeSchema {
             kind: kind.into(),
             label: label.into(),
             ports: Vec::new(),
-            default_size: SizeF::new(180.0, 35.0),
+            default_size: SizeF::new(180.0, 64.0),
             fields: Vec::new(),
         }
     }

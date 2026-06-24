@@ -54,16 +54,14 @@ pub(super) fn reserve_loop_back_edge_space(
     graph: &FlowGraph,
     positions: &mut std::collections::HashMap<crate::graph::NodeId, PointF>,
     _direction: LayoutDirection,
+    loop_groups: &std::collections::HashMap<crate::graph::NodeId, std::collections::HashSet<crate::graph::NodeId>>,
 ) {
-    // Use the shared BFS body group computation (single source of truth).
-    let loop_groups = graph.loop_body_groups();
-
     if loop_groups.is_empty() {
         return;
     }
 
     // For each Loop, shift nodes BELOW the body group down (both layouts).
-    for (loop_node, body_nodes) in &loop_groups {
+    for (loop_node, body_nodes) in loop_groups {
         // Body group bottom Y = max(body_node.y + body_node.h)
         let body_bottom = body_nodes
             .iter()
@@ -252,10 +250,9 @@ pub(super) fn align_loop_body_target(
     graph: &FlowGraph,
     positions: &mut std::collections::HashMap<crate::graph::NodeId, PointF>,
     _direction: LayoutDirection,
+    loop_groups: &std::collections::HashMap<crate::graph::NodeId, std::collections::HashSet<crate::graph::NodeId>>,
 ) {
-    let loop_groups = graph.loop_body_groups();
-
-    for (loop_node_id, body_nodes) in &loop_groups {
+    for (loop_node_id, body_nodes) in loop_groups {
         let loop_node = match graph.node(*loop_node_id) {
             Some(n) => n,
             None => continue,

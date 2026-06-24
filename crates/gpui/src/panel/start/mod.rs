@@ -1,13 +1,14 @@
 //! Start 节点专属属性面板：支持参数和变量的树形编辑。
 //!
 //! 与通用 [`PanelView`](super::PanelView) 不同，StartPanelView 专为 Start 节点设计：
-//! - 接收参数：0-N 个，简单/复杂类型，子字段值只读
-//! - 变量定义：0-N 个，简单/复杂类型，子字段值可编辑
-//! - 复杂类型展开/收起，树形显示子字段结构
+//! - 接收参数：0-N 个，基础/复杂/动态类型，子字段值只读
+//! - 变量定义：0-N 个，基础/复杂/动态类型，子字段值可编辑
+//! - 复杂类型：预定义结构，结构不可编辑
+//! - 动态类型（DynamicObject）：结构可手动编辑（增删改字段）
 //!
 //! 文件拆分：
-//! - `data_types.rs`：类型系统（简单/复杂类型注册表）
-//! - `item.rs`：单项状态与渲染（简单行 + 复杂树形）
+//! - `data_types.rs`：JSON 辅助函数
+//! - `item.rs`：单项状态与渲染（基础行 + 复杂/动态树形）
 //! - `section.rs`：列表区块渲染（标题 + 项列表 + 添加按钮）
 //! - `mod.rs`：面板实体、状态管理、Render 实现
 
@@ -22,6 +23,7 @@ use gpui_component::{Icon, Sizable, StyledExt};
 use rust_agent_flow::Node;
 
 use crate::builtin::common::node_icon;
+use crate::data_type::{DataTypeRegistry, SharedDataTypeProvider};
 use crate::i18n::{kind_label, t, Language, TKey};
 use crate::node::{ActionCallback, IFlowNode, NodeAction, SharedSyntaxService};
 use crate::theme::Theme;
@@ -30,7 +32,7 @@ pub mod data_types;
 pub mod item;
 pub mod section;
 
-use data_types::{build_complex_item, build_default_item, build_simple_item, is_complex_type};
+use data_types::{build_default_item, build_item_for_type};
 use item::ItemState;
 
 /// Start 节点属性面板视图。
@@ -42,6 +44,8 @@ pub struct StartPanelView {
     pub syntax_service: SharedSyntaxService,
     pub language: Language,
 
+    /// 数据类型注册表（内置类型 + provider 注入类型）。
+    registry: DataTypeRegistry,
     /// 节点名称输入。
     label_input: Entity<InputState>,
     /// 参数项状态列表。
@@ -65,6 +69,7 @@ impl StartPanelView {
         on_action: Option<ActionCallback>,
         syntax_service: SharedSyntaxService,
         language: Language,
+        data_type_provider: Option<SharedDataTypeProvider>,
         window: &mut Window,
         cx: &mut App,
     ) -> Entity<Self> {
@@ -76,6 +81,7 @@ impl StartPanelView {
                 on_action,
                 syntax_service,
                 language,
+                data_type_provider,
                 window,
                 cx,
             )
@@ -89,9 +95,12 @@ impl StartPanelView {
         on_action: Option<ActionCallback>,
         syntax_service: SharedSyntaxService,
         language: Language,
+        data_type_provider: Option<SharedDataTypeProvider>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        let registry = DataTypeRegistry::new(data_type_provider);
+
         let label = label_of(&node);
         let label_placeholder = kind_label(language, &node.kind).to_string();
         let label_input = cx.new(|cx| {
@@ -111,7 +120,7 @@ impl StartPanelView {
             .unwrap_or_default();
         let mut params_state: Vec<ItemState> = Vec::new();
         for item_val in &params_items {
-            let st = ItemState::from_value(item_val, false, window, cx);
+            let st = ItemState::from_value(item_val, false, &registry, window, cx);
             subscribe_item_inputs(&mut params_state, st, "params", &mut subscriptions, window, cx);
         }
 
@@ -123,7 +132,7 @@ impl StartPanelView {
             .unwrap_or_default();
         let mut variables_state: Vec<ItemState> = Vec::new();
         for item_val in &vars_items {
-            let st = ItemState::from_value(item_val, true, window, cx);
+            let st = ItemState::from_value(item_val, true, &registry, window, cx);
             subscribe_item_inputs(
                 &mut variables_state,
                 st,
@@ -141,6 +150,7 @@ impl StartPanelView {
             on_action,
             syntax_service,
             language,
+            registry,
             label_input,
             params_state,
             variables_state,
@@ -198,7 +208,7 @@ impl StartPanelView {
         if items.len() == states.len() {
             // 数量一致：逐项同步值
             for (i, item_val) in items.iter().enumerate() {
-                states[i].sync_from_value(item_val, is_variable, window, cx);
+                states[i].sync_from_value(item_val, is_variable, &self.registry, window, cx);
             }
         } else {
             // 数量变化：重建（需要重建订阅）
@@ -206,7 +216,7 @@ impl StartPanelView {
             // 保留 label 订阅，清除项相关订阅
             self._subscriptions.truncate(1);
             for item_val in &items {
-                let st = ItemState::from_value(item_val, is_variable, window, cx);
+                let st = ItemState::from_value(item_val, is_variable, &self.registry, window, cx);
                 subscribe_item_inputs(states, st, field_key, &mut self._subscriptions, window, cx);
             }
             // 重建另一个列表的订阅（因为 truncate 清除了所有项订阅）
@@ -222,7 +232,6 @@ impl StartPanelView {
         cx: &mut Context<Self>,
     ) {
         if current_field != "params" {
-            // 重建 params 订阅
             let params = std::mem::take(&mut self.params_state);
             for st in params {
                 subscribe_item_inputs(
@@ -236,7 +245,6 @@ impl StartPanelView {
             }
         }
         if current_field != "variables" {
-            // 重建 variables 订阅
             let vars = std::mem::take(&mut self.variables_state);
             for st in vars {
                 subscribe_item_inputs(
@@ -302,7 +310,7 @@ impl StartPanelView {
         self.dispatch_set_data(field_key, serde_json::json!(arr), cx);
     }
 
-    /// 切换复杂类型项的展开/收起（纯 UI 状态，无需同步到 node.data）。
+    /// 切换结构类型项的展开/收起（纯 UI 状态，无需同步到 node.data）。
     pub fn toggle_item_expanded(&mut self, field_key: &str, item_idx: usize, cx: &mut Context<Self>) {
         let states = if field_key == "variables" {
             &mut self.variables_state
@@ -337,11 +345,114 @@ impl StartPanelView {
             .map(|(i, s)| {
                 if i == item_idx {
                     let name = s.name.read(cx).value().to_string();
-                    if is_complex_type(&new_type) {
-                        build_complex_item(&name, &new_type)
-                    } else {
-                        build_simple_item(&name, &new_type, "")
+                    build_item_for_type(&name, &new_type, &self.registry)
+                } else {
+                    s.to_value(cx)
+                }
+            })
+            .collect();
+        self.dispatch_set_data(field_key, serde_json::json!(arr), cx);
+    }
+
+    /// 向动态类型项添加字段（通过 dispatch SetData 触发 sync 重建）。
+    pub fn add_field(&mut self, field_key: &str, item_idx: usize, cx: &mut Context<Self>) {
+        if self.syncing {
+            return;
+        }
+        let states = if field_key == "variables" {
+            &self.variables_state
+        } else {
+            &self.params_state
+        };
+        let arr: Vec<serde_json::Value> = states
+            .iter()
+            .enumerate()
+            .map(|(i, s)| {
+                if i == item_idx {
+                    let mut val = s.to_value(cx);
+                    if let Some(fields) = val.get_mut("fields").and_then(|f| f.as_array_mut()) {
+                        fields.push(serde_json::json!({
+                            "name": "",
+                            "type": "String",
+                            "value": "",
+                        }));
                     }
+                    val
+                } else {
+                    s.to_value(cx)
+                }
+            })
+            .collect();
+        self.dispatch_set_data(field_key, serde_json::json!(arr), cx);
+    }
+
+    /// 删除动态类型项的字段（通过 dispatch SetData 触发 sync 重建）。
+    pub fn delete_field(
+        &mut self,
+        field_key: &str,
+        item_idx: usize,
+        field_idx: usize,
+        cx: &mut Context<Self>,
+    ) {
+        if self.syncing {
+            return;
+        }
+        let states = if field_key == "variables" {
+            &self.variables_state
+        } else {
+            &self.params_state
+        };
+        let arr: Vec<serde_json::Value> = states
+            .iter()
+            .enumerate()
+            .map(|(i, s)| {
+                if i == item_idx {
+                    let mut val = s.to_value(cx);
+                    if let Some(fields) = val.get_mut("fields").and_then(|f| f.as_array_mut()) {
+                        if field_idx < fields.len() {
+                            fields.remove(field_idx);
+                        }
+                    }
+                    val
+                } else {
+                    s.to_value(cx)
+                }
+            })
+            .collect();
+        self.dispatch_set_data(field_key, serde_json::json!(arr), cx);
+    }
+
+    /// 切换动态类型字段的类型（通过 dispatch SetData 触发 sync 重建）。
+    pub fn change_field_type(
+        &mut self,
+        field_key: &str,
+        item_idx: usize,
+        field_idx: usize,
+        new_type: String,
+        cx: &mut Context<Self>,
+    ) {
+        if self.syncing {
+            return;
+        }
+        let states = if field_key == "variables" {
+            &self.variables_state
+        } else {
+            &self.params_state
+        };
+        let arr: Vec<serde_json::Value> = states
+            .iter()
+            .enumerate()
+            .map(|(i, s)| {
+                if i == item_idx {
+                    let mut val = s.to_value(cx);
+                    if let Some(fields) = val.get_mut("fields").and_then(|f| f.as_array_mut()) {
+                        if field_idx < fields.len() {
+                            if let Some(ftype) = fields[field_idx].get_mut("type") {
+                                *ftype = serde_json::json!(new_type);
+                            }
+                        }
+                    }
+                    val
                 } else {
                     s.to_value(cx)
                 }
@@ -387,6 +498,7 @@ impl Render for StartPanelView {
             params_title,
             add_param_label,
             false,
+            &self.registry,
             lang,
             &theme,
             &entity,
@@ -399,6 +511,7 @@ impl Render for StartPanelView {
             vars_title,
             add_var_label,
             true,
+            &self.registry,
             lang,
             &theme,
             &entity,
@@ -501,6 +614,12 @@ fn render_header(node: &Node, lang: Language, theme: &Theme) -> gpui::AnyElement
 }
 
 /// 为项的所有 InputState 创建订阅。
+///
+/// 订阅范围：
+/// - 项名称
+/// - 基础类型值
+/// - 子字段名称（动态类型可编辑）
+/// - 子字段值（复杂/动态类型）
 fn subscribe_item_inputs(
     states: &mut Vec<ItemState>,
     st: ItemState,
@@ -522,7 +641,7 @@ fn subscribe_item_inputs(
         subscriptions.push(sub);
     }
 
-    // 订阅 value（简单类型）
+    // 订阅 value（基础类型）
     if let Some(ref val) = st.value {
         let fk = fk.clone();
         let sub = cx.subscribe_in(val, window, move |this, _e, ev, _w, cx| {
@@ -533,12 +652,22 @@ fn subscribe_item_inputs(
         subscriptions.push(sub);
     }
 
-    // 订阅 field_values（复杂类型）
-    for fv in &st.field_values {
-        let fk = fk.clone();
-        let sub = cx.subscribe_in(fv, window, move |this, _e, ev, _w, cx| {
+    // 订阅子字段 name 和 value（复杂/动态类型）
+    for field in &st.fields {
+        // 子字段 name
+        let fk_name = fk.clone();
+        let sub = cx.subscribe_in(&field.name, window, move |this, _e, ev, _w, cx| {
             if !this.syncing && matches!(ev, InputEvent::Change) {
-                this.sync_list_to_node(&fk, cx);
+                this.sync_list_to_node(&fk_name, cx);
+            }
+        });
+        subscriptions.push(sub);
+
+        // 子字段 value
+        let fk_val = fk.clone();
+        let sub = cx.subscribe_in(&field.value, window, move |this, _e, ev, _w, cx| {
+            if !this.syncing && matches!(ev, InputEvent::Change) {
+                this.sync_list_to_node(&fk_val, cx);
             }
         });
         subscriptions.push(sub);

@@ -59,17 +59,21 @@ fn agent_flow_doc() -> FlowDocument {
     let start = doc.add_node(NodeDef::new("start", serde_json::json!({
         "label": "Start",
         "params": [
-            { "name": "query", "type": "string", "value": "are you ok?" },
+            { "name": "query", "type": "String", "value": "are you ok?" },
             { "name": "data", "type": "DataModel", "fields": [
-                { "name": "id", "type": "int", "value": "0" },
-                { "name": "name", "type": "string", "value": "" }
+                { "name": "id", "type": "Number", "value": "0" },
+                { "name": "name", "type": "String", "value": "" }
             ]}
         ],
         "variables": [
-            { "name": "turn", "type": "int", "value": "0" },
+            { "name": "turn", "type": "Number", "value": "0" },
             { "name": "data", "type": "DataModel", "fields": [
-                { "name": "id", "type": "int", "value": "1" },
-                { "name": "name", "type": "string", "value": "default" }
+                { "name": "id", "type": "Number", "value": "1" },
+                { "name": "name", "type": "String", "value": "default" }
+            ]},
+            { "name": "context", "type": "DynamicObject", "fields": [
+                { "name": "topic", "type": "String", "value": "general" },
+                { "name": "priority", "type": "Number", "value": "0" }
             ]}
         ]
     })).with_size(SizeF::new(160.0, 56.0)).with_position(PointF::new(80.0, 280.0)));
@@ -77,8 +81,8 @@ fn agent_flow_doc() -> FlowDocument {
     let variable = doc.add_node(NodeDef::new("variable", serde_json::json!({
         "label": "Vars",
         "variables": [
-            { "name": "threshold", "type": "float", "value": "0.8" },
-            { "name": "max_retry", "type": "int", "value": "3" }
+            { "name": "threshold", "type": "Number", "value": "0.8" },
+            { "name": "max_retry", "type": "Number", "value": "3" }
         ]
     })).with_size(SizeF::new(200.0, 64.0)).with_position(PointF::new(300.0, 200.0)));
 
@@ -131,8 +135,8 @@ fn agent_flow_doc() -> FlowDocument {
     let end = doc.add_node(NodeDef::new("end", serde_json::json!({
         "label": "End",
         "returns": [
-            { "name": "answer", "type": "string", "value": "" },
-            { "name": "status", "type": "int", "value": "0" }
+            { "name": "answer", "type": "String", "value": "" },
+            { "name": "status", "type": "Number", "value": "0" }
         ]
     })).with_size(SizeF::new(160.0, 56.0)).with_position(PointF::new(2500.0, 280.0)));
 
@@ -170,8 +174,8 @@ fn data_pipeline_doc() -> FlowDocument {
     let start = doc.add_node(NodeDef::new("start", serde_json::json!({
         "label": "Source",
         "params": [
-            { "name": "source", "type": "string", "value": "db" },
-            { "name": "count", "type": "int", "value": "100" }
+            { "name": "source", "type": "String", "value": "db" },
+            { "name": "count", "type": "Number", "value": "100" }
         ]
     })).with_size(SizeF::new(160.0, 56.0)).with_position(PointF::new(80.0, 280.0)));
 
@@ -182,8 +186,8 @@ fn data_pipeline_doc() -> FlowDocument {
     let vars = doc.add_node(NodeDef::new("variable", serde_json::json!({
         "label": "Config",
         "variables": [
-            { "name": "batch_size", "type": "int", "value": "100" },
-            { "name": "timeout", "type": "int", "value": "30" }
+            { "name": "batch_size", "type": "Number", "value": "100" },
+            { "name": "timeout", "type": "Number", "value": "30" }
         ]
     })).with_size(SizeF::new(200.0, 64.0)).with_position(PointF::new(560.0, 200.0)));
 
@@ -206,7 +210,7 @@ fn data_pipeline_doc() -> FlowDocument {
 
     let end = doc.add_node(NodeDef::new("end", serde_json::json!({
         "label": "Sink",
-        "returns": [{ "name": "count", "type": "int", "value": "0" }]
+        "returns": [{ "name": "count", "type": "Number", "value": "0" }]
     })).with_size(SizeF::new(160.0, 56.0)).with_position(PointF::new(1380.0, 320.0)));
 
     doc.add_edge(EdgeDef::new(start, clean).with_edge_type(EdgeType::SmoothStep));

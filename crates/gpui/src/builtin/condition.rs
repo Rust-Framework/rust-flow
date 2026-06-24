@@ -66,11 +66,8 @@ use crate::node::{NodeViewCtx, IFlowNode};
 
 use super::common::{
     label_of_localized, make_port, node_icon, port_sizes, render_delete_button, render_simple_panel,
-    render_toggle_button, TITLE_ICON_SIZE,
+    render_toggle_button, TITLE_H, TITLE_ICON_SIZE,
 };
-
-/// 标题栏高度（逻辑坐标）。
-const TITLE_H: f32 = 36.0;
 
 /// 条件项行高（逻辑坐标，固定值，不随节点尺寸拉伸）。
 ///

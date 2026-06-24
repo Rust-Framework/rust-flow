@@ -52,7 +52,7 @@ impl FlowEditorView {
         let size = flow_node
             .as_ref()
             .map(|f| f.schema().default_size)
-            .unwrap_or_else(|| SizeF::new(180.0, 60.0));
+            .unwrap_or_else(|| SizeF::new(180.0, 64.0));
         let new_id = self.graph.add_node_with_size(kind, data, size);
         // 4. 连接 src → new → dst
         let mut e1 = rust_agent_flow::Edge::new(src, new_id);

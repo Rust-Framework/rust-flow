@@ -7,6 +7,7 @@ use gpui::{div, px, AnyElement, App, ClickEvent, IntoElement, ParentElement, Sty
 use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::{IconName, Sizable, StyledExt};
 
+use crate::data_type::DataTypeRegistry;
 use crate::i18n::Language;
 use crate::theme::Theme;
 
@@ -18,12 +19,14 @@ use super::item::{render_item, ItemState};
 /// `title` 为区块标题。
 /// `add_label` 为添加按钮文案。
 /// `is_variable` 区分参数（false）和变量（true）。
+/// `registry` 提供类型元信息。
 pub fn render_section(
     states: &[ItemState],
     field_key: &str,
     title: &str,
     add_label: &str,
     is_variable: bool,
+    registry: &DataTypeRegistry,
     lang: Language,
     theme: &Theme,
     entity: &gpui::Entity<super::StartPanelView>,
@@ -67,6 +70,7 @@ pub fn render_section(
             field_key,
             idx,
             is_variable,
+            registry,
             lang,
             theme,
             entity,
@@ -94,33 +98,4 @@ pub fn render_section(
     );
 
     col.into_any_element()
-}
-
-/// 渲染区块标题的辅助函数（外部可复用）。
-pub fn section_title(title: &str, count: usize, theme: &Theme) -> AnyElement {
-    div()
-        .flex()
-        .items_center()
-        .gap(px(6.0))
-        .child(
-            div()
-                .w(px(3.0))
-                .h(px(14.0))
-                .rounded_full()
-                .bg(theme.toolbar_accent),
-        )
-        .child(
-            div()
-                .text_size(px(13.0))
-                .font_semibold()
-                .text_color(theme.panel_title_text)
-                .child(title.to_string()),
-        )
-        .child(
-            div()
-                .text_size(px(11.0))
-                .text_color(theme.panel_subtext)
-                .child(format!("{}", count)),
-        )
-        .into_any_element()
 }

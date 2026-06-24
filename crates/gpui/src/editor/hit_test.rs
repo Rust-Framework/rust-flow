@@ -170,11 +170,8 @@ impl FlowEditorView {
 
         let layout = self.layout_direction;
         let (src_side_default, dst_side_default) = self.port_sides();
-        let all_body_nodes: std::collections::HashSet<NodeId> = self
-            .cached_body_groups
-            .values()
-            .flat_map(|s| s.iter().copied())
-            .collect();
+        // 使用缓存的派生集合，避免每次 hit_test 重复 flat_map 收集。
+        let all_body_nodes = &self.cached_all_body_nodes;
 
         for edge in self.graph.edges() {
             // 跳过回环边

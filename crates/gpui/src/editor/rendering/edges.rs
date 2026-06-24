@@ -41,24 +41,9 @@ impl FlowEditorView {
         let grid_dot_color = self.theme.grid_dot;
         let grid_spacing = self.grid_spacing;
 
-        let all_body_nodes: HashSet<NodeId> =
-            body_groups.values().flat_map(|s| s.iter().copied()).collect();
-
-        // 收集被收起的循环体节点：当 Loop 节点的 body_collapsed == true 时，
-        // 其循环体节点已隐藏，连接到这些节点的边也不渲染。
-        let mut hidden_nodes: HashSet<NodeId> = HashSet::new();
-        for (loop_node, body_nodes) in body_groups {
-            if let Some(ln) = self.graph.node(*loop_node) {
-                let body_collapsed = ln
-                    .data
-                    .get("body_collapsed")
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or(false);
-                if body_collapsed {
-                    hidden_nodes.extend(body_nodes.iter().copied());
-                }
-            }
-        }
+        // 使用缓存的派生集合，避免每帧重复 flat_map 收集。
+        let all_body_nodes = &self.cached_all_body_nodes;
+        let hidden_nodes = &self.cached_hidden_nodes;
 
         let horizontal_layout = matches!(layout, LayoutDirection::Horizontal);
 
@@ -182,10 +167,10 @@ impl FlowEditorView {
     ///
     /// 跳过回环边（target_port == "loop_in"）和连接到隐藏循环体节点的边。
     /// 按钮位置计算与 `hit_test_edge_plus` 保持完全一致。
-    pub(crate) fn render_edge_plus_buttons(
-        &self,
-        body_groups: &HashMap<NodeId, HashSet<NodeId>>,
-    ) -> impl IntoElement {
+    ///
+    /// 循环体节点和隐藏节点信息从 `cached_all_body_nodes`/`cached_hidden_nodes`
+    /// 读取（在 `relayout` 末尾更新），无需调用方传入。
+    pub(crate) fn render_edge_plus_buttons(&self) -> impl IntoElement {
         let s = self.scale();
         let offset_x = self.viewport.offset.x;
         let offset_y = self.viewport.offset.y;
@@ -196,24 +181,9 @@ impl FlowEditorView {
         let registry = self.registry.clone();
         let (src_side_default, dst_side_default) = self.port_sides();
 
-        // 所有循环体节点（用于 compute_edge_endpoints 的端口侧强制）
-        let all_body_nodes: HashSet<NodeId> =
-            body_groups.values().flat_map(|s| s.iter().copied()).collect();
-
-        // 收集隐藏节点（收起的循环体）
-        let mut hidden_nodes: HashSet<NodeId> = HashSet::new();
-        for (loop_node, body_nodes) in body_groups {
-            if let Some(ln) = self.graph.node(*loop_node) {
-                let body_collapsed = ln
-                    .data
-                    .get("body_collapsed")
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or(false);
-                if body_collapsed {
-                    hidden_nodes.extend(body_nodes.iter().copied());
-                }
-            }
-        }
+        // 使用缓存的派生集合，避免每帧重复 flat_map 收集。
+        let all_body_nodes = &self.cached_all_body_nodes;
+        let hidden_nodes = &self.cached_hidden_nodes;
 
         let buttons: Vec<_> = self
             .graph
@@ -307,11 +277,8 @@ impl FlowEditorView {
         let registry = self.registry.clone();
         let (src_side_default, dst_side_default) = self.port_sides();
 
-        let all_body_nodes: HashSet<NodeId> = self
-            .cached_body_groups
-            .values()
-            .flat_map(|s| s.iter().copied())
-            .collect();
+        // 使用缓存的派生集合，避免每帧重复 flat_map 收集。
+        let all_body_nodes = &self.cached_all_body_nodes;
 
         let (src, src_side, dst, dst_side) = compute_edge_endpoints(
             edge,

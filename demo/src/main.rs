@@ -20,12 +20,16 @@
 use std::sync::Arc;
 
 use gpui::AppContext;
-use rust_agent_flow_gpui::{CombinedAssets, FlowEditorView, SharedToolbarProvider};
+use rust_agent_flow_gpui::{
+    CombinedAssets, FlowEditorView, SharedDataTypeProvider, SharedToolbarProvider,
+};
 
 mod data_sources;
+mod data_type_provider;
 mod toolbar_provider;
 
 use data_sources::DemoDataSource;
+use data_type_provider::DemoDataTypeProvider;
 use toolbar_provider::{AppControlsToolbar, DataSourceToolbar};
 
 fn main() {
@@ -52,6 +56,10 @@ fn main() {
                         let app_controls: SharedToolbarProvider =
                             Arc::new(AppControlsToolbar::new());
                         editor.add_toolbar_provider(app_controls, cx);
+                        // 注入自定义数据类型提供程序（为 Start 节点提供 DataModel/User 等复杂类型）
+                        let data_types: SharedDataTypeProvider =
+                            Arc::new(DemoDataTypeProvider);
+                        editor.set_data_type_provider(data_types, cx);
                         editor
                     });
                     cx.new(|cx| gpui_component::Root::new(view, window, cx))

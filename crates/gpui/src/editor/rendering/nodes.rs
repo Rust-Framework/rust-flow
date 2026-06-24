@@ -2,11 +2,9 @@
 //!
 //! 易变模块：节点视觉外观、选中/悬停态、动作回调闭包均在此调整。
 
-use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use gpui::{div, px, App, AppContext, Entity, IntoElement, ParentElement, Styled};
-use rust_agent_flow::NodeId;
 
 use crate::node::{ActionCallback, IFlowNode, NodeAction, NodeView};
 
@@ -20,12 +18,11 @@ impl FlowEditorView {
     /// 为每个节点创建动作回调闭包，捕获 `node_id` 和 `entity`，
     /// 通过 `cx.update_entity` 调用 `handle_node_action`。
     ///
-    /// `body_groups` 由调用方（`render`）计算一次并传入，避免与 `render_edges`
-    /// 重复执行 BFS 遍历（O(V+E)）。
+    /// 循环体节点和隐藏节点信息从 `cached_all_body_nodes`/`cached_hidden_nodes`
+    /// 读取（在 `relayout` 末尾更新），无需调用方传入。
     pub(crate) fn render_nodes(
         &self,
         entity: Entity<Self>,
-        body_groups: &HashMap<NodeId, HashSet<NodeId>>,
     ) -> Vec<gpui::AnyElement> {
         let selected = self.selected;
         let registry = &self.registry;
@@ -37,24 +34,9 @@ impl FlowEditorView {
         let theme = self.theme;
         let hovered = self.hovered;
 
-        let all_body_nodes: HashSet<NodeId> =
-            body_groups.values().flat_map(|s| s.iter().copied()).collect();
-
-        // 收集被收起的循环体节点：当 Loop 节点的 body_collapsed == true 时，
-        // 其循环体节点不渲染（隐藏），但保留拓扑边。
-        let mut hidden_nodes: HashSet<NodeId> = HashSet::new();
-        for (loop_node, body_nodes) in body_groups {
-            if let Some(ln) = self.graph.node(*loop_node) {
-                let body_collapsed = ln
-                    .data
-                    .get("body_collapsed")
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or(false);
-                if body_collapsed {
-                    hidden_nodes.extend(body_nodes.iter().copied());
-                }
-            }
-        }
+        // 使用缓存的派生集合，避免每帧重复 flat_map 收集。
+        let all_body_nodes = &self.cached_all_body_nodes;
+        let hidden_nodes = &self.cached_hidden_nodes;
 
         self.graph
             .nodes()

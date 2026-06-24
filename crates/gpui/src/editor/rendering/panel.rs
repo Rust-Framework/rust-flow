@@ -72,6 +72,7 @@ impl FlowEditorView {
                     Some(on_action),
                     self.syntax_service.clone(),
                     self.language,
+                    self.data_type_provider.clone(),
                     window,
                     cx,
                 )))
