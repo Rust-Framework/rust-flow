@@ -27,8 +27,8 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use gpui::{
-    div, px, Context, CursorStyle, InteractiveElement, IntoElement, MouseButton, ParentElement,
-    Pixels, Point, Render, Styled, Window,
+    div, px, Context, CursorStyle, InteractiveElement, IntoElement, MouseButton, MouseMoveEvent,
+    ParentElement, Pixels, Point, Render, Styled, Window,
 };
 use rust_agent_flow::{EdgeId, EdgeType, FlowGraph, NodeId, PointF, PortSide, Viewport};
 use rust_agent_flow::{
@@ -108,6 +108,14 @@ pub struct FlowEditorView {
     /// 为 Start 节点属性面板提供自定义复杂数据类型。
     /// 不注入时仅有内置类型（String/Integer/Float/Boolean/DateTime/Dynamic）可用。
     pub data_type_provider: Option<SharedDataTypeProvider>,
+    /// 属性面板宽度（像素），可通过拖拽分隔条调整。
+    pub panel_width: Pixels,
+    /// 是否正在拖拽面板分隔条调整宽度。
+    pub resizing_panel: bool,
+    /// 拖拽起始鼠标 X 坐标（屏幕像素）。
+    pub resize_start_x: f32,
+    /// 拖拽起始面板宽度（像素）。
+    pub resize_start_width: f32,
 }
 
 impl FlowEditorView {
@@ -136,6 +144,10 @@ impl FlowEditorView {
             cached_hidden_nodes: HashSet::new(),
             custom_toolbar: Vec::new(),
             data_type_provider: None,
+            panel_width: px(320.0),
+            resizing_panel: false,
+            resize_start_x: 0.0,
+            resize_start_width: 0.0,
         }
     }
 
@@ -462,14 +474,17 @@ impl Render for FlowEditorView {
         let toolbar = self.render_toolbar(cx);
 
         let offset = self.viewport.offset;
+        let panel_width = self.panel_width;
+        let has_panel = panel.is_some();
+        let theme = self.theme;
 
-        // ====== 外层容器：全屏，处理事件 ======
+        // ====== 画布区域：flex-1，处理画布交互事件 ======
         // 光标：平移中 → grabbing（ClosedHand），悬停「+」按钮 → pointer（PointingHand），
         // 空闲 → grab（OpenHand）
         let is_panning = matches!(self.interaction, InteractionState::Panning { .. });
         let is_on_plus = self.hovered_plus.is_some() && !is_panning;
-        let mut container = div()
-            .size_full()
+        let mut canvas = div()
+            .flex_1()
             .relative()
             .bg(self.theme.canvas_bg)
             .overflow_hidden()
@@ -488,13 +503,9 @@ impl Render for FlowEditorView {
             .on_scroll_wheel(cx.listener(Self::on_scroll));
 
         // ====== 边（Canvas）：直接放在容器根层级 ======
-        // 边在逻辑坐标中计算路径，paint 时通过 PathBuilder::scale + translate
-        // 变换到屏幕空间。translate = viewport.offset + canvas bounds.origin，
-        // 确保与节点（通过 div offset + pos×scale 定位）的屏幕坐标一致。
-        container = container.child(edges);
+        canvas = canvas.child(edges);
 
         // ====== 内容层：仅包含节点，通过 offset + scale 定位 ======
-        // 节点最终屏幕坐标 = container_origin + offset + logical_pos × scale
         let mut content = div()
             .absolute()
             .left(px(offset.x))
@@ -504,52 +515,96 @@ impl Render for FlowEditorView {
             content = content.child(node_el);
         }
 
-        container = container.child(content);
+        canvas = canvas.child(content);
 
-        // ====== 边「+」按钮层：在节点层之上，不受 offset 影响 ======
-        // 按钮位置 = viewport.offset + 源端口轴向偏移10px × scale（屏幕坐标）
-        // 放在节点层之后确保不被节点遮挡。
-        // 拖动节点/平移画布时跳过按钮渲染，避免每帧创建大量 div 元素导致卡顿。
+        // ====== 边「+」按钮层 ======
         let is_interacting = matches!(
             self.interaction,
             InteractionState::DraggingNode { .. } | InteractionState::Panning { .. }
         );
         if !is_interacting {
-            container = container.child(self.render_edge_plus_buttons());
+            canvas = canvas.child(self.render_edge_plus_buttons());
         }
 
-        // ====== 「+」按钮 tooltip：悬停时显示 ======
+        // ====== 「+」按钮 tooltip ======
         if !is_interacting {
             if let Some(tooltip) = self.render_plus_tooltip() {
-                container = container.child(tooltip);
+                canvas = canvas.child(tooltip);
             }
         }
 
-        // ====== 工具栏：不受缩放影响 ======
-        container = container.child(toolbar);
+        // ====== 工具栏 ======
+        canvas = canvas.child(toolbar);
 
-        // ====== 属性面板：不受缩放影响 ======
-        // 面板容器拦截鼠标事件，防止点击冒泡到画布导致 selected=None 面板销毁。
-        // GPUI 的 on_mouse_down 不会自动停止冒泡，必须显式调用 cx.stop_propagation()。
-        if let Some(panel_view) = panel {
-            container = container.child(
-                div()
-                    .absolute()
-                    .right_0()
-                    .top_0()
-                    .bottom_0()
-                    .id("panel-container")
-                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                    .on_mouse_down(MouseButton::Middle, |_, _, cx| cx.stop_propagation())
-                    .child(panel_view.render_element(window, cx)),
-            );
-        }
-
-        // ====== 节点选择浮层：仅在 AddingNodeFromEdge 状态下显示 ======
+        // ====== 节点选择浮层 ======
         if let Some(picker) = self.render_node_picker(cx) {
-            container = container.child(picker);
+            canvas = canvas.child(picker);
         }
 
-        container
+        // ====== 外层 flex 容器：画布 + 分隔条 + 属性面板 ======
+        // 面板作为画布右侧区域（非浮层），分隔条可拖拽调整面板宽度。
+        // 拖拽分隔条时，外层容器接管 mouse_move/mouse_up 事件。
+        let mut layout = div()
+            .size_full()
+            .flex()
+            .flex_row()
+            .on_mouse_move(cx.listener(move |this, event: &MouseMoveEvent, _, cx| {
+                if this.resizing_panel {
+                    // 面板在右侧，鼠标左移 → 面板变宽
+                    let delta = -(event.position.x.as_f32() - this.resize_start_x);
+                    let new_width = this.resize_start_width + delta;
+                    this.panel_width = px(new_width.max(200.0).min(600.0));
+                    cx.notify();
+                }
+            }))
+            .on_mouse_up(
+                MouseButton::Left,
+                cx.listener(|this, _: &gpui::MouseUpEvent, _, cx| {
+                    if this.resizing_panel {
+                        this.resizing_panel = false;
+                        cx.notify();
+                    }
+                }),
+            )
+            .child(canvas);
+
+        // 分隔条 + 属性面板（仅在有面板时显示）
+        if has_panel {
+            // 分隔条
+            layout = layout.child(
+                div()
+                    .w(px(4.0))
+                    .h_full()
+                    .bg(theme.panel_border)
+                    .cursor(CursorStyle::ResizeLeftRight)
+                    .flex_shrink_0()
+                    .id("panel-divider")
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|this, event: &gpui::MouseDownEvent, _, cx| {
+                            this.resizing_panel = true;
+                            this.resize_start_x = event.position.x.as_f32();
+                            this.resize_start_width = this.panel_width.as_f32();
+                            cx.notify();
+                        }),
+                    ),
+            );
+
+            // 属性面板
+            if let Some(panel_view) = panel {
+                layout = layout.child(
+                    div()
+                        .w(panel_width)
+                        .h_full()
+                        .flex_shrink_0()
+                        .bg(theme.panel_bg)
+                        .border_l_1()
+                        .border_color(theme.panel_border)
+                        .child(panel_view.render_element(window, cx)),
+                );
+            }
+        }
+
+        layout
     }
 }

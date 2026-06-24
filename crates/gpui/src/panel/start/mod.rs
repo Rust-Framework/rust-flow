@@ -8,9 +8,13 @@
 //!
 //! 文件拆分：
 //! - `data_types.rs`：JSON 辅助函数
-//! - `item.rs`：单项状态与渲染（基础行 + 复杂/动态树形）
-//! - `section.rs`：列表区块渲染（标题 + 项列表 + 添加按钮）
-//! - `mod.rs`：面板实体、状态管理、Render 实现
+//! - `item.rs`：单项状态管理（ItemState + FieldState）
+//! - `common.rs`：公共类型（Selection, RowInputs）与辅助函数
+//! - `sync.rs`：数据同步逻辑（node.data ↔ 面板状态）
+//! - `handlers.rs`：事件处理器（增删改、类型切换等）
+//! - `tree_render.rs`：Tree 控件渲染（内联 Input/Dropdown/Input 控件）
+//! - `detail_editor.rs`：浮层详细编辑面板 + 头部渲染
+//! - `mod.rs`：面板实体定义、构建、Render 实现
 
 use std::sync::Arc;
 
@@ -18,22 +22,28 @@ use gpui::{
     div, px, App, AppContext, Context, Entity, InteractiveElement, IntoElement, ParentElement,
     Render, ScrollHandle, StatefulInteractiveElement, Styled, Subscription, Window,
 };
-use gpui_component::input::{Input, InputEvent, InputState};
-use gpui_component::{Icon, Sizable, StyledExt};
+use gpui_component::input::{Input, InputState};
+use gpui_component::tree::{TreeEvent, TreeState};
+use gpui_component::StyledExt;
 use rust_agent_flow::Node;
 
-use crate::builtin::common::node_icon;
 use crate::data_type::{DataTypeRegistry, SharedDataTypeProvider};
 use crate::i18n::{kind_label, t, Language, TKey};
-use crate::node::{ActionCallback, IFlowNode, NodeAction, SharedSyntaxService};
+use crate::node::{ActionCallback, IFlowNode, SharedSyntaxService};
 use crate::theme::Theme;
 
+pub mod common;
 pub mod data_types;
+pub mod detail_editor;
+pub mod handlers;
 pub mod item;
-pub mod section;
+pub mod sync;
+pub mod tree_render;
 
-use data_types::{build_default_item, build_item_for_type};
+use common::label_of;
 use item::ItemState;
+use sync::subscribe_item_inputs;
+use tree_render::build_section_tree_items;
 
 /// Start 节点属性面板视图。
 pub struct StartPanelView {
@@ -45,19 +55,25 @@ pub struct StartPanelView {
     pub language: Language,
 
     /// 数据类型注册表（内置类型 + provider 注入类型）。
-    registry: DataTypeRegistry,
+    pub(super) registry: DataTypeRegistry,
     /// 节点名称输入。
-    label_input: Entity<InputState>,
+    pub(super) label_input: Entity<InputState>,
     /// 参数项状态列表。
-    params_state: Vec<ItemState>,
+    pub(super) params_state: Vec<ItemState>,
     /// 变量项状态列表。
-    variables_state: Vec<ItemState>,
+    pub(super) variables_state: Vec<ItemState>,
+    /// 参数区 Tree 控件状态。
+    pub(super) params_tree: Entity<TreeState>,
+    /// 变量区 Tree 控件状态。
+    pub(super) variables_tree: Entity<TreeState>,
+    /// 当前选中项（驱动浮层详细编辑面板）。
+    pub(super) selected: Option<common::Selection>,
 
     /// 同步标记：避免回环。
-    syncing: bool,
+    pub(super) syncing: bool,
     /// 内容区滚动句柄。
-    scroll_handle: ScrollHandle,
-    _subscriptions: Vec<Subscription>,
+    pub(super) scroll_handle: ScrollHandle,
+    pub(super) _subscriptions: Vec<Subscription>,
 }
 
 impl StartPanelView {
@@ -143,6 +159,29 @@ impl StartPanelView {
             );
         }
 
+        // 创建 Tree 状态并构建初始 items
+        let params_items = build_section_tree_items(&params_state, "params", &registry, cx);
+        let variables_items =
+            build_section_tree_items(&variables_state, "variables", &registry, cx);
+        let params_tree = cx.new(|cx| TreeState::new(cx).items(params_items));
+        let variables_tree = cx.new(|cx| TreeState::new(cx).items(variables_items));
+
+        // 观察 Tree 选中变化 → 更新 selected 状态
+        subscriptions.push(cx.observe(&params_tree, move |this, _, cx| {
+            this.on_tree_selection("params", cx);
+        }));
+        subscriptions.push(cx.observe(&variables_tree, move |this, _, cx| {
+            this.on_tree_selection("variables", cx);
+        }));
+
+        // 订阅 TreeEvent → 同步展开状态到 ItemState
+        subscriptions.push(cx.subscribe(&params_tree, |this, _state, event: &TreeEvent, cx| {
+            this.on_tree_event("params", event, cx);
+        }));
+        subscriptions.push(cx.subscribe(&variables_tree, |this, _state, event: &TreeEvent, cx| {
+            this.on_tree_event("variables", event, cx);
+        }));
+
         Self {
             node,
             flow_node,
@@ -154,431 +193,12 @@ impl StartPanelView {
             label_input,
             params_state,
             variables_state,
+            params_tree,
+            variables_tree,
+            selected: None,
             syncing: false,
             scroll_handle: ScrollHandle::default(),
             _subscriptions: subscriptions,
-        }
-    }
-
-    /// 节点数据变化时同步到面板状态。
-    pub fn sync_from_node(&mut self, node: Node, window: &mut Window, cx: &mut Context<Self>) {
-        if self.node.id != node.id {
-            return;
-        }
-        if self.node.data == node.data {
-            return;
-        }
-        self.syncing = true;
-        self.node = node;
-
-        // 同步 label
-        let label = label_of(&self.node);
-        let current_label = self.label_input.read(cx).value().to_string();
-        if current_label != label {
-            self.label_input.update(cx, |s, cx| {
-                s.set_value(label.as_str(), window, cx);
-            });
-        }
-
-        // 同步 params
-        self.sync_list("params", false, window, cx);
-        // 同步 variables
-        self.sync_list("variables", true, window, cx);
-
-        self.syncing = false;
-        cx.notify();
-    }
-
-    /// 同步单个列表（params 或 variables）。
-    fn sync_list(
-        &mut self,
-        field_key: &str,
-        is_variable: bool,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let arr = self.node.data.get(field_key).cloned().unwrap_or_default();
-        let items: Vec<serde_json::Value> = arr.as_array().cloned().unwrap_or_default();
-        let states = if field_key == "params" {
-            &mut self.params_state
-        } else {
-            &mut self.variables_state
-        };
-
-        if items.len() == states.len() {
-            // 数量一致：逐项同步值
-            for (i, item_val) in items.iter().enumerate() {
-                states[i].sync_from_value(item_val, is_variable, &self.registry, window, cx);
-            }
-        } else {
-            // 数量变化：重建（需要重建订阅）
-            states.clear();
-            // 保留 label 订阅，清除项相关订阅
-            self._subscriptions.truncate(1);
-            for item_val in &items {
-                let st = ItemState::from_value(item_val, is_variable, &self.registry, window, cx);
-                subscribe_item_inputs(states, st, field_key, &mut self._subscriptions, window, cx);
-            }
-            // 重建另一个列表的订阅（因为 truncate 清除了所有项订阅）
-            self.rebuild_other_subscriptions(field_key, window, cx);
-        }
-    }
-
-    /// 重建非当前列表的订阅（sync_list 重建时调用）。
-    fn rebuild_other_subscriptions(
-        &mut self,
-        current_field: &str,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if current_field != "params" {
-            let params = std::mem::take(&mut self.params_state);
-            for st in params {
-                subscribe_item_inputs(
-                    &mut self.params_state,
-                    st,
-                    "params",
-                    &mut self._subscriptions,
-                    window,
-                    cx,
-                );
-            }
-        }
-        if current_field != "variables" {
-            let vars = std::mem::take(&mut self.variables_state);
-            for st in vars {
-                subscribe_item_inputs(
-                    &mut self.variables_state,
-                    st,
-                    "variables",
-                    &mut self._subscriptions,
-                    window,
-                    cx,
-                );
-            }
-        }
-    }
-
-    // ====== 事件回调 ======
-
-    fn on_label_change(
-        &mut self,
-        _state: &Entity<InputState>,
-        event: &InputEvent,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if self.syncing || !matches!(event, InputEvent::Change) {
-            return;
-        }
-        let value = self.label_input.read(cx).value().to_string();
-        self.dispatch_set_data("label", serde_json::json!(value), cx);
-    }
-
-    /// 添加新项（通过 dispatch SetData 触发 sync 重建）。
-    pub fn add_item(&mut self, field_key: &str, cx: &mut Context<Self>) {
-        if self.syncing {
-            return;
-        }
-        let states = if field_key == "variables" {
-            &self.variables_state
-        } else {
-            &self.params_state
-        };
-        let mut arr: Vec<serde_json::Value> =
-            states.iter().map(|s| s.to_value(cx)).collect();
-        arr.push(build_default_item());
-        self.dispatch_set_data(field_key, serde_json::json!(arr), cx);
-    }
-
-    /// 删除项（通过 dispatch SetData 触发 sync 重建）。
-    pub fn delete_item(&mut self, field_key: &str, item_idx: usize, cx: &mut Context<Self>) {
-        if self.syncing {
-            return;
-        }
-        let states = if field_key == "variables" {
-            &self.variables_state
-        } else {
-            &self.params_state
-        };
-        let arr: Vec<serde_json::Value> = states
-            .iter()
-            .enumerate()
-            .filter(|(i, _)| *i != item_idx)
-            .map(|(_, s)| s.to_value(cx))
-            .collect();
-        self.dispatch_set_data(field_key, serde_json::json!(arr), cx);
-    }
-
-    /// 切换结构类型项的展开/收起（纯 UI 状态，无需同步到 node.data）。
-    pub fn toggle_item_expanded(&mut self, field_key: &str, item_idx: usize, cx: &mut Context<Self>) {
-        let states = if field_key == "variables" {
-            &mut self.variables_state
-        } else {
-            &mut self.params_state
-        };
-        if let Some(st) = states.get_mut(item_idx) {
-            st.expanded = !st.expanded;
-        }
-        cx.notify();
-    }
-
-    /// 切换项的数据类型（通过 dispatch SetData 触发 sync 重建）。
-    ///
-    /// 保留原 is_optional/is_array 状态（类型切换不丢失标志位）。
-    pub fn change_item_type(
-        &mut self,
-        field_key: &str,
-        item_idx: usize,
-        new_type: String,
-        cx: &mut Context<Self>,
-    ) {
-        if self.syncing {
-            return;
-        }
-        let states = if field_key == "variables" {
-            &self.variables_state
-        } else {
-            &self.params_state
-        };
-        let arr: Vec<serde_json::Value> = states
-            .iter()
-            .enumerate()
-            .map(|(i, s)| {
-                if i == item_idx {
-                    let name = s.name.read(cx).value().to_string();
-                    build_item_for_type(&name, &new_type, &self.registry, s.is_optional, s.is_array)
-                } else {
-                    s.to_value(cx)
-                }
-            })
-            .collect();
-        self.dispatch_set_data(field_key, serde_json::json!(arr), cx);
-    }
-
-    /// 切换项的 is_optional 标志（通过 dispatch SetData 触发 sync 重建）。
-    pub fn toggle_item_optional(
-        &mut self,
-        field_key: &str,
-        item_idx: usize,
-        checked: bool,
-        cx: &mut Context<Self>,
-    ) {
-        if self.syncing {
-            return;
-        }
-        let states = if field_key == "variables" {
-            &self.variables_state
-        } else {
-            &self.params_state
-        };
-        let arr: Vec<serde_json::Value> = states
-            .iter()
-            .enumerate()
-            .map(|(i, s)| {
-                if i == item_idx {
-                    let mut val = s.to_value(cx);
-                    if let Some(obj) = val.as_object_mut() {
-                        obj.insert("is_optional".to_string(), serde_json::json!(checked));
-                    }
-                    val
-                } else {
-                    s.to_value(cx)
-                }
-            })
-            .collect();
-        self.dispatch_set_data(field_key, serde_json::json!(arr), cx);
-    }
-
-    /// 切换项的 is_array 标志（通过 dispatch SetData 触发 sync 重建）。
-    pub fn toggle_item_array(
-        &mut self,
-        field_key: &str,
-        item_idx: usize,
-        checked: bool,
-        cx: &mut Context<Self>,
-    ) {
-        if self.syncing {
-            return;
-        }
-        let states = if field_key == "variables" {
-            &self.variables_state
-        } else {
-            &self.params_state
-        };
-        let arr: Vec<serde_json::Value> = states
-            .iter()
-            .enumerate()
-            .map(|(i, s)| {
-                if i == item_idx {
-                    let mut val = s.to_value(cx);
-                    if let Some(obj) = val.as_object_mut() {
-                        obj.insert("is_array".to_string(), serde_json::json!(checked));
-                    }
-                    val
-                } else {
-                    s.to_value(cx)
-                }
-            })
-            .collect();
-        self.dispatch_set_data(field_key, serde_json::json!(arr), cx);
-    }
-
-    /// 设置基础类型项的默认值（Boolean Switch 切换时调用）。
-    pub fn set_item_value(
-        &mut self,
-        field_key: &str,
-        item_idx: usize,
-        new_value: String,
-        cx: &mut Context<Self>,
-    ) {
-        if self.syncing {
-            return;
-        }
-        let states = if field_key == "variables" {
-            &self.variables_state
-        } else {
-            &self.params_state
-        };
-        let arr: Vec<serde_json::Value> = states
-            .iter()
-            .enumerate()
-            .map(|(i, s)| {
-                if i == item_idx {
-                    let mut val = s.to_value(cx);
-                    if let Some(obj) = val.as_object_mut() {
-                        obj.insert("value".to_string(), serde_json::json!(new_value));
-                    }
-                    val
-                } else {
-                    s.to_value(cx)
-                }
-            })
-            .collect();
-        self.dispatch_set_data(field_key, serde_json::json!(arr), cx);
-    }
-
-    /// 向动态类型项添加字段（通过 dispatch SetData 触发 sync 重建）。
-    pub fn add_field(&mut self, field_key: &str, item_idx: usize, cx: &mut Context<Self>) {
-        if self.syncing {
-            return;
-        }
-        let states = if field_key == "variables" {
-            &self.variables_state
-        } else {
-            &self.params_state
-        };
-        let arr: Vec<serde_json::Value> = states
-            .iter()
-            .enumerate()
-            .map(|(i, s)| {
-                if i == item_idx {
-                    let mut val = s.to_value(cx);
-                    if let Some(fields) = val.get_mut("fields").and_then(|f| f.as_array_mut()) {
-                        fields.push(serde_json::json!({
-                            "name": "",
-                            "type": "String",
-                            "value": "",
-                        }));
-                    }
-                    val
-                } else {
-                    s.to_value(cx)
-                }
-            })
-            .collect();
-        self.dispatch_set_data(field_key, serde_json::json!(arr), cx);
-    }
-
-    /// 删除动态类型项的字段（通过 dispatch SetData 触发 sync 重建）。
-    pub fn delete_field(
-        &mut self,
-        field_key: &str,
-        item_idx: usize,
-        field_idx: usize,
-        cx: &mut Context<Self>,
-    ) {
-        if self.syncing {
-            return;
-        }
-        let states = if field_key == "variables" {
-            &self.variables_state
-        } else {
-            &self.params_state
-        };
-        let arr: Vec<serde_json::Value> = states
-            .iter()
-            .enumerate()
-            .map(|(i, s)| {
-                if i == item_idx {
-                    let mut val = s.to_value(cx);
-                    if let Some(fields) = val.get_mut("fields").and_then(|f| f.as_array_mut()) {
-                        if field_idx < fields.len() {
-                            fields.remove(field_idx);
-                        }
-                    }
-                    val
-                } else {
-                    s.to_value(cx)
-                }
-            })
-            .collect();
-        self.dispatch_set_data(field_key, serde_json::json!(arr), cx);
-    }
-
-    /// 切换动态类型字段的类型（通过 dispatch SetData 触发 sync 重建）。
-    pub fn change_field_type(
-        &mut self,
-        field_key: &str,
-        item_idx: usize,
-        field_idx: usize,
-        new_type: String,
-        cx: &mut Context<Self>,
-    ) {
-        if self.syncing {
-            return;
-        }
-        let states = if field_key == "variables" {
-            &self.variables_state
-        } else {
-            &self.params_state
-        };
-        let arr: Vec<serde_json::Value> = states
-            .iter()
-            .enumerate()
-            .map(|(i, s)| {
-                if i == item_idx {
-                    let mut val = s.to_value(cx);
-                    if let Some(fields) = val.get_mut("fields").and_then(|f| f.as_array_mut()) {
-                        if field_idx < fields.len() {
-                            if let Some(ftype) = fields[field_idx].get_mut("type") {
-                                *ftype = serde_json::json!(new_type);
-                            }
-                        }
-                    }
-                    val
-                } else {
-                    s.to_value(cx)
-                }
-            })
-            .collect();
-        self.dispatch_set_data(field_key, serde_json::json!(arr), cx);
-    }
-
-    /// 同步列表状态到 node.data（Input 变更时调用）。
-    fn sync_list_to_node(&self, field_key: &str, cx: &mut Context<Self>) {
-        let states = if field_key == "variables" {
-            &self.variables_state
-        } else {
-            &self.params_state
-        };
-        let arr: Vec<serde_json::Value> = states.iter().map(|s| s.to_value(cx)).collect();
-        self.dispatch_set_data(field_key, serde_json::json!(arr), cx);
-    }
-
-    fn dispatch_set_data(&self, key: &str, value: serde_json::Value, cx: &mut Context<Self>) {
-        if let Some(on_action) = &self.on_action {
-            on_action(NodeAction::SetData(key.to_string(), value), cx);
         }
     }
 }
@@ -589,45 +209,51 @@ impl Render for StartPanelView {
         let lang = self.language;
         let entity = cx.entity();
 
-        let header = render_header(&self.node, lang, &theme);
+        let header = detail_editor::render_header(&self.node, lang, &theme);
 
         let params_title = t(lang, TKey::PanelParams);
         let vars_title = t(lang, TKey::PanelVariables);
         let add_param_label = t(lang, TKey::PanelAddParam);
         let add_var_label = t(lang, TKey::PanelAddVariable);
 
-        let params_section = section::render_section(
-            &self.params_state,
+        // 参数区 Tree
+        let params_tree_el = tree_render::render_section_tree(
+            &self.params_tree,
             "params",
             params_title,
             add_param_label,
             false,
             &self.registry,
             lang,
-            &theme,
+            theme,
             &entity,
+            &self.params_state,
             cx,
         );
 
-        let vars_section = section::render_section(
-            &self.variables_state,
+        // 变量区 Tree
+        let vars_tree_el = tree_render::render_section_tree(
+            &self.variables_tree,
             "variables",
             vars_title,
             add_var_label,
             true,
             &self.registry,
             lang,
-            &theme,
+            theme,
             &entity,
+            &self.variables_state,
             cx,
         );
 
+        // 浮层详细编辑面板（选中项时显示在左侧）
+        let detail_panel = self.render_detail_panel(&entity, lang, theme, cx);
+
         div()
-            .w(px(300.0))
+            .relative()
+            .w_full()
             .h_full()
             .bg(theme.panel_bg)
-            .border_l_1()
-            .border_color(theme.panel_border)
             .flex()
             .flex_col()
             .child(header)
@@ -657,134 +283,10 @@ impl Render for StartPanelView {
                                     )
                                     .child(Input::new(&self.label_input).appearance(true)),
                             )
-                            .child(params_section)
-                            .child(vars_section),
+                            .child(params_tree_el)
+                            .child(vars_tree_el),
                     ),
             )
+            .children(detail_panel)
     }
-}
-
-/// 渲染面板头部（与 PanelView 头部风格一致）。
-fn render_header(node: &Node, lang: Language, theme: &Theme) -> gpui::AnyElement {
-    let kind = &node.kind;
-    let icon_name = node_icon(kind);
-    let kind_lbl = kind_label(lang, kind);
-    let title = format!("{} {}", kind_lbl, t(lang, TKey::PanelNodeSuffix));
-
-    div()
-        .flex()
-        .items_center()
-        .gap(px(10.0))
-        .px(px(16.0))
-        .py(px(12.0))
-        .border_b_1()
-        .border_color(theme.panel_border)
-        .bg(theme.node_title_bg)
-        .child(
-            div()
-                .w(px(32.0))
-                .h(px(32.0))
-                .rounded_md()
-                .bg(theme.toolbar_accent)
-                .flex()
-                .items_center()
-                .justify_center()
-                .child(
-                    Icon::new(icon_name)
-                        .small()
-                        .text_color(theme.toolbar_accent_text),
-                ),
-        )
-        .child(
-            div()
-                .flex()
-                .flex_col()
-                .gap(px(2.0))
-                .child(
-                    div()
-                        .text_size(px(14.0))
-                        .font_semibold()
-                        .text_color(theme.panel_title_text)
-                        .child(title),
-                )
-                .child(
-                    div()
-                        .text_size(px(11.0))
-                        .text_color(theme.panel_subtext)
-                        .child(kind.to_string()),
-                ),
-        )
-        .into_any_element()
-}
-
-/// 为项的所有 InputState 创建订阅。
-///
-/// 订阅范围：
-/// - 项名称
-/// - 基础类型值
-/// - 子字段名称（动态类型可编辑）
-/// - 子字段值（复杂/动态类型）
-fn subscribe_item_inputs(
-    states: &mut Vec<ItemState>,
-    st: ItemState,
-    field_key: &str,
-    subscriptions: &mut Vec<Subscription>,
-    window: &mut Window,
-    cx: &mut Context<StartPanelView>,
-) {
-    let fk = field_key.to_string();
-
-    // 订阅 name
-    {
-        let fk = fk.clone();
-        let sub = cx.subscribe_in(&st.name, window, move |this, _e, ev, _w, cx| {
-            if !this.syncing && matches!(ev, InputEvent::Change) {
-                this.sync_list_to_node(&fk, cx);
-            }
-        });
-        subscriptions.push(sub);
-    }
-
-    // 订阅 value（基础类型）
-    if let Some(ref val) = st.value {
-        let fk = fk.clone();
-        let sub = cx.subscribe_in(val, window, move |this, _e, ev, _w, cx| {
-            if !this.syncing && matches!(ev, InputEvent::Change) {
-                this.sync_list_to_node(&fk, cx);
-            }
-        });
-        subscriptions.push(sub);
-    }
-
-    // 订阅子字段 name 和 value（复杂/动态类型）
-    for field in &st.fields {
-        // 子字段 name
-        let fk_name = fk.clone();
-        let sub = cx.subscribe_in(&field.name, window, move |this, _e, ev, _w, cx| {
-            if !this.syncing && matches!(ev, InputEvent::Change) {
-                this.sync_list_to_node(&fk_name, cx);
-            }
-        });
-        subscriptions.push(sub);
-
-        // 子字段 value
-        let fk_val = fk.clone();
-        let sub = cx.subscribe_in(&field.value, window, move |this, _e, ev, _w, cx| {
-            if !this.syncing && matches!(ev, InputEvent::Change) {
-                this.sync_list_to_node(&fk_val, cx);
-            }
-        });
-        subscriptions.push(sub);
-    }
-
-    states.push(st);
-}
-
-/// 从 node.data 读取 label。
-fn label_of(node: &Node) -> String {
-    node.data
-        .get("label")
-        .and_then(|v| v.as_str())
-        .unwrap_or(&node.kind)
-        .to_string()
 }

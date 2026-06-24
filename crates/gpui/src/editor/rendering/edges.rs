@@ -234,12 +234,15 @@ impl FlowEditorView {
                 Some((screen_x, screen_y))
             })
             .map(|(x, y)| {
+                // 按钮尺寸跟随 zoom 缩放，保持与节点/连线的视觉比例一致。
+                let btn_size = 20.0 * s;
+                let half = btn_size / 2.0;
                 div()
                     .absolute()
-                    .left(px(x - 10.0))
-                    .top(px(y - 10.0))
-                    .w(px(20.0))
-                    .h(px(20.0))
+                    .left(px(x - half))
+                    .top(px(y - half))
+                    .w(px(btn_size))
+                    .h(px(btn_size))
                     .rounded_full()
                     .bg(bg)
                     .border_1()
@@ -249,7 +252,7 @@ impl FlowEditorView {
                     .items_center()
                     .justify_center()
                     .text_color(text_color)
-                    .child(Icon::new(IconName::Plus).xsmall())
+                    .child(Icon::new(IconName::Plus).with_size(px(btn_size * 0.6)))
             })
             .collect();
 
@@ -319,9 +322,9 @@ impl FlowEditorView {
         let bg = self.theme.edge_plus_bg;
         let text_color = self.theme.toolbar_text;
 
-        // tooltip 位于 + 按钮右下方，偏移 16px 避免遮挡按钮
-        let tooltip_x = screen_x + 16.0;
-        let tooltip_y = screen_y + 16.0;
+        // tooltip 位于 + 按钮右下方，偏移量跟随 zoom 缩放，避免遮挡按钮
+        let tooltip_x = screen_x + 16.0 * s;
+        let tooltip_y = screen_y + 16.0 * s;
 
         Some(
             div()
