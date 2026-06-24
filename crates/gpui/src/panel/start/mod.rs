@@ -324,6 +324,8 @@ impl StartPanelView {
     }
 
     /// 切换项的数据类型（通过 dispatch SetData 触发 sync 重建）。
+    ///
+    /// 保留原 is_optional/is_array 状态（类型切换不丢失标志位）。
     pub fn change_item_type(
         &mut self,
         field_key: &str,
@@ -345,7 +347,109 @@ impl StartPanelView {
             .map(|(i, s)| {
                 if i == item_idx {
                     let name = s.name.read(cx).value().to_string();
-                    build_item_for_type(&name, &new_type, &self.registry)
+                    build_item_for_type(&name, &new_type, &self.registry, s.is_optional, s.is_array)
+                } else {
+                    s.to_value(cx)
+                }
+            })
+            .collect();
+        self.dispatch_set_data(field_key, serde_json::json!(arr), cx);
+    }
+
+    /// 切换项的 is_optional 标志（通过 dispatch SetData 触发 sync 重建）。
+    pub fn toggle_item_optional(
+        &mut self,
+        field_key: &str,
+        item_idx: usize,
+        checked: bool,
+        cx: &mut Context<Self>,
+    ) {
+        if self.syncing {
+            return;
+        }
+        let states = if field_key == "variables" {
+            &self.variables_state
+        } else {
+            &self.params_state
+        };
+        let arr: Vec<serde_json::Value> = states
+            .iter()
+            .enumerate()
+            .map(|(i, s)| {
+                if i == item_idx {
+                    let mut val = s.to_value(cx);
+                    if let Some(obj) = val.as_object_mut() {
+                        obj.insert("is_optional".to_string(), serde_json::json!(checked));
+                    }
+                    val
+                } else {
+                    s.to_value(cx)
+                }
+            })
+            .collect();
+        self.dispatch_set_data(field_key, serde_json::json!(arr), cx);
+    }
+
+    /// 切换项的 is_array 标志（通过 dispatch SetData 触发 sync 重建）。
+    pub fn toggle_item_array(
+        &mut self,
+        field_key: &str,
+        item_idx: usize,
+        checked: bool,
+        cx: &mut Context<Self>,
+    ) {
+        if self.syncing {
+            return;
+        }
+        let states = if field_key == "variables" {
+            &self.variables_state
+        } else {
+            &self.params_state
+        };
+        let arr: Vec<serde_json::Value> = states
+            .iter()
+            .enumerate()
+            .map(|(i, s)| {
+                if i == item_idx {
+                    let mut val = s.to_value(cx);
+                    if let Some(obj) = val.as_object_mut() {
+                        obj.insert("is_array".to_string(), serde_json::json!(checked));
+                    }
+                    val
+                } else {
+                    s.to_value(cx)
+                }
+            })
+            .collect();
+        self.dispatch_set_data(field_key, serde_json::json!(arr), cx);
+    }
+
+    /// 设置基础类型项的默认值（Boolean Switch 切换时调用）。
+    pub fn set_item_value(
+        &mut self,
+        field_key: &str,
+        item_idx: usize,
+        new_value: String,
+        cx: &mut Context<Self>,
+    ) {
+        if self.syncing {
+            return;
+        }
+        let states = if field_key == "variables" {
+            &self.variables_state
+        } else {
+            &self.params_state
+        };
+        let arr: Vec<serde_json::Value> = states
+            .iter()
+            .enumerate()
+            .map(|(i, s)| {
+                if i == item_idx {
+                    let mut val = s.to_value(cx);
+                    if let Some(obj) = val.as_object_mut() {
+                        obj.insert("value".to_string(), serde_json::json!(new_value));
+                    }
+                    val
                 } else {
                     s.to_value(cx)
                 }

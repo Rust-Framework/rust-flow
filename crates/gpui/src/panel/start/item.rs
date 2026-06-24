@@ -1,9 +1,19 @@
 //! Start 节点参数/变量项的状态与渲染。
 //!
 //! 三种类型形态：
-//! - **基础类型**（Boolean/String/Number/DateTime）：name + type + value，单行紧凑布局
+//! - **基础类型**（Boolean/String/Number/DateTime）：name + type + is_optional + is_array + value
 //! - **复杂类型**（DataModel 等）：预定义结构，结构只读，值按模式可编辑
 //! - **动态类型**（DynamicObject）：结构可手动编辑（增删改字段），值按模式可编辑
+//!
+//! 低代码变量模型规则：
+//! - `is_optional=true` 时默认值可省略（UI 提示可选）
+//! - `is_array=true` 表示数组/集合类型
+//! - 默认值输入控件根据类型变化：Boolean → Switch，其他 → Input
+//!
+//! 结构类型使用 gpui-component Tree 控件渲染子字段列表，提供：
+//! - 统一的缩进与层级展示
+//! - 一致的 hover/selection 视觉反馈
+//! - 键盘导航支持
 //!
 //! 子字段值编辑规则：
 //! - 参数模式（is_variable=false）：子字段值只读
@@ -15,15 +25,23 @@ use gpui::{
 };
 use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::input::{Input, InputState};
+use gpui_component::list::ListItem;
 use gpui_component::menu::{DropdownMenu, PopupMenuItem};
+use gpui_component::switch::Switch;
+use gpui_component::tree::{TreeItem, TreeState, tree};
 use gpui_component::{IconName, Sizable};
 
 use crate::data_type::DataTypeRegistry;
 use crate::i18n::{t, Language, TKey};
 use crate::theme::Theme;
 
-use super::data_types::{item_fields, item_name, item_type, item_value, value_to_string};
+use super::data_types::{
+    item_fields, item_is_array, item_is_optional, item_name, item_type, item_value, value_to_string,
+};
 use super::StartPanelView;
+
+/// Tree 条目高度（px），用于计算 Tree 容器高度。
+const TREE_ENTRY_HEIGHT: f32 = 34.0;
 
 /// 单个子字段的状态。
 pub struct FieldState {
@@ -35,18 +53,24 @@ pub struct FieldState {
     pub value: Entity<InputState>,
 }
 
-/// 单个参数/变量项的编辑状态。
+/// 单个参数/变量项的编辑状态（低代码变量模型）。
 pub struct ItemState {
     /// 名称输入。
     pub name: Entity<InputState>,
     /// 当前类型（下拉值）。
     pub type_value: String,
+    /// 是否可选（可选时默认值可省略）。
+    pub is_optional: bool,
+    /// 是否数组/集合。
+    pub is_array: bool,
     /// 基础类型的值输入（复杂/动态类型时为 None）。
     pub value: Option<Entity<InputState>>,
     /// 复杂/动态类型的子字段状态。
     pub fields: Vec<FieldState>,
     /// 是否展开显示子字段。
     pub expanded: bool,
+    /// 结构类型的 Tree 控件状态（复杂/动态类型时为 Some）。
+    pub tree_state: Option<Entity<TreeState>>,
 }
 
 impl ItemState {
@@ -62,6 +86,8 @@ impl ItemState {
     ) -> Self {
         let name_text = item_name(item);
         let type_name = item_type(item);
+        let is_optional = item_is_optional(item);
+        let is_array = item_is_array(item);
         let has_fields = registry.has_fields(&type_name);
 
         let name = cx.new(|cx| {
@@ -71,42 +97,10 @@ impl ItemState {
         });
 
         let (value, fields) = if has_fields {
-            // 复杂/动态类型：从 JSON 读取字段
             let json_fields = item_fields(item);
-            let field_states: Vec<FieldState> = json_fields
-                .iter()
-                .map(|f| {
-                    let fname = f
-                        .get("name")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("")
-                        .to_string();
-                    let ftype = f
-                        .get("type")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("String")
-                        .to_string();
-                    let fval = f.get("value").map(value_to_string).unwrap_or_default();
-                    let name_input = cx.new(|cx| {
-                        InputState::new(window, cx)
-                            .default_value(fname.as_str())
-                            .placeholder("name")
-                    });
-                    let val_input = cx.new(|cx| {
-                        InputState::new(window, cx)
-                            .default_value(fval.as_str())
-                            .placeholder("value")
-                    });
-                    FieldState {
-                        name: name_input,
-                        type_value: ftype,
-                        value: val_input,
-                    }
-                })
-                .collect();
+            let field_states = build_field_states(&json_fields, window, cx);
             (None, field_states)
         } else {
-            // 基础类型
             let v = item_value(item);
             let val = cx.new(|cx| {
                 InputState::new(window, cx)
@@ -116,12 +110,24 @@ impl ItemState {
             (Some(val), Vec::new())
         };
 
+        // 为结构类型创建 TreeState
+        let tree_state = if has_fields {
+            let is_dyn = registry.is_dynamic(&type_name);
+            let items = Self::build_tree_items(&fields, is_dyn);
+            Some(cx.new(|cx| TreeState::new(cx).items(items)))
+        } else {
+            None
+        };
+
         Self {
             name,
             type_value: type_name,
+            is_optional,
+            is_array,
             value,
             fields,
             expanded: has_fields,
+            tree_state,
         }
     }
 
@@ -131,7 +137,6 @@ impl ItemState {
         let type_name = self.type_value.clone();
 
         if !self.fields.is_empty() || self.value.is_none() {
-            // 复杂/动态类型
             let fields: Vec<serde_json::Value> = self
                 .fields
                 .iter()
@@ -146,10 +151,11 @@ impl ItemState {
             serde_json::json!({
                 "name": name,
                 "type": type_name,
+                "is_optional": self.is_optional,
+                "is_array": self.is_array,
                 "fields": fields,
             })
         } else {
-            // 基础类型
             let val = self
                 .value
                 .as_ref()
@@ -158,8 +164,36 @@ impl ItemState {
             serde_json::json!({
                 "name": name,
                 "type": type_name,
+                "is_optional": self.is_optional,
+                "is_array": self.is_array,
                 "value": val,
             })
+        }
+    }
+
+    /// 构建子字段的 TreeItem 列表。
+    ///
+    /// TreeItem id 编码字段索引，用于 render 闭包中定位字段状态。
+    /// 动态类型末尾追加 "addfield" 条目用于添加字段按钮。
+    fn build_tree_items(fields: &[FieldState], is_dynamic: bool) -> Vec<TreeItem> {
+        let mut items: Vec<TreeItem> = fields
+            .iter()
+            .enumerate()
+            .map(|(fi, _)| TreeItem::new(format!("field-{fi}"), format!("field-{fi}")))
+            .collect();
+        if is_dynamic {
+            items.push(TreeItem::new("addfield", "+ Add Field"));
+        }
+        items
+    }
+
+    /// 重建 Tree 控件数据（字段增删或类型切换时调用）。
+    pub fn rebuild_tree(&mut self, is_dynamic: bool, cx: &mut App) {
+        if let Some(tree_state) = &self.tree_state {
+            let items = Self::build_tree_items(&self.fields, is_dynamic);
+            tree_state.update(cx, |state, cx| {
+                state.set_items(items, cx);
+            });
         }
     }
 
@@ -182,6 +216,12 @@ impl ItemState {
             });
         }
 
+        // 同步 is_optional / is_array
+        let new_optional = item_is_optional(item);
+        let new_array = item_is_array(item);
+        self.is_optional = new_optional;
+        self.is_array = new_array;
+
         let type_name = item_type(item);
         let type_changed = type_name != self.type_value;
         let has_fields = registry.has_fields(&type_name);
@@ -197,19 +237,24 @@ impl ItemState {
                     InputState::new(window, cx).placeholder("value")
                 }));
                 self.expanded = false;
+                self.tree_state = None;
             } else if !was_structured && has_fields {
                 // 基础 → 结构
                 self.value = None;
                 self.expanded = true;
-                // 重建字段
-                self.rebuild_fields(item, registry, window, cx);
+                self.rebuild_fields(item, window, cx);
+                let is_dyn = registry.is_dynamic(&type_name);
+                let tree_items = Self::build_tree_items(&self.fields, is_dyn);
+                self.tree_state = Some(cx.new(|cx| TreeState::new(cx).items(tree_items)));
             } else if was_structured && has_fields {
                 // 结构 → 结构（类型切换）：重建字段
-                self.rebuild_fields(item, registry, window, cx);
+                self.rebuild_fields(item, window, cx);
+                let is_dyn = registry.is_dynamic(&type_name);
+                self.rebuild_tree(is_dyn, cx);
             }
         } else if has_fields {
             // 类型未变但字段可能变化（动态类型增删字段）
-            self.sync_fields(item, window, cx);
+            self.sync_fields(item, registry, window, cx);
         }
 
         // 同步值
@@ -227,16 +272,71 @@ impl ItemState {
     }
 
     /// 重建所有字段（类型切换时）。
-    fn rebuild_fields(
+    fn rebuild_fields(&mut self, item: &serde_json::Value, window: &mut Window, cx: &mut App) {
+        self.fields.clear();
+        let json_fields = item_fields(item);
+        self.fields = build_field_states(&json_fields, window, cx);
+    }
+
+    /// 同步字段值（类型未变，字段数量可能变化）。
+    fn sync_fields(
         &mut self,
         item: &serde_json::Value,
         registry: &DataTypeRegistry,
         window: &mut Window,
         cx: &mut App,
     ) {
-        self.fields.clear();
         let json_fields = item_fields(item);
-        for f in &json_fields {
+
+        if json_fields.len() != self.fields.len() {
+            // 字段数量变化：重建
+            self.fields = build_field_states(&json_fields, window, cx);
+        } else {
+            // 逐字段同步
+            for (i, f) in json_fields.iter().enumerate() {
+                let fname = f
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let ftype = f
+                    .get("type")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("String")
+                    .to_string();
+                let fval = f.get("value").map(value_to_string).unwrap_or_default();
+
+                let current_name = self.fields[i].name.read(cx).value().to_string();
+                if current_name != fname {
+                    self.fields[i].name.update(cx, |s, cx| {
+                        s.set_value(fname.as_str(), window, cx);
+                    });
+                }
+                self.fields[i].type_value = ftype;
+                let current_val = self.fields[i].value.read(cx).value().to_string();
+                if current_val != fval {
+                    self.fields[i].value.update(cx, |s, cx| {
+                        s.set_value(fval.as_str(), window, cx);
+                    });
+                }
+            }
+        }
+
+        // 重建 Tree 数据
+        let is_dyn = registry.is_dynamic(&self.type_value);
+        self.rebuild_tree(is_dyn, cx);
+    }
+}
+
+/// 从 JSON 字段数组构建 FieldState 列表。
+fn build_field_states(
+    json_fields: &[serde_json::Value],
+    window: &mut Window,
+    cx: &mut App,
+) -> Vec<FieldState> {
+    json_fields
+        .iter()
+        .map(|f| {
             let fname = f
                 .get("name")
                 .and_then(|v| v.as_str())
@@ -258,85 +358,13 @@ impl ItemState {
                     .default_value(fval.as_str())
                     .placeholder("value")
             });
-            self.fields.push(FieldState {
+            FieldState {
                 name: name_input,
                 type_value: ftype,
                 value: val_input,
-            });
-        }
-        let _ = registry;
-    }
-
-    /// 同步字段值（类型未变，字段数量可能变化）。
-    fn sync_fields(&mut self, item: &serde_json::Value, window: &mut Window, cx: &mut App) {
-        let json_fields = item_fields(item);
-
-        // 字段数量变化：重建
-        if json_fields.len() != self.fields.len() {
-            self.fields.clear();
-            for f in &json_fields {
-                let fname = f
-                    .get("name")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .to_string();
-                let ftype = f
-                    .get("type")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("String")
-                    .to_string();
-                let fval = f.get("value").map(value_to_string).unwrap_or_default();
-                let name_input = cx.new(|cx| {
-                    InputState::new(window, cx)
-                        .default_value(fname.as_str())
-                        .placeholder("name")
-                });
-                let val_input = cx.new(|cx| {
-                    InputState::new(window, cx)
-                        .default_value(fval.as_str())
-                        .placeholder("value")
-                });
-                self.fields.push(FieldState {
-                    name: name_input,
-                    type_value: ftype,
-                    value: val_input,
-                });
             }
-            return;
-        }
-
-        // 字段数量一致：逐字段同步
-        for (i, f) in json_fields.iter().enumerate() {
-            let fname = f
-                .get("name")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
-            let ftype = f
-                .get("type")
-                .and_then(|v| v.as_str())
-                .unwrap_or("String")
-                .to_string();
-            let fval = f.get("value").map(value_to_string).unwrap_or_default();
-
-            // 同步字段名
-            let current_name = self.fields[i].name.read(cx).value().to_string();
-            if current_name != fname {
-                self.fields[i].name.update(cx, |s, cx| {
-                    s.set_value(fname.as_str(), window, cx);
-                });
-            }
-            // 同步字段类型
-            self.fields[i].type_value = ftype;
-            // 同步字段值
-            let current_val = self.fields[i].value.read(cx).value().to_string();
-            if current_val != fval {
-                self.fields[i].value.update(cx, |s, cx| {
-                    s.set_value(fval.as_str(), window, cx);
-                });
-            }
-        }
-    }
+        })
+        .collect()
 }
 
 /// 渲染单个参数/变量项。
@@ -358,12 +386,71 @@ pub fn render_item(
 ) -> AnyElement {
     let has_fields = registry.has_fields(&state.type_value);
     let is_dynamic = registry.is_dynamic(&state.type_value);
-    let is_complex = registry.is_complex(&state.type_value);
+    let is_boolean = state.type_value == "Boolean";
 
     let mut col = div().flex().flex_col().gap(px(4.0));
 
     // 第一行：序号 + 名称 + 类型下拉 + 展开/收起(结构类型) + 删除
-    let mut row1 = div()
+    col = col.child(render_item_header(
+        state,
+        field_key,
+        item_idx,
+        has_fields,
+        registry,
+        lang,
+        theme,
+        entity,
+        cx,
+    ));
+
+    // 第二行：可选/数组开关 + 默认值输入（基础类型）
+    col = col.child(render_item_options(
+        state,
+        field_key,
+        item_idx,
+        has_fields,
+        is_boolean,
+        lang,
+        theme,
+        entity,
+        cx,
+    ));
+
+    // 结构类型且展开：使用 Tree 控件渲染子字段
+    if has_fields && state.expanded {
+        if let Some(tree_state) = &state.tree_state {
+            col = col.child(render_field_tree(
+                tree_state,
+                field_key,
+                item_idx,
+                is_variable,
+                is_dynamic,
+                registry,
+                lang,
+                *theme,
+                entity,
+                state.fields.len(),
+            ));
+        }
+    }
+
+    col.into_any_element()
+}
+
+/// 渲染项头部行：序号 + 名称输入 + 类型下拉 + 展开/收起 + 删除。
+#[allow(clippy::too_many_arguments)]
+fn render_item_header(
+    state: &ItemState,
+    field_key: &str,
+    item_idx: usize,
+    has_fields: bool,
+    registry: &DataTypeRegistry,
+    lang: Language,
+    theme: &Theme,
+    entity: &Entity<StartPanelView>,
+    cx: &App,
+) -> AnyElement {
+    let mut row = div()
         .flex()
         .items_center()
         .gap(px(6.0))
@@ -373,7 +460,8 @@ pub fn render_item(
         .border_1()
         .border_color(theme.panel_border);
 
-    row1 = row1.child(
+    // 序号
+    row = row.child(
         div()
             .w(px(18.0))
             .flex()
@@ -385,23 +473,21 @@ pub fn render_item(
             .child(format!("{}", item_idx + 1)),
     );
 
-    row1 = row1.child(div().flex_1().child(Input::new(&state.name).appearance(true)));
+    // 名称输入
+    row = row.child(div().flex_1().child(Input::new(&state.name).appearance(true)));
 
     // 类型下拉按钮
     let type_btn_id = format!("type-{}-{}", field_key, item_idx);
     let current_type = state.type_value.clone();
-    // 转为 owned String 避免 registry 引用逃逸到 'static 闭包
-    let type_names: Vec<String> = registry.type_names().into_iter().map(|s| s.to_string()).collect();
-    // 预计算基础类型列表（用于动态类型字段类型下拉）
-    let basic_types: Vec<String> = type_names
-        .iter()
-        .filter(|t| registry.is_basic(t))
-        .cloned()
+    let type_names: Vec<String> = registry
+        .type_names()
+        .into_iter()
+        .map(|s| s.to_string())
         .collect();
     let entity_clone = entity.clone();
     let fk = field_key.to_string();
 
-    row1 = row1.child(
+    row = row.child(
         Button::new(type_btn_id)
             .label(current_type.clone())
             .icon(IconName::ChevronDown)
@@ -439,7 +525,7 @@ pub fn render_item(
         };
         let entity_clone2 = entity.clone();
         let fk2 = field_key.to_string();
-        row1 = row1.child(
+        row = row.child(
             Button::new(expand_btn_id)
                 .icon(icon)
                 .xsmall()
@@ -456,7 +542,7 @@ pub fn render_item(
     let del_btn_id = format!("del-{}-{}", field_key, item_idx);
     let entity_clone3 = entity.clone();
     let fk3 = field_key.to_string();
-    row1 = row1.child(
+    row = row.child(
         Button::new(del_btn_id)
             .icon(IconName::Close)
             .xsmall()
@@ -468,216 +554,432 @@ pub fn render_item(
             }),
     );
 
-    col = col.child(row1);
+    let _ = lang;
+    let _ = cx;
+    row.into_any_element()
+}
 
-    // 基础类型：第二行显示值输入（全宽）
+/// 渲染项选项行：可选开关 + 数组开关 + 默认值输入（基础类型）。
+///
+/// 低代码规则：
+/// - 可选开关：is_optional，开启时默认值可省略
+/// - 数组开关：is_array
+/// - 默认值输入：基础类型显示，Boolean 用 Switch，其他用 Input
+/// - 结构类型不显示默认值（子字段各自有值）
+#[allow(clippy::too_many_arguments)]
+fn render_item_options(
+    state: &ItemState,
+    field_key: &str,
+    item_idx: usize,
+    has_fields: bool,
+    is_boolean: bool,
+    lang: Language,
+    theme: &Theme,
+    entity: &Entity<StartPanelView>,
+    _cx: &App,
+) -> AnyElement {
+    let optional_label = t(lang, TKey::PanelParamOptional);
+    let array_label = t(lang, TKey::PanelParamArray);
+    let value_label = t(lang, TKey::PanelParamValue);
+
+    let mut row = div()
+        .flex()
+        .items_center()
+        .gap(px(10.0))
+        .pl(px(30.0))
+        .pr(px(6.0));
+
+    // 可选开关
+    let opt_id = format!("opt-{}-{}", field_key, item_idx);
+    let entity_opt = entity.clone();
+    let fk_opt = field_key.to_string();
+    row = row.child(
+        div()
+            .flex()
+            .items_center()
+            .gap(px(4.0))
+            .child(
+                Switch::new(opt_id)
+                    .checked(state.is_optional)
+                    .small()
+                    .on_click(move |checked: &bool, _, cx| {
+                        entity_opt.update(cx, |this, cx| {
+                            this.toggle_item_optional(&fk_opt, item_idx, *checked, cx);
+                        });
+                    }),
+            )
+            .child(
+                div()
+                    .text_size(px(11.0))
+                    .text_color(theme.panel_subtext)
+                    .child(optional_label.to_string()),
+            ),
+    );
+
+    // 数组开关
+    let arr_id = format!("arr-{}-{}", field_key, item_idx);
+    let entity_arr = entity.clone();
+    let fk_arr = field_key.to_string();
+    row = row.child(
+        div()
+            .flex()
+            .items_center()
+            .gap(px(4.0))
+            .child(
+                Switch::new(arr_id)
+                    .checked(state.is_array)
+                    .small()
+                    .on_click(move |checked: &bool, _, cx| {
+                        entity_arr.update(cx, |this, cx| {
+                            this.toggle_item_array(&fk_arr, item_idx, *checked, cx);
+                        });
+                    }),
+            )
+            .child(
+                div()
+                    .text_size(px(11.0))
+                    .text_color(theme.panel_subtext)
+                    .child(array_label.to_string()),
+            ),
+    );
+
+    // 默认值输入（仅基础类型）
     if !has_fields {
         if let Some(val_entity) = &state.value {
-            let value_label = t(lang, TKey::PanelParamValue);
-            col = col.child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap(px(4.0))
-                    .pl(px(30.0))
-                    .child(
-                        div()
-                            .text_size(px(11.0))
-                            .text_color(theme.panel_subtext)
-                            .child(value_label),
-                    )
-                    .child(Input::new(val_entity).appearance(true)),
-            );
-        }
-    }
-
-    // 结构类型且展开：树形显示子字段
-    if has_fields && state.expanded {
-        let mut fields_col = div().flex().flex_col().gap(px(3.0)).pl(px(30.0));
-
-        let field_count = state.fields.len();
-        for (fi, field_state) in state.fields.iter().enumerate() {
-            let is_last = fi == field_count - 1;
-            let tree_icon = if is_last { "└" } else { "├" };
-
-            let mut field_row = div()
-                .flex()
-                .items_center()
-                .gap(px(4.0))
-                .py(px(3.0))
-                .px(px(6.0))
-                .rounded_md()
-                .bg(theme.panel_bg)
-                .border_1()
-                .border_color(theme.panel_border);
-
-            field_row = field_row.child(
-                div()
-                    .w(px(16.0))
-                    .flex()
-                    .flex_shrink_0()
-                    .items_center()
-                    .justify_center()
-                    .text_size(px(12.0))
-                    .text_color(theme.panel_subtext)
-                    .child(tree_icon),
-            );
-
-            if is_dynamic {
-                // 动态类型：字段名可编辑
-                field_row = field_row.child(
-                    div()
-                        .w(px(60.0))
-                        .flex_shrink_0()
-                        .child(Input::new(&field_state.name).appearance(true)),
-                );
-
-                // 动态类型：字段类型下拉（仅基础类型可选）
-                let field_type_btn_id = format!("ftype-{}-{}-{}", field_key, item_idx, fi);
-                let current_ftype = field_state.type_value.clone();
-                let entity_clone4 = entity.clone();
-                let fk4 = field_key.to_string();
-                let basic_types_clone = basic_types.clone();
-                field_row = field_row.child(
-                    Button::new(field_type_btn_id)
-                        .label(current_ftype.clone())
-                        .icon(IconName::ChevronDown)
-                        .xsmall()
-                        .ghost()
-                        .w(px(80.0))
-                        .dropdown_menu(move |menu, _w, _cx| {
-                            let mut menu = menu;
-                            for ty in &basic_types_clone {
-                                let ty_val = ty.to_string();
-                                let is_checked = ty_val == current_ftype;
-                                let entity = entity_clone4.clone();
-                                let fk = fk4.clone();
-                                menu = menu.item(
-                                    PopupMenuItem::new(ty_val.clone())
-                                        .checked(is_checked)
-                                        .on_click(move |_, _, cx| {
-                                            entity.update(cx, |this, cx| {
-                                                this.change_field_type(
-                                                    &fk,
-                                                    item_idx,
-                                                    fi,
-                                                    ty_val.clone(),
-                                                    cx,
-                                                );
-                                            });
-                                        }),
-                                );
-                            }
-                            menu
-                        }),
-                );
-
-                // 动态类型：删除字段按钮
-                let del_field_btn_id = format!("fdel-{}-{}-{}", field_key, item_idx, fi);
-                let entity_clone5 = entity.clone();
-                let fk5 = field_key.to_string();
-                field_row = field_row.child(
-                    Button::new(del_field_btn_id)
-                        .icon(IconName::Close)
-                        .xsmall()
-                        .ghost()
-                        .on_click(move |_: &ClickEvent, _, cx| {
-                            entity_clone5.update(cx, |this, cx| {
-                                this.delete_field(&fk5, item_idx, fi, cx);
-                            });
-                        }),
-                );
-
-                // 字段值（变量模式可编辑）
-                if is_variable {
-                    field_row = field_row.child(
-                        div()
-                            .flex_1()
-                            .child(Input::new(&field_state.value).appearance(true)),
-                    );
-                } else {
-                    let val = field_state.value.read(cx).value().to_string();
-                    field_row = field_row.child(
-                        div()
-                            .flex_1()
-                            .text_size(px(12.0))
-                            .text_color(theme.panel_subtext)
-                            .child(val),
-                    );
-                }
+            // 占位符：可选时提示可省略
+            let placeholder = if state.is_optional {
+                format!("{} ({})", value_label, optional_label)
             } else {
-                // 复杂类型：字段名只读
-                field_row = field_row.child(
-                    div()
-                        .w(px(60.0))
-                        .flex_shrink_0()
-                        .text_size(px(12.0))
-                        .text_color(theme.panel_label_text)
-                        .child(field_state.name.read(cx).value().to_string()),
-                );
+                value_label.to_string()
+            };
 
-                // 复杂类型：字段类型只读 tag
-                field_row = field_row.child(
+            if is_boolean {
+                // Boolean 类型用 Switch 作为默认值控件
+                let bool_val = val_entity.read(_cx).value().to_string();
+                let checked = bool_val == "true";
+                let bool_id = format!("bval-{}-{}", field_key, item_idx);
+                let entity_bool = entity.clone();
+                let fk_bool = field_key.to_string();
+                row = row.child(
                     div()
-                        .w(px(60.0))
-                        .flex_shrink_0()
-                        .px(px(4.0))
-                        .py(px(2.0))
-                        .rounded_sm()
-                        .bg(theme.toolbar_toggle_bg)
-                        .text_size(px(11.0))
-                        .text_color(theme.toolbar_toggle_text)
+                        .flex_1()
                         .flex()
                         .items_center()
-                        .justify_center()
-                        .child(field_state.type_value.clone()),
+                        .justify_end()
+                        .gap(px(4.0))
+                        .child(
+                            Switch::new(bool_id)
+                                .checked(checked)
+                                .small()
+                                .on_click(move |new_checked: &bool, _, cx| {
+                                    entity_bool.update(cx, |this, cx| {
+                                        this.set_item_value(
+                                            &fk_bool,
+                                            item_idx,
+                                            new_checked.to_string(),
+                                            cx,
+                                        );
+                                    });
+                                }),
+                        )
+                        .child(
+                            div()
+                                .text_size(px(11.0))
+                                .text_color(theme.panel_subtext)
+                                .child(placeholder),
+                        ),
                 );
-
-                // 字段值（变量模式可编辑）
-                if is_variable {
-                    field_row = field_row.child(
-                        div()
-                            .flex_1()
-                            .child(Input::new(&field_state.value).appearance(true)),
-                    );
-                } else {
-                    let val = field_state.value.read(cx).value().to_string();
-                    field_row = field_row.child(
-                        div()
-                            .flex_1()
-                            .text_size(px(12.0))
-                            .text_color(theme.panel_subtext)
-                            .child(val),
-                    );
-                }
+            } else {
+                // 其他基础类型用 Input
+                row = row.child(
+                    div()
+                        .flex_1()
+                        .flex()
+                        .flex_col()
+                        .gap(px(2.0))
+                        .child(
+                            div()
+                                .text_size(px(11.0))
+                                .text_color(theme.panel_subtext)
+                                .child(placeholder),
+                        )
+                        .child(Input::new(val_entity).appearance(true)),
+                );
             }
-
-            fields_col = fields_col.child(field_row);
         }
-
-        // 动态类型：添加字段按钮
-        if is_dynamic {
-            let add_field_btn_id = format!("fadd-{}-{}", field_key, item_idx);
-            let entity_clone6 = entity.clone();
-            let fk6 = field_key.to_string();
-            fields_col = fields_col.child(
-                div().pl(px(22.0)).child(
-                    Button::new(add_field_btn_id)
-                        .icon(IconName::Plus)
-                        .xsmall()
-                        .ghost()
-                        .on_click(move |_: &ClickEvent, _, cx| {
-                            entity_clone6.update(cx, |this, cx| {
-                                this.add_field(&fk6, item_idx, cx);
-                            });
-                        }),
-                ),
-            );
-        }
-
-        let _ = is_complex; // 复杂类型标记已通过 is_dynamic=false 体现
-        col = col.child(fields_col);
+    } else {
+        // 结构类型：占位填充保持对齐
+        row = row.child(div().flex_1());
     }
 
-    col.into_any_element()
+    row.into_any_element()
+}
+
+/// 使用 Tree 控件渲染结构类型的子字段列表。
+#[allow(clippy::too_many_arguments)]
+fn render_field_tree(
+    tree_state: &Entity<TreeState>,
+    field_key: &str,
+    item_idx: usize,
+    is_variable: bool,
+    is_dynamic: bool,
+    registry: &DataTypeRegistry,
+    lang: Language,
+    theme: Theme,
+    entity: &Entity<StartPanelView>,
+    field_count: usize,
+) -> impl IntoElement {
+    let entity_clone = entity.clone();
+    let fk = field_key.to_string();
+
+    // 预计算类型列表（避免 registry 引用逃逸到 'static 闭包）
+    let type_names: Vec<String> = registry
+        .type_names()
+        .into_iter()
+        .map(|s| s.to_string())
+        .collect();
+    let basic_types: Vec<String> = type_names
+        .iter()
+        .filter(|t| registry.is_basic(t))
+        .cloned()
+        .collect();
+
+    // 计算 Tree 容器高度
+    let entry_count = field_count + if is_dynamic { 1 } else { 0 };
+    let tree_height = px(TREE_ENTRY_HEIGHT * entry_count as f32);
+
+    tree(
+        tree_state,
+        move |ix, entry, _selected, _window, cx| {
+            let entity = entity_clone.clone();
+            let fk = fk.clone();
+            let basic_types = basic_types.clone();
+            let theme = theme;
+
+            entity.update(cx, |this, cx| {
+                let id = entry.item().id.to_string();
+
+                if id == "addfield" {
+                    // 添加字段按钮行
+                    render_add_field_entry(ix, &fk, item_idx, &theme, cx)
+                } else if let Some(field_idx) = id
+                    .strip_prefix("field-")
+                    .and_then(|s| s.parse::<usize>().ok())
+                {
+                    // 字段行
+                    let states = if fk == "variables" {
+                        &this.variables_state
+                    } else {
+                        &this.params_state
+                    };
+                    match states.get(item_idx) {
+                        Some(item_state) if field_idx < item_state.fields.len() => {
+                            let field_state = &item_state.fields[field_idx];
+                            render_field_entry(
+                                ix,
+                                field_idx,
+                                field_state,
+                                &fk,
+                                item_idx,
+                                is_variable,
+                                is_dynamic,
+                                &basic_types,
+                                &theme,
+                                lang,
+                                cx,
+                            )
+                        }
+                        _ => ListItem::new(ix).child(div()),
+                    }
+                } else {
+                    ListItem::new(ix).child(div())
+                }
+            })
+        },
+    )
+    .h(tree_height)
+    .pl(px(24.0))
+}
+
+/// 渲染单个字段行（ListItem）。
+#[allow(clippy::too_many_arguments)]
+fn render_field_entry(
+    ix: usize,
+    field_idx: usize,
+    field_state: &FieldState,
+    field_key: &str,
+    item_idx: usize,
+    is_variable: bool,
+    is_dynamic: bool,
+    basic_types: &[String],
+    theme: &Theme,
+    lang: Language,
+    cx: &mut gpui::Context<StartPanelView>,
+) -> ListItem {
+    let name_entity = field_state.name.clone();
+    let val_entity = field_state.value.clone();
+    let current_ftype = field_state.type_value.clone();
+
+    let mut row = div().flex().items_center().gap(px(4.0)).w_full().px(px(4.0));
+
+    if is_dynamic {
+        // 动态类型：字段名可编辑
+        row = row.child(
+            div()
+                .w(px(64.0))
+                .flex_shrink_0()
+                .child(Input::new(&name_entity).appearance(true)),
+        );
+
+        // 字段类型下拉（仅基础类型可选）
+        let field_type_btn_id = format!("ftype-{}-{}-{}", field_key, item_idx, field_idx);
+        let entity_clone = cx.entity();
+        let fk = field_key.to_string();
+        let current_ftype_clone = current_ftype.clone();
+        let basic_types_clone: Vec<String> = basic_types.to_vec();
+
+        row = row.child(
+            Button::new(field_type_btn_id)
+                .label(current_ftype.clone())
+                .icon(IconName::ChevronDown)
+                .xsmall()
+                .ghost()
+                .w(px(80.0))
+                .dropdown_menu(move |menu, _w, _cx| {
+                    let mut menu = menu;
+                    for ty in &basic_types_clone {
+                        let ty_val = ty.to_string();
+                        let is_checked = ty_val == current_ftype_clone;
+                        let entity = entity_clone.clone();
+                        let fk = fk.clone();
+                        menu = menu.item(
+                            PopupMenuItem::new(ty_val.clone())
+                                .checked(is_checked)
+                                .on_click(move |_, _, cx| {
+                                    entity.update(cx, |this, cx| {
+                                        this.change_field_type(
+                                            &fk,
+                                            item_idx,
+                                            field_idx,
+                                            ty_val.clone(),
+                                            cx,
+                                        );
+                                    });
+                                }),
+                        );
+                    }
+                    menu
+                }),
+        );
+
+        // 删除字段按钮
+        let del_field_btn_id = format!("fdel-{}-{}-{}", field_key, item_idx, field_idx);
+        let entity_clone2 = cx.entity();
+        let fk2 = field_key.to_string();
+        row = row.child(
+            Button::new(del_field_btn_id)
+                .icon(IconName::Close)
+                .xsmall()
+                .ghost()
+                .on_click(move |_: &ClickEvent, _, cx| {
+                    entity_clone2.update(cx, |this, cx| {
+                        this.delete_field(&fk2, item_idx, field_idx, cx);
+                    });
+                }),
+        );
+
+        // 字段值
+        if is_variable {
+            row = row.child(
+                div()
+                    .flex_1()
+                    .child(Input::new(&val_entity).appearance(true)),
+            );
+        } else {
+            let val = field_state.value.read(cx).value().to_string();
+            row = row.child(
+                div()
+                    .flex_1()
+                    .text_size(px(12.0))
+                    .text_color(theme.panel_subtext)
+                    .child(val),
+            );
+        }
+    } else {
+        // 复杂类型：字段名只读
+        let fname = field_state.name.read(cx).value().to_string();
+        row = row.child(
+            div()
+                .w(px(64.0))
+                .flex_shrink_0()
+                .text_size(px(12.0))
+                .text_color(theme.panel_label_text)
+                .child(fname),
+        );
+
+        // 字段类型只读 tag
+        row = row.child(
+            div()
+                .w(px(64.0))
+                .flex_shrink_0()
+                .px(px(4.0))
+                .py(px(2.0))
+                .rounded_sm()
+                .bg(theme.toolbar_toggle_bg)
+                .text_size(px(11.0))
+                .text_color(theme.toolbar_toggle_text)
+                .flex()
+                .items_center()
+                .justify_center()
+                .child(field_state.type_value.clone()),
+        );
+
+        // 字段值
+        if is_variable {
+            row = row.child(
+                div()
+                    .flex_1()
+                    .child(Input::new(&val_entity).appearance(true)),
+            );
+        } else {
+            let val = field_state.value.read(cx).value().to_string();
+            row = row.child(
+                div()
+                    .flex_1()
+                    .text_size(px(12.0))
+                    .text_color(theme.panel_subtext)
+                    .child(val),
+            );
+        }
+    }
+
+    let _ = lang;
+    ListItem::new(ix).w_full().child(row)
+}
+
+/// 渲染"添加字段"按钮行（ListItem）。
+fn render_add_field_entry(
+    ix: usize,
+    field_key: &str,
+    item_idx: usize,
+    _theme: &Theme,
+    cx: &mut gpui::Context<StartPanelView>,
+) -> ListItem {
+    let add_btn_id = format!("fadd-{}-{}", field_key, item_idx);
+    let entity = cx.entity();
+    let fk = field_key.to_string();
+
+    ListItem::new(ix).w_full().child(
+        div().w_full().child(
+            Button::new(add_btn_id)
+                .icon(IconName::Plus)
+                .xsmall()
+                .ghost()
+                .on_click(move |_: &ClickEvent, _, cx| {
+                    entity.update(cx, |this, cx| {
+                        this.add_field(&fk, item_idx, cx);
+                    });
+                }),
+        ),
+    )
 }

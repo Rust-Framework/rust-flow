@@ -59,19 +59,21 @@ fn agent_flow_doc() -> FlowDocument {
     let start = doc.add_node(NodeDef::new("start", serde_json::json!({
         "label": "Start",
         "params": [
-            { "name": "query", "type": "String", "value": "are you ok?" },
-            { "name": "data", "type": "DataModel", "fields": [
+            { "name": "query", "type": "String", "is_optional": false, "is_array": false, "value": "are you ok?" },
+            { "name": "tags", "type": "String", "is_optional": true, "is_array": true, "value": "" },
+            { "name": "data", "type": "DataModel", "is_optional": false, "is_array": false, "fields": [
                 { "name": "id", "type": "Number", "value": "0" },
                 { "name": "name", "type": "String", "value": "" }
             ]}
         ],
         "variables": [
-            { "name": "turn", "type": "Number", "value": "0" },
-            { "name": "data", "type": "DataModel", "fields": [
+            { "name": "turn", "type": "Number", "is_optional": false, "is_array": false, "value": "0" },
+            { "name": "verbose", "type": "Boolean", "is_optional": false, "is_array": false, "value": "false" },
+            { "name": "data", "type": "DataModel", "is_optional": false, "is_array": false, "fields": [
                 { "name": "id", "type": "Number", "value": "1" },
                 { "name": "name", "type": "String", "value": "default" }
             ]},
-            { "name": "context", "type": "DynamicObject", "fields": [
+            { "name": "context", "type": "DynamicObject", "is_optional": true, "is_array": false, "fields": [
                 { "name": "topic", "type": "String", "value": "general" },
                 { "name": "priority", "type": "Number", "value": "0" }
             ]}
@@ -81,8 +83,8 @@ fn agent_flow_doc() -> FlowDocument {
     let variable = doc.add_node(NodeDef::new("variable", serde_json::json!({
         "label": "Vars",
         "variables": [
-            { "name": "threshold", "type": "Number", "value": "0.8" },
-            { "name": "max_retry", "type": "Number", "value": "3" }
+            { "name": "threshold", "type": "Number", "is_optional": false, "is_array": false, "value": "0.8" },
+            { "name": "max_retry", "type": "Number", "is_optional": false, "is_array": false, "value": "3" }
         ]
     })).with_size(SizeF::new(200.0, 64.0)).with_position(PointF::new(300.0, 200.0)));
 
@@ -135,8 +137,8 @@ fn agent_flow_doc() -> FlowDocument {
     let end = doc.add_node(NodeDef::new("end", serde_json::json!({
         "label": "End",
         "returns": [
-            { "name": "answer", "type": "String", "value": "" },
-            { "name": "status", "type": "Number", "value": "0" }
+            { "name": "answer", "type": "String", "is_optional": false, "is_array": false, "value": "" },
+            { "name": "status", "type": "Number", "is_optional": false, "is_array": false, "value": "0" }
         ]
     })).with_size(SizeF::new(160.0, 56.0)).with_position(PointF::new(2500.0, 280.0)));
 
@@ -174,8 +176,8 @@ fn data_pipeline_doc() -> FlowDocument {
     let start = doc.add_node(NodeDef::new("start", serde_json::json!({
         "label": "Source",
         "params": [
-            { "name": "source", "type": "String", "value": "db" },
-            { "name": "count", "type": "Number", "value": "100" }
+            { "name": "source", "type": "String", "is_optional": false, "is_array": false, "value": "db" },
+            { "name": "count", "type": "Number", "is_optional": false, "is_array": false, "value": "100" }
         ]
     })).with_size(SizeF::new(160.0, 56.0)).with_position(PointF::new(80.0, 280.0)));
 
@@ -186,8 +188,8 @@ fn data_pipeline_doc() -> FlowDocument {
     let vars = doc.add_node(NodeDef::new("variable", serde_json::json!({
         "label": "Config",
         "variables": [
-            { "name": "batch_size", "type": "Number", "value": "100" },
-            { "name": "timeout", "type": "Number", "value": "30" }
+            { "name": "batch_size", "type": "Number", "is_optional": false, "is_array": false, "value": "100" },
+            { "name": "timeout", "type": "Number", "is_optional": false, "is_array": false, "value": "30" }
         ]
     })).with_size(SizeF::new(200.0, 64.0)).with_position(PointF::new(560.0, 200.0)));
 
@@ -210,7 +212,7 @@ fn data_pipeline_doc() -> FlowDocument {
 
     let end = doc.add_node(NodeDef::new("end", serde_json::json!({
         "label": "Sink",
-        "returns": [{ "name": "count", "type": "Number", "value": "0" }]
+        "returns": [{ "name": "count", "type": "Number", "is_optional": false, "is_array": false, "value": "0" }]
     })).with_size(SizeF::new(160.0, 56.0)).with_position(PointF::new(1380.0, 320.0)));
 
     doc.add_edge(EdgeDef::new(start, clean).with_edge_type(EdgeType::SmoothStep));
