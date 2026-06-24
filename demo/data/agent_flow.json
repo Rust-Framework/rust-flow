@@ -1,0 +1,148 @@
+{
+  "version": "1.0",
+  "metadata": {
+    "name": "Agent Orchestration",
+    "description": "Agent 编排流程：规划 → 条件分支 → 循环处理 → 汇总"
+  },
+  "nodes": [
+    {
+      "kind": "start",
+      "data": {
+        "label": "Start",
+        "params": [
+          { "name": "query", "type": "String", "is_optional": false, "is_array": false, "value": "are you ok?" },
+          { "name": "tags", "type": "String", "is_optional": true, "is_array": true, "value": "" },
+          { "name": "data", "type": "DataModel", "is_optional": false, "is_array": false, "fields": [
+            { "name": "id", "type": "Integer", "value": "0" },
+            { "name": "name", "type": "String", "value": "" }
+          ]}
+        ],
+        "variables": [
+          { "name": "turn", "type": "Integer", "is_optional": false, "is_array": false, "value": "0" },
+          { "name": "verbose", "type": "Boolean", "is_optional": false, "is_array": false, "value": "false" },
+          { "name": "data", "type": "DataModel", "is_optional": false, "is_array": false, "fields": [
+            { "name": "id", "type": "Integer", "value": "1" },
+            { "name": "name", "type": "String", "value": "default" }
+          ]},
+          { "name": "context", "type": "Dynamic", "is_optional": true, "is_array": false, "fields": [
+            { "name": "topic", "type": "String", "value": "general" },
+            { "name": "priority", "type": "Integer", "value": "0" }
+          ]}
+        ]
+      },
+      "size": { "w": 160.0, "h": 56.0 },
+      "position": { "x": 80.0, "y": 280.0 }
+    },
+    {
+      "kind": "variable",
+      "data": {
+        "label": "Vars",
+        "variables": [
+          { "name": "threshold", "type": "Float", "is_optional": false, "is_array": false, "value": "0.8" },
+          { "name": "max_retry", "type": "Integer", "is_optional": false, "is_array": false, "value": "3" }
+        ]
+      },
+      "size": { "w": 200.0, "h": 64.0 },
+      "position": { "x": 300.0, "y": 200.0 }
+    },
+    {
+      "kind": "agent",
+      "data": {
+        "label": "Agent",
+        "model": "gpt-4",
+        "prompt": "You are a helpful assistant."
+      },
+      "size": { "w": 200.0, "h": 64.0 },
+      "position": { "x": 300.0, "y": 360.0 }
+    },
+    {
+      "kind": "action",
+      "data": { "label": "Planner", "desc": "规划下一步" },
+      "size": { "w": 180.0, "h": 35.0 },
+      "position": { "x": 540.0, "y": 280.0 }
+    },
+    {
+      "kind": "condition",
+      "data": {
+        "label": "Check",
+        "conditions": [
+          { "id": "if_0", "label": "needs_search" },
+          { "id": "if_1", "label": "needs_tool" }
+        ]
+      },
+      "size": { "w": 220.0, "h": 144.0 },
+      "position": { "x": 820.0, "y": 280.0 }
+    },
+    {
+      "kind": "action",
+      "data": { "label": "ToolCall", "desc": "调用外部工具" },
+      "size": { "w": 180.0, "h": 35.0 },
+      "position": { "x": 1100.0, "y": 281.0 }
+    },
+    {
+      "kind": "action",
+      "data": { "label": "Search", "desc": "检索知识库" },
+      "size": { "w": 180.0, "h": 35.0 },
+      "position": { "x": 1100.0, "y": 326.0 }
+    },
+    {
+      "kind": "action",
+      "data": { "label": "Notify", "desc": "发送通知" },
+      "size": { "w": 180.0, "h": 35.0 },
+      "position": { "x": 1100.0, "y": 380.0 }
+    },
+    {
+      "kind": "adapter",
+      "data": { "label": "Adapter", "desc": "JSON → Struct" },
+      "size": { "w": 200.0, "h": 64.0 },
+      "position": { "x": 1380.0, "y": 326.0 }
+    },
+    {
+      "kind": "loop",
+      "data": { "label": "Loop", "desc": "For each item" },
+      "size": { "w": 220.0, "h": 80.0 },
+      "position": { "x": 1660.0, "y": 280.0 }
+    },
+    {
+      "kind": "action",
+      "data": { "label": "Process", "desc": "处理当前项" },
+      "size": { "w": 180.0, "h": 35.0 },
+      "position": { "x": 1940.0, "y": 400.0 }
+    },
+    {
+      "kind": "action",
+      "data": { "label": "Summarize", "desc": "汇总结果" },
+      "size": { "w": 180.0, "h": 35.0 },
+      "position": { "x": 2220.0, "y": 280.0 }
+    },
+    {
+      "kind": "end",
+      "data": {
+        "label": "End",
+        "returns": [
+          { "name": "answer", "type": "String", "is_optional": false, "is_array": false, "value": "" },
+          { "name": "status", "type": "Integer", "is_optional": false, "is_array": false, "value": "0" }
+        ]
+      },
+      "size": { "w": 160.0, "h": 56.0 },
+      "position": { "x": 2500.0, "y": 280.0 }
+    }
+  ],
+  "edges": [
+    { "source": 0, "target": 1, "edge_type": "SmoothStep" },
+    { "source": 1, "target": 2, "edge_type": "SmoothStep" },
+    { "source": 2, "target": 3, "edge_type": "SmoothStep" },
+    { "source": 3, "target": 4, "target_port": "in", "edge_type": "SmoothStep" },
+    { "source": 4, "target": 6, "source_port": "if_0", "edge_type": "SmoothStep" },
+    { "source": 4, "target": 5, "source_port": "if_1", "edge_type": "SmoothStep" },
+    { "source": 4, "target": 7, "source_port": "else", "edge_type": "SmoothStep" },
+    { "source": 6, "target": 8, "edge_type": "SmoothStep" },
+    { "source": 5, "target": 8, "edge_type": "SmoothStep" },
+    { "source": 8, "target": 9, "target_port": "in", "edge_type": "SmoothStep" },
+    { "source": 7, "target": 11, "edge_type": "SmoothStep" },
+    { "source": 9, "target": 10, "source_port": "loop_body", "edge_type": "SmoothStep" },
+    { "source": 10, "target": 9, "target_port": "loop_in", "edge_type": "SmoothStep" },
+    { "source": 9, "target": 11, "source_port": "done", "edge_type": "SmoothStep" },
+    { "source": 11, "target": 12, "edge_type": "SmoothStep" }
+  ]
+}

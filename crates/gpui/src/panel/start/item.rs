@@ -1,9 +1,9 @@
 //! Start 节点参数/变量项的状态与渲染。
 //!
 //! 三种类型形态：
-//! - **基础类型**（Boolean/String/Number/DateTime）：name + type + is_optional + is_array + value
+//! - **基础类型**（String/Integer/Float/Boolean/DateTime）：name + type + is_optional + is_array + value
 //! - **复杂类型**（DataModel 等）：预定义结构，结构只读，值按模式可编辑
-//! - **动态类型**（DynamicObject）：结构可手动编辑（增删改字段），值按模式可编辑
+//! - **动态类型**（Dynamic）：结构可手动编辑（增删改字段），值按模式可编辑
 //!
 //! 低代码变量模型规则：
 //! - `is_optional=true` 时默认值可省略（UI 提示可选）
@@ -32,7 +32,7 @@ use gpui_component::tree::{TreeItem, TreeState, tree};
 use gpui_component::{IconName, Sizable};
 
 use crate::data_type::DataTypeRegistry;
-use crate::i18n::{t, Language, TKey};
+use crate::i18n::{data_type_label, t, Language, TKey};
 use crate::theme::Theme;
 
 use super::data_types::{
@@ -479,6 +479,7 @@ fn render_item_header(
     // 类型下拉按钮
     let type_btn_id = format!("type-{}-{}", field_key, item_idx);
     let current_type = state.type_value.clone();
+    let current_type_label = data_type_label(lang, &current_type).to_string();
     let type_names: Vec<String> = registry
         .type_names()
         .into_iter()
@@ -489,7 +490,7 @@ fn render_item_header(
 
     row = row.child(
         Button::new(type_btn_id)
-            .label(current_type.clone())
+            .label(current_type_label)
             .icon(IconName::ChevronDown)
             .xsmall()
             .secondary()
@@ -836,11 +837,12 @@ fn render_field_entry(
         let entity_clone = cx.entity();
         let fk = field_key.to_string();
         let current_ftype_clone = current_ftype.clone();
+        let current_ftype_label = data_type_label(lang, &current_ftype).to_string();
         let basic_types_clone: Vec<String> = basic_types.to_vec();
 
         row = row.child(
             Button::new(field_type_btn_id)
-                .label(current_ftype.clone())
+                .label(current_ftype_label)
                 .icon(IconName::ChevronDown)
                 .xsmall()
                 .ghost()

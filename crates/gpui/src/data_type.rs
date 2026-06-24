@@ -4,9 +4,14 @@
 //! 相同的 trait + `Arc<dyn Trait>` + setter 注入模式。
 //!
 //! 类型分类：
-//! - **Basic**：基础标量类型（Boolean/String/Number/DateTime），直接存储 value
+//! - **Basic**：基础标量类型，直接存储 value
+//!   - String：文本
+//!   - Integer：整数
+//!   - Float：浮点数
+//!   - Boolean：布尔值
+//!   - DateTime：日期时间
 //! - **Complex**：复杂类型，预定义结构，结构**不可编辑**（由 provider 提供）
-//! - **Dynamic**：动态类型（DynamicObject），结构**可手动编辑**（增删改字段）
+//! - **Dynamic**：动态类型（Dynamic），结构**可手动编辑**（增删改字段）
 //!
 //! 注入方式：
 //! - 调用方通过 [`FlowEditorView::set_data_type_provider`] 注入自定义类型
@@ -18,11 +23,11 @@ use std::sync::Arc;
 /// 数据类型分类。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DataTypeCategory {
-    /// 基础标量类型：直接存储 value（Boolean/String/Number/DateTime）。
+    /// 基础标量类型：直接存储 value（String/Integer/Float/Boolean/DateTime）。
     Basic,
     /// 复杂类型：预定义结构，结构不可编辑（由 provider 提供）。
     Complex,
-    /// 动态类型：结构可手动编辑（DynamicObject）。
+    /// 动态类型：结构可手动编辑（Dynamic）。
     Dynamic,
 }
 
@@ -31,7 +36,7 @@ pub enum DataTypeCategory {
 pub struct DataTypeField {
     /// 字段名称。
     pub name: String,
-    /// 字段类型名（引用注册表中的类型名，如 "String"、"Number"）。
+    /// 字段类型名（引用注册表中的类型名，如 "String"、"Integer"）。
     pub field_type: String,
     /// 默认值。
     pub default_value: String,
@@ -51,7 +56,7 @@ impl DataTypeField {
 ///
 /// 提供数据结构定义。内置类型和外部 provider 类型均实现此接口。
 pub trait IDataType: Send + Sync {
-    /// 类型名称（唯一标识，如 "String"、"DataModel"、"DynamicObject"）。
+    /// 类型名称（唯一标识，如 "String"、"DataModel"、"Dynamic"）。
     fn name(&self) -> &str;
     /// 类型分类。
     fn category(&self) -> DataTypeCategory;
@@ -77,7 +82,7 @@ pub trait IDataType: Send + Sync {
 ///     fn category(&self) -> DataTypeCategory { DataTypeCategory::Complex }
 ///     fn fields(&self) -> Vec<DataTypeField> {
 ///         vec![
-///             DataTypeField::new("id", "Number", "0"),
+///             DataTypeField::new("id", "Integer", "0"),
 ///             DataTypeField::new("name", "String", ""),
 ///         ]
 ///     }
@@ -99,7 +104,14 @@ pub type SharedDataTypeProvider = Arc<dyn IDataTypeProvider>;
 
 // ====== 内置类型实现 ======
 
-/// 内置基础类型（Boolean/String/Number/DateTime）。
+/// 内置基础类型。
+///
+/// 精炼实用的基础数据类型：
+/// - String：文本（姓名、标题、备注等）
+/// - Integer：整数（计数、ID 等）
+/// - Float：浮点数（金额、比率等）
+/// - Boolean：布尔值（开关状态、是否完成等）
+/// - DateTime：日期时间（时间戳、截止时间等）
 struct BuiltinBasicType {
     name: &'static str,
 }
@@ -122,18 +134,18 @@ impl IDataType for BuiltinBasicType {
     }
 }
 
-/// 内置动态类型 DynamicObject：结构可手动编辑。
-struct DynamicObjectType;
+/// 内置动态类型 Dynamic：结构可手动编辑。
+struct DynamicType;
 
-impl IDataType for DynamicObjectType {
+impl IDataType for DynamicType {
     fn name(&self) -> &str {
-        "DynamicObject"
+        "Dynamic"
     }
     fn category(&self) -> DataTypeCategory {
         DataTypeCategory::Dynamic
     }
     fn fields(&self) -> Vec<DataTypeField> {
-        // DynamicObject 默认无字段，由用户手动添加
+        // Dynamic 默认无字段，由用户手动添加
         Vec::new()
     }
 }
@@ -147,13 +159,23 @@ pub struct DataTypeRegistry {
 
 impl DataTypeRegistry {
     /// 创建注册表，合并内置类型和 provider 类型。
+    ///
+    /// 内置基础类型（精炼实用）：
+    /// - String：文本
+    /// - Integer：整数
+    /// - Float：浮点数
+    /// - Boolean：布尔值
+    /// - DateTime：日期时间
+    ///
+    /// 内置动态类型：Dynamic（结构可手动编辑）
     pub fn new(provider: Option<SharedDataTypeProvider>) -> Self {
         let mut types: Vec<Box<dyn IDataType>> = vec![
-            Box::new(BuiltinBasicType::new("Boolean")),
             Box::new(BuiltinBasicType::new("String")),
-            Box::new(BuiltinBasicType::new("Number")),
+            Box::new(BuiltinBasicType::new("Integer")),
+            Box::new(BuiltinBasicType::new("Float")),
+            Box::new(BuiltinBasicType::new("Boolean")),
             Box::new(BuiltinBasicType::new("DateTime")),
-            Box::new(DynamicObjectType),
+            Box::new(DynamicType),
         ];
         if let Some(p) = provider {
             types.extend(p.data_types());

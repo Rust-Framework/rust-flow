@@ -20,7 +20,7 @@ pub use data_type::{
 };
 pub use editor::{FlowEditorView, SharedToolbarProvider, ToolbarCtx, ToolbarProvider};
 pub use edge::EdgeView;
-pub use i18n::{Language, TKey, t};
+pub use i18n::{Language, TKey, data_type_label, kind_label, t};
 pub use node::{IFlowNode, NodeRegistry, NodeView, NodeViewCtx};
 pub use theme::Theme;
 

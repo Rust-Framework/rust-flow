@@ -151,6 +151,13 @@ pub enum TKey {
     GridDensityCompact,
     GridDensityNormal,
     GridDensitySparse,
+    // 内置数据类型显示名
+    TypeString,
+    TypeInteger,
+    TypeFloat,
+    TypeBoolean,
+    TypeDateTime,
+    TypeDynamic,
 }
 
 /// 根据语言和翻译键返回对应文案。
@@ -176,6 +183,22 @@ pub fn kind_label(lang: Language, kind: &str) -> &'static str {
         "adapter" => t(lang, TKey::DataAdapter),
         "agent" => t(lang, TKey::Agent),
         _ => "",
+    }
+}
+
+/// 内置数据类型名 → 本地化显示名称。
+///
+/// 用于属性面板类型下拉菜单的显示文案。
+/// 非内置类型（provider 提供的 Complex 类型等）原样返回类型名。
+pub fn data_type_label(lang: Language, type_name: &str) -> &str {
+    match type_name {
+        "String" => t(lang, TKey::TypeString),
+        "Integer" => t(lang, TKey::TypeInteger),
+        "Float" => t(lang, TKey::TypeFloat),
+        "Boolean" => t(lang, TKey::TypeBoolean),
+        "DateTime" => t(lang, TKey::TypeDateTime),
+        "Dynamic" => t(lang, TKey::TypeDynamic),
+        _ => type_name,
     }
 }
 
@@ -282,6 +305,13 @@ fn t_zh(key: TKey) -> &'static str {
         TKey::GridDensityCompact => "紧凑",
         TKey::GridDensityNormal => "标准",
         TKey::GridDensitySparse => "稀疏",
+        // 内置数据类型显示名
+        TKey::TypeString => "文本",
+        TKey::TypeInteger => "整数",
+        TKey::TypeFloat => "浮点数",
+        TKey::TypeBoolean => "布尔值",
+        TKey::TypeDateTime => "日期时间",
+        TKey::TypeDynamic => "动态",
     }
 }
 
@@ -388,5 +418,12 @@ fn t_en(key: TKey) -> &'static str {
         TKey::GridDensityCompact => "Compact",
         TKey::GridDensityNormal => "Normal",
         TKey::GridDensitySparse => "Sparse",
+        // 内置数据类型显示名
+        TKey::TypeString => "String",
+        TKey::TypeInteger => "Integer",
+        TKey::TypeFloat => "Float",
+        TKey::TypeBoolean => "Boolean",
+        TKey::TypeDateTime => "DateTime",
+        TKey::TypeDynamic => "Dynamic",
     }
 }

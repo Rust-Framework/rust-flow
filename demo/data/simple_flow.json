@@ -1,0 +1,38 @@
+{
+  "version": "1.0",
+  "metadata": {
+    "name": "Simple Flow",
+    "description": "简单线性流程：开始 → 处理 → 结束"
+  },
+  "nodes": [
+    {
+      "kind": "start",
+      "data": { "label": "Start" },
+      "size": { "w": 160.0, "h": 56.0 },
+      "position": { "x": 100.0, "y": 200.0 }
+    },
+    {
+      "kind": "action",
+      "data": { "label": "Step 1", "desc": "第一步" },
+      "size": { "w": 180.0, "h": 35.0 },
+      "position": { "x": 340.0, "y": 200.0 }
+    },
+    {
+      "kind": "action",
+      "data": { "label": "Step 2", "desc": "第二步" },
+      "size": { "w": 180.0, "h": 35.0 },
+      "position": { "x": 600.0, "y": 200.0 }
+    },
+    {
+      "kind": "end",
+      "data": { "label": "End" },
+      "size": { "w": 160.0, "h": 56.0 },
+      "position": { "x": 860.0, "y": 200.0 }
+    }
+  ],
+  "edges": [
+    { "source": 0, "target": 1, "edge_type": "SmoothStep" },
+    { "source": 1, "target": 2, "edge_type": "SmoothStep" },
+    { "source": 2, "target": 3, "edge_type": "SmoothStep" }
+  ]
+}

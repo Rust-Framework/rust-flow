@@ -1,0 +1,85 @@
+{
+  "version": "1.0",
+  "metadata": {
+    "name": "Data Pipeline",
+    "description": "数据处理管道：清洗 → 分流 → 并行处理 → 汇合"
+  },
+  "nodes": [
+    {
+      "kind": "start",
+      "data": {
+        "label": "Source",
+        "params": [
+          { "name": "source", "type": "String", "is_optional": false, "is_array": false, "value": "db" },
+          { "name": "count", "type": "Integer", "is_optional": false, "is_array": false, "value": "100" }
+        ]
+      },
+      "size": { "w": 160.0, "h": 56.0 },
+      "position": { "x": 80.0, "y": 280.0 }
+    },
+    {
+      "kind": "adapter",
+      "data": { "label": "Clean", "desc": "数据清洗" },
+      "size": { "w": 200.0, "h": 64.0 },
+      "position": { "x": 300.0, "y": 280.0 }
+    },
+    {
+      "kind": "variable",
+      "data": {
+        "label": "Config",
+        "variables": [
+          { "name": "batch_size", "type": "Integer", "is_optional": false, "is_array": false, "value": "100" },
+          { "name": "timeout", "type": "Integer", "is_optional": false, "is_array": false, "value": "30" }
+        ]
+      },
+      "size": { "w": 200.0, "h": 64.0 },
+      "position": { "x": 560.0, "y": 200.0 }
+    },
+    {
+      "kind": "condition",
+      "data": {
+        "label": "Route",
+        "conditions": [{ "id": "if_0", "label": "data.size > 1000" }]
+      },
+      "size": { "w": 220.0, "h": 108.0 },
+      "position": { "x": 560.0, "y": 320.0 }
+    },
+    {
+      "kind": "action",
+      "data": { "label": "Batch Process", "desc": "批量处理" },
+      "size": { "w": 180.0, "h": 35.0 },
+      "position": { "x": 860.0, "y": 280.0 }
+    },
+    {
+      "kind": "action",
+      "data": { "label": "Single Process", "desc": "单条处理" },
+      "size": { "w": 180.0, "h": 35.0 },
+      "position": { "x": 860.0, "y": 360.0 }
+    },
+    {
+      "kind": "adapter",
+      "data": { "label": "Merge", "desc": "结果合并" },
+      "size": { "w": 200.0, "h": 64.0 },
+      "position": { "x": 1100.0, "y": 320.0 }
+    },
+    {
+      "kind": "end",
+      "data": {
+        "label": "Sink",
+        "returns": [{ "name": "count", "type": "Integer", "is_optional": false, "is_array": false, "value": "0" }]
+      },
+      "size": { "w": 160.0, "h": 56.0 },
+      "position": { "x": 1380.0, "y": 320.0 }
+    }
+  ],
+  "edges": [
+    { "source": 0, "target": 1, "edge_type": "SmoothStep" },
+    { "source": 1, "target": 2, "edge_type": "SmoothStep" },
+    { "source": 1, "target": 3, "target_port": "in", "edge_type": "SmoothStep" },
+    { "source": 3, "target": 4, "source_port": "if_0", "edge_type": "SmoothStep" },
+    { "source": 3, "target": 5, "source_port": "else", "edge_type": "SmoothStep" },
+    { "source": 4, "target": 6, "edge_type": "SmoothStep" },
+    { "source": 5, "target": 6, "edge_type": "SmoothStep" },
+    { "source": 6, "target": 7, "edge_type": "SmoothStep" }
+  ]
+}

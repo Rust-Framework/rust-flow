@@ -1,12 +1,21 @@
 //! Demo 数据源：预置流程示例。
 //!
-//! 每个数据源返回 [`FlowDocument`]，通过 [`FlowGraph::from_document`] 转换为
-//! 可编辑的流程图。数据驱动设计：节点/边定义与渲染逻辑解耦。
+//! 每个数据源对应一个 JSON 文件（[`FlowDocument`] 协议），通过
+//! [`FlowGraph::from_document`] 转换为可编辑的流程图。
+//!
+//! 数据驱动设计：流程定义以 JSON 文件形式存储在 `demo/data/` 目录下，
+//! 编译时通过 `include_str!` 嵌入二进制，运行时直接反序列化加载。
+//! 节点/边定义与渲染逻辑完全解耦，新增流程只需添加 JSON 文件。
 
-use rust_agent_flow::{
-    EdgeDef, EdgeType, FlowDocument, FlowGraph, NodeDef, PointF, SizeF,
-};
+use rust_agent_flow::{FlowDocument, FlowGraph};
 use rust_agent_flow_gpui::{Language, TKey, t};
+
+/// Agent 编排流程 JSON（编译时嵌入）。
+const AGENT_FLOW_JSON: &str = include_str!("../data/agent_flow.json");
+/// 数据处理管道 JSON（编译时嵌入）。
+const DATA_PIPELINE_JSON: &str = include_str!("../data/data_pipeline.json");
+/// 简单线性流程 JSON（编译时嵌入）。
+const SIMPLE_FLOW_JSON: &str = include_str!("../data/simple_flow.json");
 
 /// Demo 预置数据源枚举。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -21,18 +30,21 @@ pub enum DemoDataSource {
 }
 
 impl DemoDataSource {
-    /// 返回数据源对应的 FlowGraph（通过 from_document 转换）。
+    /// 返回数据源对应的 FlowGraph（从 JSON 反序列化后转换）。
     pub fn to_graph(&self) -> FlowGraph {
         FlowGraph::from_document(&self.to_document())
     }
 
-    /// 返回数据源的 FlowDocument 定义。
+    /// 从 JSON 反序列化为 FlowDocument。
+    ///
+    /// JSON 解析失败时 panic（编译时嵌入的静态数据，不应出错）。
     pub fn to_document(&self) -> FlowDocument {
-        match self {
-            Self::AgentFlow => agent_flow_doc(),
-            Self::DataPipeline => data_pipeline_doc(),
-            Self::SimpleFlow => simple_flow_doc(),
-        }
+        let json = match self {
+            Self::AgentFlow => AGENT_FLOW_JSON,
+            Self::DataPipeline => DATA_PIPELINE_JSON,
+            Self::SimpleFlow => SIMPLE_FLOW_JSON,
+        };
+        serde_json::from_str(json).expect("内置 JSON 数据解析失败")
     }
 
     /// 返回数据源的显示标签（根据语言国际化）。
@@ -49,208 +61,4 @@ impl DemoDataSource {
     pub fn all() -> &'static [DemoDataSource] {
         &[Self::AgentFlow, Self::DataPipeline, Self::SimpleFlow]
     }
-}
-
-/// Agent 编排流程：13 节点 + 15 边，覆盖条件分支和循环回环。
-fn agent_flow_doc() -> FlowDocument {
-    let mut doc = FlowDocument::new("Agent Orchestration")
-        .with_description("Agent 编排流程：规划 → 条件分支 → 循环处理 → 汇总");
-
-    let start = doc.add_node(NodeDef::new("start", serde_json::json!({
-        "label": "Start",
-        "params": [
-            { "name": "query", "type": "String", "is_optional": false, "is_array": false, "value": "are you ok?" },
-            { "name": "tags", "type": "String", "is_optional": true, "is_array": true, "value": "" },
-            { "name": "data", "type": "DataModel", "is_optional": false, "is_array": false, "fields": [
-                { "name": "id", "type": "Number", "value": "0" },
-                { "name": "name", "type": "String", "value": "" }
-            ]}
-        ],
-        "variables": [
-            { "name": "turn", "type": "Number", "is_optional": false, "is_array": false, "value": "0" },
-            { "name": "verbose", "type": "Boolean", "is_optional": false, "is_array": false, "value": "false" },
-            { "name": "data", "type": "DataModel", "is_optional": false, "is_array": false, "fields": [
-                { "name": "id", "type": "Number", "value": "1" },
-                { "name": "name", "type": "String", "value": "default" }
-            ]},
-            { "name": "context", "type": "DynamicObject", "is_optional": true, "is_array": false, "fields": [
-                { "name": "topic", "type": "String", "value": "general" },
-                { "name": "priority", "type": "Number", "value": "0" }
-            ]}
-        ]
-    })).with_size(SizeF::new(160.0, 56.0)).with_position(PointF::new(80.0, 280.0)));
-
-    let variable = doc.add_node(NodeDef::new("variable", serde_json::json!({
-        "label": "Vars",
-        "variables": [
-            { "name": "threshold", "type": "Number", "is_optional": false, "is_array": false, "value": "0.8" },
-            { "name": "max_retry", "type": "Number", "is_optional": false, "is_array": false, "value": "3" }
-        ]
-    })).with_size(SizeF::new(200.0, 64.0)).with_position(PointF::new(300.0, 200.0)));
-
-    let agent = doc.add_node(NodeDef::new("agent", serde_json::json!({
-        "label": "Agent",
-        "model": "gpt-4",
-        "prompt": "You are a helpful assistant."
-    })).with_size(SizeF::new(200.0, 64.0)).with_position(PointF::new(300.0, 360.0)));
-
-    let planner = doc.add_node(NodeDef::new("action", serde_json::json!({
-        "label": "Planner", "desc": "规划下一步"
-    })).with_size(SizeF::new(180.0, 35.0)).with_position(PointF::new(540.0, 280.0)));
-
-    let condition = doc.add_node(NodeDef::new("condition", serde_json::json!({
-        "label": "Check",
-        "conditions": [
-            { "id": "if_0", "label": "needs_search" },
-            { "id": "if_1", "label": "needs_tool" }
-        ]
-    })).with_size(SizeF::new(220.0, 144.0)).with_position(PointF::new(820.0, 280.0)));
-
-    let tool = doc.add_node(NodeDef::new("action", serde_json::json!({
-        "label": "ToolCall", "desc": "调用外部工具"
-    })).with_size(SizeF::new(180.0, 35.0)).with_position(PointF::new(1100.0, 281.0)));
-
-    let search = doc.add_node(NodeDef::new("action", serde_json::json!({
-        "label": "Search", "desc": "检索知识库"
-    })).with_size(SizeF::new(180.0, 35.0)).with_position(PointF::new(1100.0, 326.0)));
-
-    let notify = doc.add_node(NodeDef::new("action", serde_json::json!({
-        "label": "Notify", "desc": "发送通知"
-    })).with_size(SizeF::new(180.0, 35.0)).with_position(PointF::new(1100.0, 380.0)));
-
-    let adapter = doc.add_node(NodeDef::new("adapter", serde_json::json!({
-        "label": "Adapter", "desc": "JSON → Struct"
-    })).with_size(SizeF::new(200.0, 64.0)).with_position(PointF::new(1380.0, 326.0)));
-
-    let loop_node = doc.add_node(NodeDef::new("loop", serde_json::json!({
-        "label": "Loop", "desc": "For each item"
-    })).with_size(SizeF::new(220.0, 80.0)).with_position(PointF::new(1660.0, 280.0)));
-
-    let process = doc.add_node(NodeDef::new("action", serde_json::json!({
-        "label": "Process", "desc": "处理当前项"
-    })).with_size(SizeF::new(180.0, 35.0)).with_position(PointF::new(1940.0, 400.0)));
-
-    let summarize = doc.add_node(NodeDef::new("action", serde_json::json!({
-        "label": "Summarize", "desc": "汇总结果"
-    })).with_size(SizeF::new(180.0, 35.0)).with_position(PointF::new(2220.0, 280.0)));
-
-    let end = doc.add_node(NodeDef::new("end", serde_json::json!({
-        "label": "End",
-        "returns": [
-            { "name": "answer", "type": "String", "is_optional": false, "is_array": false, "value": "" },
-            { "name": "status", "type": "Number", "is_optional": false, "is_array": false, "value": "0" }
-        ]
-    })).with_size(SizeF::new(160.0, 56.0)).with_position(PointF::new(2500.0, 280.0)));
-
-    // 主流程（顺序初始化：Start → Vars → Agent → Planner → Check）
-    // 消除原 Start 同时扇出 Vars/Agent 的并行依赖，Vars 先就绪再驱动 Agent
-    doc.add_edge(EdgeDef::new(start, variable).with_edge_type(EdgeType::SmoothStep));
-    doc.add_edge(EdgeDef::new(variable, agent).with_edge_type(EdgeType::SmoothStep));
-    doc.add_edge(EdgeDef::new(agent, planner).with_edge_type(EdgeType::SmoothStep));
-    doc.add_edge(EdgeDef::new(planner, condition).with_target_port("in").with_edge_type(EdgeType::SmoothStep));
-    // 条件分支（任务意图维度：needs_search / needs_tool / else needs_notify）
-    doc.add_edge(EdgeDef::new(condition, search).with_source_port("if_0").with_edge_type(EdgeType::SmoothStep));
-    doc.add_edge(EdgeDef::new(condition, tool).with_source_port("if_1").with_edge_type(EdgeType::SmoothStep));
-    doc.add_edge(EdgeDef::new(condition, notify).with_source_port("else").with_edge_type(EdgeType::SmoothStep));
-    // 对称适配：Search 和 ToolCall 都经 Adapter 归一化再入 Loop，保证 Loop 输入类型一致
-    doc.add_edge(EdgeDef::new(search, adapter).with_edge_type(EdgeType::SmoothStep));
-    doc.add_edge(EdgeDef::new(tool, adapter).with_edge_type(EdgeType::SmoothStep));
-    doc.add_edge(EdgeDef::new(adapter, loop_node).with_target_port("in").with_edge_type(EdgeType::SmoothStep));
-    // 副作用分支隔离：Notify 不入 Loop（无迭代对象），直接汇入 Summarize
-    doc.add_edge(EdgeDef::new(notify, summarize).with_edge_type(EdgeType::SmoothStep));
-    // 循环体
-    doc.add_edge(EdgeDef::new(loop_node, process).with_source_port("loop_body").with_edge_type(EdgeType::SmoothStep));
-    doc.add_edge(EdgeDef::new(process, loop_node).with_target_port("loop_in").with_edge_type(EdgeType::SmoothStep));
-    // 结束
-    doc.add_edge(EdgeDef::new(loop_node, summarize).with_source_port("done").with_edge_type(EdgeType::SmoothStep));
-    doc.add_edge(EdgeDef::new(summarize, end).with_edge_type(EdgeType::SmoothStep));
-
-    doc
-}
-
-/// 数据处理管道：8 节点，数据清洗 → 分流 → 处理 → 汇合。
-fn data_pipeline_doc() -> FlowDocument {
-    let mut doc = FlowDocument::new("Data Pipeline")
-        .with_description("数据处理管道：清洗 → 分流 → 并行处理 → 汇合");
-
-    let start = doc.add_node(NodeDef::new("start", serde_json::json!({
-        "label": "Source",
-        "params": [
-            { "name": "source", "type": "String", "is_optional": false, "is_array": false, "value": "db" },
-            { "name": "count", "type": "Number", "is_optional": false, "is_array": false, "value": "100" }
-        ]
-    })).with_size(SizeF::new(160.0, 56.0)).with_position(PointF::new(80.0, 280.0)));
-
-    let clean = doc.add_node(NodeDef::new("adapter", serde_json::json!({
-        "label": "Clean", "desc": "数据清洗"
-    })).with_size(SizeF::new(200.0, 64.0)).with_position(PointF::new(300.0, 280.0)));
-
-    let vars = doc.add_node(NodeDef::new("variable", serde_json::json!({
-        "label": "Config",
-        "variables": [
-            { "name": "batch_size", "type": "Number", "is_optional": false, "is_array": false, "value": "100" },
-            { "name": "timeout", "type": "Number", "is_optional": false, "is_array": false, "value": "30" }
-        ]
-    })).with_size(SizeF::new(200.0, 64.0)).with_position(PointF::new(560.0, 200.0)));
-
-    let condition = doc.add_node(NodeDef::new("condition", serde_json::json!({
-        "label": "Route",
-        "conditions": [{ "id": "if_0", "label": "data.size > 1000" }]
-    })).with_size(SizeF::new(220.0, 108.0)).with_position(PointF::new(560.0, 320.0)));
-
-    let batch = doc.add_node(NodeDef::new("action", serde_json::json!({
-        "label": "Batch Process", "desc": "批量处理"
-    })).with_size(SizeF::new(180.0, 35.0)).with_position(PointF::new(860.0, 280.0)));
-
-    let single = doc.add_node(NodeDef::new("action", serde_json::json!({
-        "label": "Single Process", "desc": "单条处理"
-    })).with_size(SizeF::new(180.0, 35.0)).with_position(PointF::new(860.0, 360.0)));
-
-    let merge = doc.add_node(NodeDef::new("adapter", serde_json::json!({
-        "label": "Merge", "desc": "结果合并"
-    })).with_size(SizeF::new(200.0, 64.0)).with_position(PointF::new(1100.0, 320.0)));
-
-    let end = doc.add_node(NodeDef::new("end", serde_json::json!({
-        "label": "Sink",
-        "returns": [{ "name": "count", "type": "Number", "is_optional": false, "is_array": false, "value": "0" }]
-    })).with_size(SizeF::new(160.0, 56.0)).with_position(PointF::new(1380.0, 320.0)));
-
-    doc.add_edge(EdgeDef::new(start, clean).with_edge_type(EdgeType::SmoothStep));
-    doc.add_edge(EdgeDef::new(clean, vars).with_edge_type(EdgeType::SmoothStep));
-    doc.add_edge(EdgeDef::new(clean, condition).with_target_port("in").with_edge_type(EdgeType::SmoothStep));
-    doc.add_edge(EdgeDef::new(condition, batch).with_source_port("if_0").with_edge_type(EdgeType::SmoothStep));
-    doc.add_edge(EdgeDef::new(condition, single).with_source_port("else").with_edge_type(EdgeType::SmoothStep));
-    doc.add_edge(EdgeDef::new(batch, merge).with_edge_type(EdgeType::SmoothStep));
-    doc.add_edge(EdgeDef::new(single, merge).with_edge_type(EdgeType::SmoothStep));
-    doc.add_edge(EdgeDef::new(merge, end).with_edge_type(EdgeType::SmoothStep));
-
-    doc
-}
-
-/// 简单线性流程：4 节点。
-fn simple_flow_doc() -> FlowDocument {
-    let mut doc = FlowDocument::new("Simple Flow")
-        .with_description("简单线性流程：开始 → 处理 → 结束");
-
-    let start = doc.add_node(NodeDef::new("start", serde_json::json!({
-        "label": "Start"
-    })).with_size(SizeF::new(160.0, 56.0)).with_position(PointF::new(100.0, 200.0)));
-
-    let action1 = doc.add_node(NodeDef::new("action", serde_json::json!({
-        "label": "Step 1", "desc": "第一步"
-    })).with_size(SizeF::new(180.0, 35.0)).with_position(PointF::new(340.0, 200.0)));
-
-    let action2 = doc.add_node(NodeDef::new("action", serde_json::json!({
-        "label": "Step 2", "desc": "第二步"
-    })).with_size(SizeF::new(180.0, 35.0)).with_position(PointF::new(600.0, 200.0)));
-
-    let end = doc.add_node(NodeDef::new("end", serde_json::json!({
-        "label": "End"
-    })).with_size(SizeF::new(160.0, 56.0)).with_position(PointF::new(860.0, 200.0)));
-
-    doc.add_edge(EdgeDef::new(start, action1).with_edge_type(EdgeType::SmoothStep));
-    doc.add_edge(EdgeDef::new(action1, action2).with_edge_type(EdgeType::SmoothStep));
-    doc.add_edge(EdgeDef::new(action2, end).with_edge_type(EdgeType::SmoothStep));
-
-    doc
 }

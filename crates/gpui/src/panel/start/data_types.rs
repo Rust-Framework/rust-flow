@@ -7,7 +7,7 @@
 //! JSON 结构约定（低代码变量模型）：
 //! - 基础类型：`{ "name": "x", "type": "String", "is_optional": false, "is_array": false, "value": "abc" }`
 //! - 复杂/动态类型：`{ "name": "x", "type": "DataModel", "is_optional": false, "is_array": false, "fields": [...] }`
-//!   - 子字段：`{ "name": "id", "type": "Number", "value": "0" }`
+//!   - 子字段：`{ "name": "id", "type": "Integer", "value": "0" }`
 //!
 //! 规则：
 //! - `is_optional=true` 时 `value` 可省略（可选参数/变量可不设默认值）
@@ -37,7 +37,7 @@ pub fn build_basic_item(
 /// 构建复杂/动态类型项的默认 JSON：`{ name, type, is_optional, is_array, fields: [...] }`。
 ///
 /// 复杂类型：字段结构由注册表定义自动填充。
-/// 动态类型（DynamicObject）：默认无字段，由用户手动添加。
+/// 动态类型（Dynamic）：默认无字段，由用户手动添加。
 pub fn build_structured_item(
     name: &str,
     type_name: &str,
