@@ -12,18 +12,12 @@
         "params": [
           { "name": "query", "type": "String", "is_optional": false, "is_array": false, "value": "are you ok?" },
           { "name": "tags", "type": "String", "is_optional": true, "is_array": true, "value": "" },
-          { "name": "data", "type": "DataModel", "is_optional": false, "is_array": false, "fields": [
-            { "name": "id", "type": "Integer", "value": "0" },
-            { "name": "name", "type": "String", "value": "" }
-          ]}
+          { "name": "data", "type": "String", "is_optional": false, "is_array": false, "value": "" }
         ],
         "variables": [
           { "name": "turn", "type": "Integer", "is_optional": false, "is_array": false, "value": "0" },
           { "name": "verbose", "type": "Boolean", "is_optional": false, "is_array": false, "value": "false" },
-          { "name": "data", "type": "DataModel", "is_optional": false, "is_array": false, "fields": [
-            { "name": "id", "type": "Integer", "value": "1" },
-            { "name": "name", "type": "String", "value": "default" }
-          ]},
+          { "name": "result", "type": "String", "is_optional": false, "is_array": false, "value": "" },
           { "name": "context", "type": "Dynamic", "is_optional": true, "is_array": false, "fields": [
             { "name": "topic", "type": "String", "value": "general" },
             { "name": "priority", "type": "Integer", "value": "0" }

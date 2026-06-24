@@ -2,7 +2,7 @@
 //!
 //! 三种类型形态：
 //! - **基础类型**（String/Integer/Float/Boolean/DateTime）：name + type + is_optional + is_array + value
-//! - **复杂类型**（DataModel 等）：预定义结构，结构只读，值按模式可编辑
+//! - **复杂类型**（provider 提供的自定义类型）：预定义结构，结构只读，值按模式可编辑
 //! - **动态类型**（Dynamic）：结构可手动编辑（增删改字段），值按模式可编辑
 //!
 //! 低代码变量模型规则：

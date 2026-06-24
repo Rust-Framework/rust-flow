@@ -105,7 +105,7 @@ pub struct FlowEditorView {
     pub custom_toolbar: Vec<SharedToolbarProvider>,
     /// 自定义数据类型提供程序（由调用侧通过 `set_data_type_provider` 注入）。
     ///
-    /// 为 Start 节点属性面板提供自定义复杂数据类型（如 DataModel）。
+    /// 为 Start 节点属性面板提供自定义复杂数据类型。
     /// 不注入时仅有内置类型（String/Integer/Float/Boolean/DateTime/Dynamic）可用。
     pub data_type_provider: Option<SharedDataTypeProvider>,
 }
@@ -345,7 +345,7 @@ impl FlowEditorView {
 
     /// 注入自定义数据类型提供程序（扩展点）。
     ///
-    /// 为 Start 节点属性面板提供自定义复杂数据类型（如 DataModel）。
+    /// 为 Start 节点属性面板提供自定义复杂数据类型。
     /// 不注入时仅有内置类型（String/Integer/Float/Boolean/DateTime/Dynamic）可用。
     /// 注入后销毁现有 panel_view，下次 render 时用新类型重建。
     pub fn set_data_type_provider(

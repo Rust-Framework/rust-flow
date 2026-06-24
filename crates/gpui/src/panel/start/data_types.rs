@@ -6,7 +6,7 @@
 //!
 //! JSON 结构约定（低代码变量模型）：
 //! - 基础类型：`{ "name": "x", "type": "String", "is_optional": false, "is_array": false, "value": "abc" }`
-//! - 复杂/动态类型：`{ "name": "x", "type": "DataModel", "is_optional": false, "is_array": false, "fields": [...] }`
+//! - 复杂/动态类型：`{ "name": "x", "type": "Dynamic", "is_optional": false, "is_array": false, "fields": [...] }`
 //!   - 子字段：`{ "name": "id", "type": "Integer", "value": "0" }`
 //!
 //! 规则：

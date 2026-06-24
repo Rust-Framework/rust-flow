@@ -56,7 +56,7 @@ impl DataTypeField {
 ///
 /// 提供数据结构定义。内置类型和外部 provider 类型均实现此接口。
 pub trait IDataType: Send + Sync {
-    /// 类型名称（唯一标识，如 "String"、"DataModel"、"Dynamic"）。
+    /// 类型名称（唯一标识，如 "String"、"Integer"、"Dynamic"）。
     fn name(&self) -> &str;
     /// 类型分类。
     fn category(&self) -> DataTypeCategory;
@@ -70,15 +70,15 @@ pub trait IDataType: Send + Sync {
 /// [`FlowEditorView::set_data_type_provider`](crate::editor::FlowEditorView::set_data_type_provider)
 /// 注入自定义数据类型。不注入代表没有自定义类型。
 ///
-/// **示例**（demo 自定义类型提供者）：
+/// **示例**（自定义类型提供者）：
 /// ```ignore
 /// use rust_agent_flow_gpui::{IDataType, IDataTypeProvider, DataTypeCategory, DataTypeField};
 ///
 /// pub struct MyDataTypeProvider;
 ///
-/// struct DataModelType;
-/// impl IDataType for DataModelType {
-///     fn name(&self) -> &str { "DataModel" }
+/// struct MyEntity;
+/// impl IDataType for MyEntity {
+///     fn name(&self) -> &str { "MyEntity" }
 ///     fn category(&self) -> DataTypeCategory { DataTypeCategory::Complex }
 ///     fn fields(&self) -> Vec<DataTypeField> {
 ///         vec![
@@ -90,7 +90,7 @@ pub trait IDataType: Send + Sync {
 ///
 /// impl IDataTypeProvider for MyDataTypeProvider {
 ///     fn data_types(&self) -> Vec<Box<dyn IDataType>> {
-///         vec![Box::new(DataModelType)]
+///         vec![Box::new(MyEntity)]
 ///     }
 /// }
 /// ```
