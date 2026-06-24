@@ -267,23 +267,26 @@ impl Render for StartPanelView {
                         div()
                             .flex()
                             .flex_col()
-                            .gap(px(16.0))
-                            .p(px(16.0))
+                            .p(px(20.0))
+                            .gap(px(24.0))
+                            // 节点名称区域
                             .child(
                                 div()
                                     .flex()
                                     .flex_col()
-                                    .gap(px(6.0))
+                                    .gap(px(10.0))
                                     .child(
                                         div()
-                                            .text_size(px(12.0))
-                                            .font_semibold()
+                                            .text_size(px(14.0))
+                                            .font_medium()
                                             .text_color(theme.panel_label_text)
                                             .child(t(lang, TKey::PanelNodeName).to_string()),
                                     )
                                     .child(Input::new(&self.label_input).appearance(true)),
                             )
+                            // 输入参数区域
                             .child(params_tree_el)
+                            // 变量定义区域
                             .child(vars_tree_el),
                     ),
             )

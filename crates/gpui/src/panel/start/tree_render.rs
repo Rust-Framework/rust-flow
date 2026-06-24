@@ -1,6 +1,10 @@
 //! Tree 控件渲染：参数/变量树形编辑。
 //!
-//! TreeItem 行模板：`[chevron?] [名称 Input] [类型 Dropdown] [默认值 Input]`
+//! 效果图像素级复刻：
+//! - 区域标题行：「输入参数」/「变量定义」（粗体）+ 「+ 添加参数」/「+ 添加变量」（紫色链接）
+//! - 行模板：`[chevron?] [名称 Input] [类型 Dropdown] [值 Input]`
+//! - 选中行：蓝色边框 + 浅蓝背景
+//! - 三列等宽布局，紧凑间距
 //!
 //! 设计要点：
 //! - 使用 `entry.depth()` 实现层级缩进（gpui-component Tree 不自动缩进）
@@ -10,7 +14,6 @@
 //! - 同时在控件区 `on_mouse_down` 中手动调用 `set_selected_index` 触发选中，
 //!   使点击输入框/下拉框也能选中当前项（显示详情面板）
 //! - 点击 chevron 或行间隙触发 Tree 默认行为（选中 + 展开 folder）
-//! - 选中样式由 Tree 自身通过 `ListItem::selected()` 处理
 
 use std::collections::HashMap;
 
@@ -33,11 +36,16 @@ use super::common::RowInputs;
 use super::item::{ItemState, TREE_ENTRY_HEIGHT};
 use super::StartPanelView;
 
+/// 选中行边框颜色（蓝色 #818cf8）
+const SELECTED_BORDER_COLOR: gpui::Rgba = gpui::Rgba { r: 0x81 as f32 / 255.0, g: 0x8c as f32 / 255.0, b: 0xf8 as f32 / 255.0, a: 1.0 };
+/// 选中行背景色（浅蓝 #e0e7ff）
+const SELECTED_BG_COLOR: gpui::Rgba = gpui::Rgba { r: 0xe0 as f32 / 255.0, g: 0xe7 as f32 / 255.0, b: 0xff as f32 / 255.0, a: 1.0 };
+/// 添加按钮颜色（紫色 #6366f1）
+const ADD_BUTTON_COLOR: gpui::Rgba = gpui::Rgba { r: 0x63 as f32 / 255.0, g: 0x66 as f32 / 255.0, b: 0xf1 as f32 / 255.0, a: 1.0 };
+
 /// 渲染区域 Tree（参数区或变量区）。
 ///
-/// 包含：区域标题 + 添加按钮 + Tree 控件（无边框，直接嵌入面板）。
-/// Tree 的 render_item 通过预构建的 `RowInputs`（Entity 句柄）创建内联控件，
-/// 避免在渲染闭包内调用 `entity.update`（GPUI 反模式）。
+/// 包含：区域标题（粗体 + 添加按钮） + 行列表（三列式布局）。
 #[allow(clippy::too_many_arguments)]
 pub(super) fn render_section_tree(
     tree_state: &Entity<TreeState>,
@@ -115,9 +123,12 @@ pub(super) fn render_section_tree(
     let fk_for_row = field_key.to_string();
     let tree_state_for_row = tree_state.clone();
 
+    // 获取当前选中索引用于高亮（传递给render_tree_row闭包）
+    let _selected_idx = tree_state.read(_cx).selected_index();
+
     let tree_el = tree(
         tree_state,
-        move |ix, entry, _selected, _window, _cx| {
+        move |ix, entry, selected, _window, _cx| {
             let id = entry.item().id.to_string();
             let row = match rows.get(&id) {
                 Some(r) => r,
@@ -133,6 +144,7 @@ pub(super) fn render_section_tree(
                 lang,
                 theme,
                 &tree_state_for_row,
+                selected,
             )
         },
     )
@@ -141,7 +153,8 @@ pub(super) fn render_section_tree(
     div()
         .flex()
         .flex_col()
-        .gap(px(8.0))
+        .gap(px(12.0))
+        // 标题行：左侧粗体标题 + 右侧添加按钮
         .child(
             div()
                 .flex()
@@ -149,32 +162,42 @@ pub(super) fn render_section_tree(
                 .justify_between()
                 .child(
                     div()
-                        .text_size(px(13.0))
-                        .font_semibold()
+                        .text_size(px(14.0))
+                        .font_medium()
                         .text_color(theme.panel_label_text)
                         .child(title),
                 )
                 .child(
-                    Button::new(add_btn_id)
-                        .label(add_label)
-                        .small()
-                        .ghost()
-                        .on_click(move |_: &ClickEvent, _, cx| {
-                            entity_for_add.update(cx, |this, cx| {
-                                this.add_item(&fk_for_add, cx);
-                            });
-                        }),
-                ),
+            Button::new(add_btn_id)
+                .label(add_label)
+                .small()
+                .ghost()
+                .text_color(ADD_BUTTON_COLOR)
+                .on_click(move |_: &ClickEvent, _, cx| {
+                    entity_for_add.update(cx, |this, cx| {
+                        this.add_item(&fk_for_add, cx);
+                    });
+                }),
+        ),
         )
-        .child(tree_el)
+        // 行列表容器
+        .child(
+            div()
+                .flex()
+                .flex_col()
+                .gap(px(8.0))
+                .child(tree_el),
+        )
 }
 
-/// 渲染单个 Tree 行：`[chevron?] [名称 Input] [类型 Dropdown] [默认值 Input]`
+/// 渲染单个 Tree 行：`[chevron?] [名称 Input] [类型 Dropdown] [值 Input]`
 ///
+/// 像素级复刻效果图：
+/// - 三列式布局：名称输入框 | 类型下拉菜单 | 值输入框
+/// - 选中行：蓝色边框（#818cf8）+ 浅蓝背景（#e0e7ff）
 /// - `entry.depth()` 控制缩进（depth 0 = 顶层项，depth 1 = 子字段）
 /// - folder 项显示 chevron 箭头（向下=展开，向右=收起）
 /// - 控件区 `on_mouse_down` 阻止冒泡 + 手动 `set_selected_index` 触发选中
-/// - 选中样式由 Tree 自身通过 `ListItem::selected()` 处理，此处不重复设置
 #[allow(clippy::too_many_arguments)]
 fn render_tree_row(
     ix: usize,
@@ -186,16 +209,17 @@ fn render_tree_row(
     lang: Language,
     theme: Theme,
     tree_state: &Entity<TreeState>,
+    selected: bool,
 ) -> ListItem {
     let depth = entry.depth();
-    let indent = px(16.0) * depth as f32 + px(8.0);
+    let indent = px(16.0) * depth as f32;
 
     // chevron：folder 项显示箭头，非 folder 的顶层项留空位对齐
     let chevron = if entry.is_folder() {
         Some(
             div()
-                .w(px(16.0))
-                .h(px(16.0))
+                .w(px(20.0))
+                .h(px(32.0))
                 .flex()
                 .items_center()
                 .justify_center()
@@ -205,17 +229,17 @@ fn render_tree_row(
                     } else {
                         IconName::ChevronRight
                     })
-                    .xsmall()
+                    .small()
                     .text_color(theme.panel_subtext),
                 ),
         )
     } else if depth == 0 {
-        Some(div().w(px(16.0)))
+        Some(div().w(px(20.0)))
     } else {
         None
     };
 
-    // 类型下拉按钮
+    // 类型下拉按钮 - 效果图样式：圆角 + 背景色
     let entity_type = entity.clone();
     let fk_type = field_key.to_string();
     let current_type = row.type_value.clone();
@@ -228,7 +252,7 @@ fn render_tree_row(
         .label(type_label)
         .icon(IconName::ChevronDown)
         .small()
-        .ghost()
+        .secondary()
         .dropdown_menu(move |menu, _w, _cx| {
             let mut menu = menu;
             for ty in &type_names_vec {
@@ -257,54 +281,69 @@ fn render_tree_row(
     let tree_state_sel = tree_state.clone();
     let select_idx = ix;
 
-    // 构建行内容
-    ListItem::new(ix)
+    // 构建行内容容器，根据选中状态添加边框和背景
+    let mut row_container = div()
         .w_full()
         .pl(indent)
-        .pr(px(8.0))
-        .py(px(3.0))
+        .pr(px(16.0))
+        .py(px(6.0))
+        .rounded_lg();
+
+    // 选中状态：蓝色边框 + 浅蓝背景
+    if selected {
+        row_container = row_container
+            .border_1()
+            .border_color(SELECTED_BORDER_COLOR)
+            .bg(SELECTED_BG_COLOR);
+    }
+
+    ListItem::new(ix)
+        .w_full()
         .child(
-            div()
-                .flex()
-                .items_center()
-                .gap(px(6.0))
-                .children(chevron)
-                // 控件区：阻止冒泡 + 手动选中
+            row_container
                 .child(
                     div()
                         .flex()
-                        .flex_1()
                         .items_center()
-                        .gap(px(6.0))
-                        .on_mouse_down(MouseButton::Left, move |_, _, cx: &mut App| {
-                            cx.stop_propagation();
-                            tree_state_sel.update(cx, |state, cx| {
-                                state.set_selected_index(Some(select_idx), cx);
-                            });
-                        })
-                        .on_mouse_down(MouseButton::Right, |_, _, cx| cx.stop_propagation())
-                        // 名称 Input
+                        .gap(px(12.0))
+                        .children(chevron)
+                        // 控件区：阻止冒泡 + 手动选中
                         .child(
                             div()
+                                .flex()
                                 .flex_1()
-                                .min_w(px(60.0))
-                                .child(Input::new(&row.name).small().appearance(true)),
-                        )
-                        // 类型 Dropdown
-                        .child(
-                            div()
-                                .w(px(100.0))
-                                .child(type_dropdown),
-                        )
-                        // 默认值 Input（基础类型时显示）
-                        .when_some(row.value.as_ref(), |d, val| {
-                            d.child(
-                                div()
-                                    .flex_1()
-                                    .min_w(px(60.0))
-                                    .child(Input::new(val).small().appearance(true)),
-                            )
-                        }),
+                                .items_center()
+                                .gap(px(12.0))
+                                .on_mouse_down(MouseButton::Left, move |_, _, cx: &mut App| {
+                                    cx.stop_propagation();
+                                    tree_state_sel.update(cx, |state, cx| {
+                                        state.set_selected_index(Some(select_idx), cx);
+                                    });
+                                })
+                                .on_mouse_down(MouseButton::Right, |_, _, cx| cx.stop_propagation())
+                                // 名称 Input（固定宽度比例）
+                                .child(
+                                    div()
+                                        .flex_1()
+                                        .min_w(px(100.0))
+                                        .child(Input::new(&row.name).small().appearance(true)),
+                                )
+                                // 类型 Dropdown（固定宽度）
+                                .child(
+                                    div()
+                                        .w(px(80.0))
+                                        .child(type_dropdown),
+                                )
+                                // 值 Input（基础类型时显示，flex_1填充剩余空间）
+                                .when_some(row.value.as_ref(), |d, val| {
+                                    d.child(
+                                        div()
+                                            .flex_1()
+                                            .min_w(px(100.0))
+                                            .child(Input::new(val).small().appearance(true)),
+                                    )
+                                }),
+                        ),
                 ),
         )
 }
