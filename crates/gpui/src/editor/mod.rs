@@ -2,6 +2,7 @@
 //!
 //! 按职责拆分到子模块：
 //! - [`flow_editor`]：核心结构体 + 构造 + 布局 + Render 实现
+//! - [`graph_ops`]：图操作（替换图、边中插入节点、节点动作、删除节点）
 //! - [`interaction`]：交互状态机 + 鼠标事件处理
 //! - [`hit_test`]：命中测试
 //! - [`rendering`]：边/节点/面板渲染
@@ -12,6 +13,7 @@
 //! - [`viewport`]：视口数学映射
 
 mod flow_editor;
+mod graph_ops;
 mod grid;
 mod hit_test;
 mod interaction;

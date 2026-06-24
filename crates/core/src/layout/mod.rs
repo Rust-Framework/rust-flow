@@ -18,13 +18,10 @@ pub enum LayoutDirection {
     Horizontal,
 }
 
-/// Result of a layout run: a position and rank for each node.
+/// Result of a layout run: a position for each node.
 #[derive(Debug, Clone, Default)]
 pub struct LayoutResult {
     pub positions: HashMap<NodeId, PointF>,
-    /// dagre 分配的 rank（层号），用于避障路由。
-    /// rank 从 0 开始，沿布局方向递增。
-    pub ranks: HashMap<NodeId, i32>,
 }
 
 /// A graph layout engine.

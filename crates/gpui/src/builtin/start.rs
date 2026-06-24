@@ -67,6 +67,23 @@ impl StartNode {
                         ),
                     )
                     .with_default(serde_json::json!([])),
+                )
+                .with_field(
+                    FieldSpec::new(
+                        "variables",
+                        "Variable Definitions",
+                        FieldType::List(
+                            ListSpec::new(vec![
+                                FieldSpec::new("name", "Name", FieldType::Text)
+                                    .with_default(serde_json::json!("")),
+                                FieldSpec::new("type", "Type", FieldType::Text)
+                                    .with_default(serde_json::json!("string")),
+                                FieldSpec::new("value", "Value", FieldType::Text)
+                                    .with_default(serde_json::json!("")),
+                            ]),
+                        ),
+                    )
+                    .with_default(serde_json::json!([])),
                 ),
         }
     }

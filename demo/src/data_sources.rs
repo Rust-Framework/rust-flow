@@ -59,10 +59,19 @@ fn agent_flow_doc() -> FlowDocument {
     let start = doc.add_node(NodeDef::new("start", serde_json::json!({
         "label": "Start",
         "params": [
-            { "name": "query", "type": "string", "value": "" },
-            { "name": "context", "type": "object", "value": "{}" }
+            { "name": "query", "type": "string", "value": "are you ok?" },
+            { "name": "data", "type": "DataModel", "fields": [
+                { "name": "id", "type": "int", "value": "0" },
+                { "name": "name", "type": "string", "value": "" }
+            ]}
         ],
-        "variables": [{ "name": "turn", "type": "int", "value": "0" }]
+        "variables": [
+            { "name": "turn", "type": "int", "value": "0" },
+            { "name": "data", "type": "DataModel", "fields": [
+                { "name": "id", "type": "int", "value": "1" },
+                { "name": "name", "type": "string", "value": "default" }
+            ]}
+        ]
     })).with_size(SizeF::new(160.0, 56.0)).with_position(PointF::new(80.0, 280.0)));
 
     let variable = doc.add_node(NodeDef::new("variable", serde_json::json!({
@@ -160,7 +169,10 @@ fn data_pipeline_doc() -> FlowDocument {
 
     let start = doc.add_node(NodeDef::new("start", serde_json::json!({
         "label": "Source",
-        "params": [{ "name": "source", "type": "string", "value": "db" }]
+        "params": [
+            { "name": "source", "type": "string", "value": "db" },
+            { "name": "count", "type": "int", "value": "100" }
+        ]
     })).with_size(SizeF::new(160.0, 56.0)).with_position(PointF::new(80.0, 280.0)));
 
     let clean = doc.add_node(NodeDef::new("adapter", serde_json::json!({

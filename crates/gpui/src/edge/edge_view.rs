@@ -11,7 +11,7 @@
 
 use gpui::{canvas, px, IntoElement, PathBuilder, Point, Pixels, Rgba, Window};
 use rust_agent_flow::{
-    bezier_path, loop_back_path, round_corners, route_with_channels, smoothstep_path, step_path,
+    bezier_path, loop_back_path, round_corners, smoothstep_path, step_path,
     straight_path, EdgeType, PointF, PortSide, RectF,
 };
 
@@ -56,15 +56,13 @@ impl EdgeView {
         canvas(
             |bounds, _window, _cx| bounds.size,
             move |_bounds, _size, window, _cx| {
-                // EdgeView 独立使用时默认 1:1 无偏移，使用默认边色，无避障。
+                // EdgeView 独立使用时默认 1:1 无偏移，使用默认边色。
                 paint_edge_scaled(
                     src,
                     dst,
                     src_side,
                     dst_side,
                     edge_type,
-                    &[],
-                    false,
                     1.0,
                     Point::new(px(0.0), px(0.0)),
                     EDGE_COLOR_DEFAULT,
@@ -202,47 +200,24 @@ pub(crate) fn paint_arrow(
 ///
 /// 路径几何（含 step 的 20px gap、smoothstep 的 12px 圆角）在逻辑空间
 /// 计算，随 `scale` 自动缩放，确保缩放时连线与节点保持几何一致。
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn paint_edge_scaled(
     src: PointF,
     dst: PointF,
     src_side: PortSide,
     dst_side: PortSide,
     edge_type: EdgeType,
-    obstacles_by_rank: &[Vec<RectF>],
-    horizontal: bool,
     scale: f32,
     offset: Point<Pixels>,
     color: Rgba,
     window: &mut Window,
 ) {
-    let has_obstacles = !obstacles_by_rank.is_empty()
-        && !obstacles_by_rank.iter().all(|v| v.is_empty());
     let points = match edge_type {
         EdgeType::Straight => straight_path(src, dst),
-        EdgeType::Bezier => {
-            if has_obstacles {
-                route_with_channels(src, dst, src_side, dst_side, obstacles_by_rank, horizontal, 12.0)
-            } else {
-                bezier_path(src, dst, src_side, dst_side, 0.5)
-            }
-        }
-        EdgeType::Step => {
-            if has_obstacles {
-                route_with_channels(src, dst, src_side, dst_side, obstacles_by_rank, horizontal, 0.0)
-            } else {
-                step_path(src, dst, src_side, dst_side)
-            }
-        }
-        EdgeType::SmoothStep => {
-            if has_obstacles {
-                route_with_channels(src, dst, src_side, dst_side, obstacles_by_rank, horizontal, 12.0)
-            } else {
-                smoothstep_path(src, dst, src_side, dst_side, 12.0)
-            }
-        }
+        EdgeType::Bezier => bezier_path(src, dst, src_side, dst_side, 0.5),
+        EdgeType::Step => step_path(src, dst, src_side, dst_side),
+        EdgeType::SmoothStep => smoothstep_path(src, dst, src_side, dst_side, 12.0),
     };
-    let is_bezier = edge_type == EdgeType::Bezier && points.len() == 4 && !has_obstacles;
+    let is_bezier = edge_type == EdgeType::Bezier && points.len() == 4;
     paint_polyline(&points, is_bezier, false, scale, offset, color, window);
     paint_arrow(&points, is_bezier, scale, offset, color, window);
 }
