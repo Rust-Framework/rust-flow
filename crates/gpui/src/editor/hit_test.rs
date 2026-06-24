@@ -197,7 +197,7 @@ impl FlowEditorView {
                 .graph
                 .node(edge.source)
                 .and_then(|n| self.registry.get(&n.kind))
-                .map(|fn_| fn_.plus_button_at_target())
+                .map(|fn_| fn_.plus_button_at_target(edge.source_port.as_deref()))
                 .unwrap_or(false);
 
             let (base, side) = if at_target {

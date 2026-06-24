@@ -126,10 +126,13 @@ pub trait IFlowNode: Send + Sync {
     ///
     /// **默认**：`false`（按钮在源节点出口附近）。
     ///
-    /// 某些结构化节点（如 Loop）的出口端口位置特殊，按钮放在源端会与
-    /// 节点其他端口或回环边视觉冲突。此类节点应覆写返回 `true`，
-    /// 使按钮显示在目标节点入口附近。
-    fn plus_button_at_target(&self) -> bool {
+    /// 某些结构化节点的特定出口端口位置特殊，按钮放在源端会与节点其他端口
+    /// 或回环边视觉冲突。此类节点可覆写此方法，按 `source_port` 判断是否
+    /// 将按钮放到目标端。
+    ///
+    /// `source_port` 为边的源端口 ID（如 `"done"`、`"loop_body"`），`None` 表示
+    /// 无显式端口（使用默认端口）。
+    fn plus_button_at_target(&self, _source_port: Option<&str>) -> bool {
         false
     }
 }

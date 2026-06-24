@@ -6,11 +6,11 @@
 //! - [`hit_test`]：命中测试
 //! - [`rendering`]：边/节点/面板渲染
 //! - [`toolbar`]：工具栏
+//! - [`toolbar_ext`]：工具栏扩展接口（调用侧自定义工具项）
 //! - [`grid`]：点阵背景
 //! - [`ports`]：端口位置计算
 //! - [`viewport`]：视口数学映射
 
-mod data_source;
 mod flow_editor;
 mod grid;
 mod hit_test;
@@ -18,8 +18,9 @@ mod interaction;
 mod ports;
 mod rendering;
 mod toolbar;
+mod toolbar_ext;
 mod viewport;
 
-pub use data_source::DataSource;
 pub use flow_editor::{FlowEditorView, LayoutDirection};
 pub use interaction::InteractionState;
+pub use toolbar_ext::{SharedToolbarProvider, ToolbarCtx, ToolbarProvider};

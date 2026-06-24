@@ -112,6 +112,7 @@ impl LayoutEngine for DagreLayout {
         layout(&mut g, Some(opts));
 
         let mut positions = std::collections::HashMap::new();
+        let mut ranks = std::collections::HashMap::new();
         for (node_id, key) in &id_map {
             if let Some(label) = g.node(key) {
                 if let (Some(x), Some(y)) = (label.x, label.y) {
@@ -123,6 +124,9 @@ impl LayoutEngine for DagreLayout {
                             (y - label.height * 0.5) as f32,
                         ),
                     );
+                }
+                if let Some(rank) = label.rank {
+                    ranks.insert(*node_id, rank);
                 }
             }
         }
@@ -192,7 +196,7 @@ impl LayoutEngine for DagreLayout {
         // follows the single-successor chain and aligns each successor.
         align_post_done_chain(graph, &mut positions, direction);
 
-        LayoutResult { positions }
+        LayoutResult { positions, ranks }
     }
 }
 

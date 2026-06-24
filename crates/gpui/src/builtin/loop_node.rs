@@ -391,4 +391,17 @@ impl IFlowNode for LoopNode {
     fn content_size(&self, node: &Node) -> SizeF {
         SizeF::new(node.size.w, TITLE_H + BODY_H)
     }
+
+    /// Loop 节点的主线（`done`）出口 + 按钮放在目标节点侧。
+    ///
+    /// Loop 的 `done` 和 `loop_body` 两个出口端口都在右侧，垂直距离仅 18px。
+    /// 将 `done`（主线出口）的 + 按钮移到目标节点侧，避免与 `loop_body`
+    /// 的 + 按钮聚集。`loop_body` 出口保持源侧（Loop 右侧），因为循环体
+    /// 节点就在 Loop 右侧，源侧按钮位置自然。
+    fn plus_button_at_target(&self, source_port: Option<&str>) -> bool {
+        match source_port {
+            Some("done") => true,
+            _ => false,
+        }
+    }
 }

@@ -1,4 +1,4 @@
-//! 数据源模块：预置流程数据，支持切换不同流程示例。
+//! Demo 数据源：预置流程示例。
 //!
 //! 每个数据源返回 [`FlowDocument`]，通过 [`FlowGraph::from_document`] 转换为
 //! 可编辑的流程图。数据驱动设计：节点/边定义与渲染逻辑解耦。
@@ -6,12 +6,11 @@
 use rust_agent_flow::{
     EdgeDef, EdgeType, FlowDocument, FlowGraph, NodeDef, PointF, SizeF,
 };
+use rust_agent_flow_gpui::{Language, TKey, t};
 
-use crate::i18n::TKey;
-
-/// 预置数据源枚举。
+/// Demo 预置数据源枚举。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum DataSource {
+pub enum DemoDataSource {
     /// Agent 编排流程（默认）：条件分支 + 循环回环。
     #[default]
     AgentFlow,
@@ -21,7 +20,12 @@ pub enum DataSource {
     SimpleFlow,
 }
 
-impl DataSource {
+impl DemoDataSource {
+    /// 返回数据源对应的 FlowGraph（通过 from_document 转换）。
+    pub fn to_graph(&self) -> FlowGraph {
+        FlowGraph::from_document(&self.to_document())
+    }
+
     /// 返回数据源的 FlowDocument 定义。
     pub fn to_document(&self) -> FlowDocument {
         match self {
@@ -31,27 +35,19 @@ impl DataSource {
         }
     }
 
-    /// 返回数据源对应的 FlowGraph（通过 from_document 转换）。
-    pub fn to_graph(&self) -> FlowGraph {
-        FlowGraph::from_document(&self.to_document())
-    }
-
-    /// 返回数据源的 i18n 标签键。
-    pub fn label_key(&self) -> TKey {
-        match self {
+    /// 返回数据源的显示标签（根据语言国际化）。
+    pub fn label(&self, lang: Language) -> &'static str {
+        let key = match self {
             Self::AgentFlow => TKey::DataSourceAgentFlow,
             Self::DataPipeline => TKey::DataSourceDataPipeline,
             Self::SimpleFlow => TKey::DataSourceSimpleFlow,
-        }
+        };
+        t(lang, key)
     }
 
     /// 返回所有数据源变体。
-    pub fn all() -> &'static [DataSource] {
-        &[
-            Self::AgentFlow,
-            Self::DataPipeline,
-            Self::SimpleFlow,
-        ]
+    pub fn all() -> &'static [DemoDataSource] {
+        &[Self::AgentFlow, Self::DataPipeline, Self::SimpleFlow]
     }
 }
 

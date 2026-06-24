@@ -25,8 +25,8 @@ pub use viewport::Viewport;
 
 // Re-export geometry algorithms for convenient access from the gpui layer.
 pub use geometry::edge_path::{
-    bezier_path, detour_around_rect, loop_back_path, round_corners, segment_intersects_rect,
-    smoothstep_path, step_path, straight_path,
+    bezier_path, loop_back_path, round_corners, route_with_channels, smoothstep_path, step_path,
+    straight_path,
 };
 pub use geometry::hit_test::{point_in_rect, point_to_polyline_distance};
 pub use geometry::port_calc::{resolve_endpoints, ResolvedEdge};

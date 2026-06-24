@@ -13,7 +13,7 @@ pub mod panel;
 pub mod theme;
 
 pub use assets::{CombinedAssets, FlowIcon};
-pub use editor::{DataSource, FlowEditorView};
+pub use editor::{FlowEditorView, SharedToolbarProvider, ToolbarCtx, ToolbarProvider};
 pub use edge::EdgeView;
 pub use i18n::{Language, TKey, t};
 pub use node::{IFlowNode, NodeRegistry, NodeView, NodeViewCtx};

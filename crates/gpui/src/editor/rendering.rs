@@ -34,6 +34,9 @@ enum EdgeRender {
         src_side: PortSide,
         dst_side: PortSide,
         edge_type: EdgeType,
+        /// 中间层障碍物（按 rank 分组），用于通道分配路由。
+        obstacles_by_rank: Vec<Vec<RectF>>,
+        horizontal: bool,
     },
     LoopBack {
         src: PointF,
@@ -60,6 +63,69 @@ fn compute_loop_bounds(graph: &FlowGraph, loop_node: NodeId, body_nodes: &HashSe
         }
     }
     bounds.unwrap_or_default()
+}
+
+/// 计算边的中间层障碍物（按 rank 分组）。
+///
+/// 对于边 src→dst，收集所有 rank 在 (src.rank, dst.rank) 之间的节点
+/// （排除 src、dst 自身和隐藏节点），按 rank 分组返回矩形列表。
+/// 用于通道分配避障路由：仅在跨层边（dst.rank > src.rank + 1）时产生障碍物。
+///
+/// **Loop body 节点特殊处理**：
+/// - 若边的源或目标是 body 节点（子流边），跳过障碍物计算（返回空），
+///   因为 body 节点使用纵向端口，通道分配假设纯水平/垂直流不适用。
+/// - 若边是主流边（源和目标都不是 body 节点），排除 body 节点避免
+///   不必要的绕行——body 节点位于 Loop 节点下方的独立区域，不在主流路径上。
+fn compute_obstacles_by_rank(
+    edge: &Edge,
+    graph: &FlowGraph,
+    ranks: &HashMap<NodeId, i32>,
+    hidden_nodes: &HashSet<NodeId>,
+    all_body_nodes: &HashSet<NodeId>,
+) -> Vec<Vec<RectF>> {
+    let src_rank = ranks.get(&edge.source).copied().unwrap_or(0);
+    let dst_rank = ranks.get(&edge.target).copied().unwrap_or(0);
+
+    // 不跨层或反向边：无中间层障碍
+    if dst_rank <= src_rank + 1 {
+        return Vec::new();
+    }
+
+    // 子流边（源或目标是 body 节点）：跳过障碍物计算
+    // body 节点使用纵向端口（Top/Bottom），与主流方向不一致，
+    // 通道分配假设纯水平/垂直流，对混合端口边不适用。
+    if all_body_nodes.contains(&edge.source) || all_body_nodes.contains(&edge.target) {
+        return Vec::new();
+    }
+
+    // 收集中间层节点（排除 body 节点，避免对主流边产生不必要绕行）
+    let mut by_rank: HashMap<i32, Vec<RectF>> = HashMap::new();
+    for node in graph.nodes() {
+        if node.id == edge.source || node.id == edge.target {
+            continue;
+        }
+        if hidden_nodes.contains(&node.id) {
+            continue;
+        }
+        // 排除 body 节点：它们位于 Loop 节点下方的独立子流区域，
+        // 不在主流路径上，作为障碍物会导致不必要的绕行。
+        if all_body_nodes.contains(&node.id) {
+            continue;
+        }
+        if let Some(&rank) = ranks.get(&node.id) {
+            if rank > src_rank && rank < dst_rank {
+                by_rank.entry(rank).or_default().push(node.bounds());
+            }
+        }
+    }
+
+    // 按 rank 排序输出
+    let mut sorted_ranks: Vec<i32> = by_rank.keys().copied().collect();
+    sorted_ranks.sort();
+    sorted_ranks
+        .into_iter()
+        .map(|r| by_rank.remove(&r).unwrap())
+        .collect()
 }
 
 /// 计算边的端点。
@@ -205,12 +271,23 @@ impl FlowEditorView {
                         edge_type: edge.edge_type,
                     }
                 } else {
+                    // 计算中间层障碍物（用于通道分配避障路由）
+                    let obstacles_by_rank = compute_obstacles_by_rank(
+                        edge,
+                        &self.graph,
+                        &self.cached_ranks,
+                        &hidden_nodes,
+                        &all_body_nodes,
+                    );
+
                     EdgeRender::Normal {
                         src,
                         dst,
                         src_side,
                         dst_side,
                         edge_type: edge.edge_type,
+                        obstacles_by_rank,
+                        horizontal: horizontal_layout,
                     }
                 }
             })
@@ -247,9 +324,11 @@ impl FlowEditorView {
                 }
                 for er in &edge_renders {
                     match er {
-                        EdgeRender::Normal { src, dst, src_side, dst_side, edge_type } => {
+                        EdgeRender::Normal { src, dst, src_side, dst_side, edge_type, obstacles_by_rank, horizontal } => {
                             paint_edge_scaled(
-                                *src, *dst, *src_side, *dst_side, *edge_type, s, total_offset,
+                                *src, *dst, *src_side, *dst_side, *edge_type,
+                                obstacles_by_rank, *horizontal,
+                                s, total_offset,
                                 edge_default_color, window,
                             );
                         }
@@ -263,7 +342,9 @@ impl FlowEditorView {
                 }
                 if let Some((src, dst, src_side, dst_side, edge_type)) = drawing {
                     paint_edge_scaled(
-                        src, dst, src_side, dst_side, edge_type, s, total_offset,
+                        src, dst, src_side, dst_side, edge_type,
+                        &[], false,
+                        s, total_offset,
                         edge_default_color, window,
                     );
                 }
@@ -336,12 +417,12 @@ impl FlowEditorView {
                     dst_side_default,
                 );
 
-                // 检查源节点是否要求按钮放在目标端（如 Loop 节点）
+                // 检查源节点是否要求按钮放在目标端（如 Loop 节点的 done 出口）
                 let at_target = self
                     .graph
                     .node(edge.source)
                     .and_then(|n| registry.get(&n.kind))
-                    .map(|fn_| fn_.plus_button_at_target())
+                    .map(|fn_| fn_.plus_button_at_target(edge.source_port.as_deref()))
                     .unwrap_or(false);
 
                 // 按端口 side 的轴向偏移 25px，确保按钮中心在连线路径上。
@@ -430,7 +511,7 @@ impl FlowEditorView {
             .graph
             .node(edge.source)
             .and_then(|n| registry.get(&n.kind))
-            .map(|fn_| fn_.plus_button_at_target())
+            .map(|fn_| fn_.plus_button_at_target(edge.source_port.as_deref()))
             .unwrap_or(false);
 
         let (base, side) = if at_target {

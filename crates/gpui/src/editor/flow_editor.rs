@@ -40,8 +40,8 @@ use crate::node::{default_syntax_service, NodeAction, NodeRegistry, SharedSyntax
 use crate::panel::PanelView;
 use crate::theme::Theme;
 
-use super::data_source::DataSource;
 use super::interaction::InteractionState;
+use super::toolbar_ext::SharedToolbarProvider;
 
 /// 布局方向。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -80,14 +80,20 @@ pub struct FlowEditorView {
     pub syntax_service: SharedSyntaxService,
     /// 当前 UI 语言（中英文切换）。
     pub language: Language,
-    /// 当前数据源（切换时重建图）。
-    pub data_source: DataSource,
     /// 缓存的循环体分组（Loop 节点 → 其循环体节点集合）。
     ///
     /// 由 `loop_body_groups()` BFS 计算得出，在 `relayout` 末尾更新。
     /// 拖动/平移等不改变图结构的交互不会触发更新，避免每帧重复 O(V+E) 遍历。
     /// 供 `render`、`hit_test_edge_plus` 等复用，保证渲染与命中测试一致。
     pub cached_body_groups: HashMap<NodeId, HashSet<NodeId>>,
+    /// 缓存的节点 rank（层号），由 `relayout()` 更新。
+    /// 用于避障路由：判断边是否跨越中间层。
+    pub cached_ranks: HashMap<NodeId, i32>,
+    /// 自定义工具栏扩展（由调用侧通过 `add_toolbar_provider` 注入）。
+    ///
+    /// 工具项渲染在内置工具栏末尾，以竖线分隔符区隔。
+    /// 多次调用 `add_toolbar_provider` 可注入多个 provider，按注入顺序渲染。
+    pub custom_toolbar: Vec<SharedToolbarProvider>,
 }
 
 impl FlowEditorView {
@@ -111,8 +117,9 @@ impl FlowEditorView {
             panel_view: None,
             syntax_service: default_syntax_service(),
             language: Language::default(),
-            data_source: DataSource::default(),
             cached_body_groups: HashMap::new(),
+            cached_ranks: HashMap::new(),
+            custom_toolbar: Vec::new(),
         }
     }
 
@@ -143,14 +150,14 @@ impl FlowEditorView {
             LayoutDirection::Vertical => CoreLayoutDirection::Vertical,
         };
         let result: LayoutResult = DagreLayout::new().layout(&self.graph, dir);
-        for (node_id, pos) in result.positions {
-            if let Some(node) = self.graph.node_mut(node_id) {
-                node.position = pos;
+        for (node_id, pos) in &result.positions {
+            if let Some(node) = self.graph.node_mut(*node_id) {
+                node.position = *pos;
             }
         }
 
-        // 更新缓存的循环体分组：图结构/布局变化后重新计算 BFS。
-        // 拖动/平移等不改变图结构的交互不会触发 relayout，避免每帧重复计算。
+        // 更新缓存的 rank 和循环体分组：图结构/布局变化后重新计算。
+        self.cached_ranks = result.ranks;
         self.cached_body_groups = self.graph.loop_body_groups();
     }
 
@@ -286,6 +293,19 @@ impl FlowEditorView {
         cx.notify();
     }
 
+    /// 注入自定义工具栏扩展（扩展点）。
+    ///
+    /// 工具项渲染在内置工具栏末尾，以竖线分隔符区隔。
+    /// 多次调用可注入多个 provider，按注入顺序渲染。
+    pub fn add_toolbar_provider(
+        &mut self,
+        provider: SharedToolbarProvider,
+        cx: &mut Context<Self>,
+    ) {
+        self.custom_toolbar.push(provider);
+        cx.notify();
+    }
+
     /// 切换 UI 语言（中英文）。
     pub fn set_language(&mut self, language: Language, cx: &mut Context<Self>) {
         self.language = language;
@@ -299,13 +319,12 @@ impl FlowEditorView {
         self.set_language(self.language.toggle(), cx);
     }
 
-    /// 切换数据源：重建图 + 重置视口/选中状态 + 自动重排。
-    pub fn set_data_source(&mut self, ds: DataSource, cx: &mut Context<Self>) {
-        if self.data_source == ds {
-            return;
-        }
-        self.data_source = ds;
-        self.graph = ds.to_graph();
+    /// 替换当前流程图，重置选中/悬停/视口状态并自动重排。
+    ///
+    /// 供调用侧在切换数据源等场景使用。框架本身不持有"数据源"概念，
+    /// 调用侧自行管理数据源状态，切换时调用此方法传入新图。
+    pub fn set_graph(&mut self, graph: FlowGraph, cx: &mut Context<Self>) {
+        self.graph = graph;
         self.selected = None;
         self.hovered = None;
         self.hovered_plus = None;

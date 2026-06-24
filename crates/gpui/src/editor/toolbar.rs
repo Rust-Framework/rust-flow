@@ -17,8 +17,8 @@ use rust_agent_flow::{EdgeType, PointF, RectF, SizeF, Viewport};
 use crate::i18n::{t, TKey};
 use crate::FlowIcon;
 
-use super::data_source::DataSource;
 use super::flow_editor::{FlowEditorView, LayoutDirection};
+use super::toolbar_ext::ToolbarCtx;
 use super::viewport;
 
 impl FlowEditorView {
@@ -71,7 +71,7 @@ impl FlowEditorView {
     }
 
     /// 切换拖拽开关。
-    pub(crate) fn toggle_drag(&mut self, cx: &mut Context<Self>) {
+    pub fn toggle_drag(&mut self, cx: &mut Context<Self>) {
         self.drag_enabled = !self.drag_enabled;
         cx.notify();
     }
@@ -79,7 +79,9 @@ impl FlowEditorView {
     /// 渲染工具栏：左下角横向浮动面板。
     ///
     /// 使用 gpui-component Button 组件，所有按钮提供 i18n tooltip。
-    /// 边类型/点阵密度/数据源使用 DropdownMenu 下拉菜单。
+    /// 边类型/点阵密度使用 DropdownMenu 下拉菜单。
+    /// 自定义工具项（由调用侧通过 `add_toolbar_provider` 注入）追加在内置工具末尾，
+    /// 以竖线分隔符区隔。
     pub(crate) fn render_toolbar(&self, cx: &Context<Self>) -> impl IntoElement {
         let theme = self.theme;
         let lang = self.language;
@@ -87,13 +89,10 @@ impl FlowEditorView {
         let entity = cx.entity();
         let layout_direction = self.layout_direction;
         let show_grid = self.show_grid;
-        let drag_enabled = self.drag_enabled;
-        let is_dark = theme.is_dark;
         let grid_spacing = self.grid_spacing;
         let default_edge_type = self.default_edge_type;
-        let data_source = self.data_source;
 
-        div()
+        let mut toolbar = div()
             .absolute()
             .left_3()
             .bottom_3()
@@ -272,68 +271,28 @@ impl FlowEditorView {
                             menu
                         }
                     }),
-            )
-            // ====== 拖拽开关 ======
-            .child(
-                Button::new("tb-drag")
-                    .icon(FlowIcon::Drag)
-                    .small()
-                    .ghost()
-                    .selected(drag_enabled)
-                    .tooltip(t(lang, TKey::TbToggleDrag))
-                    .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                        this.toggle_drag(cx);
-                    })),
-            )
-            // ====== 主题切换 ======
-            .child(
-                Button::new("tb-theme")
-                    .icon(if is_dark { IconName::Sun } else { IconName::Moon })
-                    .small()
-                    .ghost()
-                    .tooltip(t(lang, TKey::TbToggleTheme))
-                    .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                        this.toggle_theme(cx);
-                    })),
-            )
-            // ====== 语言切换 ======
-            .child(
-                Button::new("tb-lang")
-                    .label(if lang.is_zh() { "En" } else { "中" })
-                    .small()
-                    .ghost()
-                    .tooltip(t(lang, TKey::TbToggleLanguage))
-                    .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                        this.toggle_language(cx);
-                    })),
-            )
-            // ====== 数据源 Dropdown ======
-            .child(
-                Button::new("tb-data-source")
-                    .icon(IconName::ALargeSmall)
-                    .small()
-                    .ghost()
-                    .tooltip(t(lang, TKey::TbDataSource))
-                    .dropdown_menu({
-                        let entity = entity.clone();
-                        move |menu, _window, _cx| {
-                            let mut menu = menu;
-                            for &ds in DataSource::all() {
-                                let label = t(lang, ds.label_key());
-                                let entity = entity.clone();
-                                menu = menu.item(
-                                    PopupMenuItem::new(label)
-                                        .checked(ds == data_source)
-                                        .on_click(move |_, _, cx| {
-                                            entity.update(cx, |this, cx| {
-                                                this.set_data_source(ds, cx);
-                                            });
-                                        }),
-                                );
-                            }
-                            menu
-                        }
-                    }),
-            )
+            );
+
+        // ====== 自定义工具栏扩展（由调用侧通过 add_toolbar_provider 注入） ======
+        if !self.custom_toolbar.is_empty() {
+            let ctx = ToolbarCtx {
+                entity,
+                theme,
+                language: lang,
+                drag_enabled: self.drag_enabled,
+            };
+            let custom_items: Vec<_> = self
+                .custom_toolbar
+                .iter()
+                .flat_map(|p| p.render_items(&ctx))
+                .collect();
+            if !custom_items.is_empty() {
+                toolbar = toolbar
+                    .child(div().w(px(1.0)).h(px(20.0)).bg(theme.toolbar_border))
+                    .children(custom_items);
+            }
+        }
+
+        toolbar
     }
 }
