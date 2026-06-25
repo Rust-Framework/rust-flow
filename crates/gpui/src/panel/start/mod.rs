@@ -246,8 +246,8 @@ impl Render for StartPanelView {
             cx,
         );
 
-        // 浮层详细编辑面板（选中项时显示在左侧）
-        let detail_panel = self.render_detail_panel(&entity, lang, theme, cx);
+        // 浮层详细编辑面板已移除：所有控件内联在 Tree 行中
+        // （render_section_tree 已包含名称/类型/可选/数组/值/删除按钮）
 
         div()
             .relative()
@@ -290,6 +290,5 @@ impl Render for StartPanelView {
                             .child(vars_tree_el),
                     ),
             )
-            .children(detail_panel)
     }
 }

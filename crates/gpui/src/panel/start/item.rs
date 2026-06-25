@@ -10,9 +10,11 @@
 //! - `is_array=true` 表示数组/集合类型
 //! - 默认值输入控件根据类型变化：Boolean → Switch，其他 → Input
 
-use gpui::{App, AppContext, Entity, Window};
+use gpui::{App, AppContext, Entity, SharedString, Window};
 use gpui_component::input::InputState;
+use gpui_component::select::SelectState;
 use gpui_component::tree::{TreeItem, TreeState};
+use gpui_component::IndexPath;
 
 use crate::data_type::DataTypeRegistry;
 
@@ -21,8 +23,41 @@ use super::data_types::{
 };
 
 /// Tree 条目高度（px），用于计算 Tree 容器高度。
-/// 配合 `.small()` 尺寸的 Input/Button 控件，留出舒适的内边距。
-pub(super) const TREE_ENTRY_HEIGHT: f32 = 30.0;
+/// 配合 `.small()` 尺寸的 Input/Select/Switch 控件 + py(2) 上下内边距。
+pub(super) const TREE_ENTRY_HEIGHT: f32 = 36.0;
+
+/// 创建类型选择 SelectState。
+///
+/// items = 注册表中所有类型名（SharedString），selected_index = 当前类型位置。
+fn create_type_select(
+    type_names: &[&str],
+    current_type: &str,
+    window: &mut Window,
+    cx: &mut App,
+) -> Entity<SelectState<Vec<SharedString>>> {
+    let items: Vec<SharedString> = type_names
+        .iter()
+        .map(|s| SharedString::from(s.to_string()))
+        .collect();
+    let selected_index = items
+        .iter()
+        .position(|t| t.as_ref() == current_type)
+        .map(|i| IndexPath::default().row(i));
+    cx.new(|cx| SelectState::new(items, selected_index, window, cx))
+}
+
+/// 同步类型选择 SelectState 的选中值（外部数据变化时调用）。
+fn sync_type_select(
+    select: &Entity<SelectState<Vec<SharedString>>>,
+    current_type: &str,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    let value = SharedString::from(current_type.to_string());
+    select.update(cx, |state, cx| {
+        state.set_selected_value(&value, window, cx);
+    });
+}
 
 /// 单个子字段的状态。
 pub struct FieldState {
@@ -30,6 +65,8 @@ pub struct FieldState {
     pub name: Entity<InputState>,
     /// 字段类型名。
     pub type_value: String,
+    /// 字段类型选择 SelectState。
+    pub type_select: Entity<SelectState<Vec<SharedString>>>,
     /// 字段值输入（变量模式可编辑，参数模式只读渲染）。
     pub value: Entity<InputState>,
 }
@@ -42,6 +79,8 @@ pub struct ItemState {
     pub description: Entity<InputState>,
     /// 当前类型（下拉值）。
     pub type_value: String,
+    /// 类型选择 SelectState。
+    pub type_select: Entity<SelectState<Vec<SharedString>>>,
     /// 是否可选（可选时默认值可省略）。
     pub is_optional: bool,
     /// 是否数组/集合。
@@ -75,6 +114,7 @@ impl ItemState {
             .unwrap_or("")
             .to_string();
         let has_fields = registry.has_fields(&type_name);
+        let type_names: Vec<&str> = registry.type_names();
 
         let name = cx.new(|cx| {
             InputState::new(window, cx)
@@ -86,10 +126,11 @@ impl ItemState {
                 .default_value(desc_text.as_str())
                 .placeholder("description")
         });
+        let type_select = create_type_select(&type_names, &type_name, window, cx);
 
         let (value, fields) = if has_fields {
             let json_fields = item_fields(item);
-            let field_states = build_field_states(&json_fields, window, cx);
+            let field_states = build_field_states(&json_fields, &type_names, window, cx);
             (None, field_states)
         } else {
             let v = item_value(item);
@@ -113,6 +154,7 @@ impl ItemState {
             name,
             description,
             type_value: type_name,
+            type_select,
             is_optional,
             is_array,
             value,
@@ -225,9 +267,11 @@ impl ItemState {
         let type_name = item_type(item);
         let type_changed = type_name != self.type_value;
         let has_fields = registry.has_fields(&type_name);
+        let type_names: Vec<&str> = registry.type_names();
 
         if type_changed {
             self.type_value = type_name.clone();
+            sync_type_select(&self.type_select, &type_name, window, cx);
             let was_structured = self.value.is_none();
 
             if was_structured && !has_fields {
@@ -240,17 +284,17 @@ impl ItemState {
             } else if !was_structured && has_fields {
                 self.value = None;
                 self.expanded = true;
-                self.rebuild_fields(item, window, cx);
+                self.rebuild_fields(item, &type_names, window, cx);
                 let is_dyn = registry.is_dynamic(&type_name);
                 let tree_items = Self::build_tree_items(&self.fields, is_dyn);
                 self.tree_state = Some(cx.new(|cx| TreeState::new(cx).items(tree_items)));
             } else if was_structured && has_fields {
-                self.rebuild_fields(item, window, cx);
+                self.rebuild_fields(item, &type_names, window, cx);
                 let is_dyn = registry.is_dynamic(&type_name);
                 self.rebuild_tree(is_dyn, cx);
             }
         } else if has_fields {
-            self.sync_fields(item, registry, window, cx);
+            self.sync_fields(item, registry, &type_names, window, cx);
         }
 
         if !has_fields {
@@ -267,10 +311,16 @@ impl ItemState {
     }
 
     /// 重建所有字段（类型切换时）。
-    fn rebuild_fields(&mut self, item: &serde_json::Value, window: &mut Window, cx: &mut App) {
+    fn rebuild_fields(
+        &mut self,
+        item: &serde_json::Value,
+        type_names: &[&str],
+        window: &mut Window,
+        cx: &mut App,
+    ) {
         self.fields.clear();
         let json_fields = item_fields(item);
-        self.fields = build_field_states(&json_fields, window, cx);
+        self.fields = build_field_states(&json_fields, type_names, window, cx);
     }
 
     /// 同步字段值（类型未变，字段数量可能变化）。
@@ -278,13 +328,14 @@ impl ItemState {
         &mut self,
         item: &serde_json::Value,
         registry: &DataTypeRegistry,
+        type_names: &[&str],
         window: &mut Window,
         cx: &mut App,
     ) {
         let json_fields = item_fields(item);
 
         if json_fields.len() != self.fields.len() {
-            self.fields = build_field_states(&json_fields, window, cx);
+            self.fields = build_field_states(&json_fields, type_names, window, cx);
         } else {
             for (i, f) in json_fields.iter().enumerate() {
                 let fname = f
@@ -305,7 +356,10 @@ impl ItemState {
                         s.set_value(fname.as_str(), window, cx);
                     });
                 }
-                self.fields[i].type_value = ftype;
+                if self.fields[i].type_value != ftype {
+                    self.fields[i].type_value = ftype.clone();
+                    sync_type_select(&self.fields[i].type_select, &ftype, window, cx);
+                }
                 let current_val = self.fields[i].value.read(cx).value().to_string();
                 if current_val != fval {
                     self.fields[i].value.update(cx, |s, cx| {
@@ -323,6 +377,7 @@ impl ItemState {
 /// 从 JSON 字段数组构建 FieldState 列表。
 fn build_field_states(
     json_fields: &[serde_json::Value],
+    type_names: &[&str],
     window: &mut Window,
     cx: &mut App,
 ) -> Vec<FieldState> {
@@ -350,9 +405,11 @@ fn build_field_states(
                     .default_value(fval.as_str())
                     .placeholder("value")
             });
+            let type_select = create_type_select(type_names, &ftype, window, cx);
             FieldState {
                 name: name_input,
                 type_value: ftype,
+                type_select,
                 value: val_input,
             }
         })

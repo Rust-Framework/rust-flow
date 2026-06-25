@@ -9,10 +9,9 @@
 //! - 值设置
 //! - Tree 重建
 
-use gpui::{Context, Entity};
+use gpui::Context;
 
 use gpui_component::input::InputEvent;
-use gpui_component::tree::TreeState;
 
 use crate::node::NodeAction;
 
@@ -141,6 +140,44 @@ impl StartPanelView {
             })
             .collect();
         self.dispatch_set_data(field_key, serde_json::json!(arr), cx);
+    }
+
+    /// Select 组件类型选择确认回调。
+    ///
+    /// `field_idx` 为 None 时切换顶层项类型，为 Some 时切换子字段类型。
+    pub(super) fn on_type_select_confirm(
+        &mut self,
+        field_key: &str,
+        item_idx: usize,
+        field_idx: Option<usize>,
+        new_type: String,
+        cx: &mut Context<Self>,
+    ) {
+        if self.syncing {
+            return;
+        }
+        // 检查类型是否实际变化，避免不必要的 dispatch
+        let states = if field_key == "variables" {
+            &self.variables_state
+        } else {
+            &self.params_state
+        };
+        let current_type = match states.get(item_idx) {
+            Some(st) => match field_idx {
+                Some(fi) => st.fields.get(fi).map(|f| f.type_value.as_str()),
+                None => Some(st.type_value.as_str()),
+            },
+            None => None,
+        };
+        if current_type == Some(new_type.as_str()) {
+            return;
+        }
+
+        if let Some(fi) = field_idx {
+            self.change_field_type(field_key, item_idx, fi, new_type, cx);
+        } else {
+            self.change_item_type(field_key, item_idx, new_type, cx);
+        }
     }
 
     /// 切换项的 is_optional 标志（通过 dispatch SetData 触发 sync 重建）。
@@ -383,17 +420,5 @@ impl StartPanelView {
         if let Some(on_action) = &self.on_action {
             on_action(NodeAction::SetData(key.to_string(), value), cx);
         }
-    }
-
-    /// 清除指定 Tree 的选中状态。
-    pub(super) fn clear_tree_selection(&mut self, field_key: &str, cx: &mut Context<Self>) {
-        let tree: &Entity<TreeState> = if field_key == "params" {
-            &self.params_tree
-        } else {
-            &self.variables_tree
-        };
-        tree.update(cx, |s, cx| {
-            s.set_selected_index(None, cx);
-        });
     }
 }

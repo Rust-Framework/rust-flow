@@ -8,7 +8,9 @@
 
 use gpui::{Context, Subscription, Window};
 use gpui_component::input::InputEvent;
+use gpui_component::select::SelectEvent;
 use gpui_component::tree::TreeEvent;
+use gpui::SharedString;
 
 use super::common::parse_tree_item_id;
 use super::item::ItemState;
@@ -169,9 +171,11 @@ impl StartPanelView {
 /// 订阅范围：
 /// - 项名称
 /// - 项描述（description）
+/// - 项类型选择（SelectEvent）
 /// - 基础类型值
 /// - 子字段名称（动态类型可编辑）
 /// - 子字段值（复杂/动态类型）
+/// - 子字段类型选择（SelectEvent）
 pub(super) fn subscribe_item_inputs(
     states: &mut Vec<ItemState>,
     st: ItemState,
@@ -181,6 +185,7 @@ pub(super) fn subscribe_item_inputs(
     cx: &mut Context<StartPanelView>,
 ) {
     let fk = field_key.to_string();
+    let st_idx = states.len();
 
     // 订阅 name
     {
@@ -204,6 +209,26 @@ pub(super) fn subscribe_item_inputs(
         subscriptions.push(sub);
     }
 
+    // 订阅 type_select（类型选择 SelectEvent）
+    {
+        let fk = fk.clone();
+        let item_idx = st_idx;
+        let sub = cx.subscribe_in(
+            &st.type_select,
+            window,
+            move |this, _e, ev: &SelectEvent<Vec<SharedString>>, _w, cx| {
+                if this.syncing {
+                    return;
+                }
+                if let SelectEvent::Confirm(Some(val)) = ev {
+                    let new_type = val.to_string();
+                    this.on_type_select_confirm(&fk, item_idx, None, new_type, cx);
+                }
+            },
+        );
+        subscriptions.push(sub);
+    }
+
     // 订阅 value（基础类型）
     if let Some(ref val) = st.value {
         let fk = fk.clone();
@@ -215,8 +240,8 @@ pub(super) fn subscribe_item_inputs(
         subscriptions.push(sub);
     }
 
-    // 订阅子字段 name 和 value（复杂/动态类型）
-    for field in &st.fields {
+    // 订阅子字段 name、value 和 type_select（复杂/动态类型）
+    for (field_idx, field) in st.fields.iter().enumerate() {
         // 子字段 name
         let fk_name = fk.clone();
         let sub = cx.subscribe_in(&field.name, window, move |this, _e, ev, _w, cx| {
@@ -233,6 +258,24 @@ pub(super) fn subscribe_item_inputs(
                 this.sync_list_to_node(&fk_val, cx);
             }
         });
+        subscriptions.push(sub);
+
+        // 子字段 type_select
+        let fk_type = fk.clone();
+        let item_idx_for_field = st_idx;
+        let sub = cx.subscribe_in(
+            &field.type_select,
+            window,
+            move |this, _e, ev: &SelectEvent<Vec<SharedString>>, _w, cx| {
+                if this.syncing {
+                    return;
+                }
+                if let SelectEvent::Confirm(Some(val)) = ev {
+                    let new_type = val.to_string();
+                    this.on_type_select_confirm(&fk_type, item_idx_for_field, Some(field_idx), new_type, cx);
+                }
+            },
+        );
         subscriptions.push(sub);
     }
 

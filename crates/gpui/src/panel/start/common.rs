@@ -5,15 +5,17 @@
 //! - [`RowInputs`]：Tree 行的内联控件输入状态（Entity 句柄）
 //! - 辅助函数：ID 解析、类型显示、标签提取等
 
-use gpui::Entity;
+use gpui::{Entity, SharedString};
 use gpui_component::input::InputState;
+use gpui_component::select::SelectState;
 use rust_agent_flow::Node;
 
-/// 当前选中项（用于浮层详细编辑）。
+/// 当前选中项（用于行高亮等视觉反馈）。
 ///
 /// `field_idx` 为 `None` 表示选中顶层参数/变量项；
 /// 为 `Some(i)` 表示选中结构类型的第 i 个子字段。
 #[derive(Clone, Debug)]
+#[allow(dead_code)]
 pub(crate) struct Selection {
     /// "params" 或 "variables"。
     pub field_key: String,
@@ -25,9 +27,10 @@ pub(crate) struct Selection {
 
 /// Tree 行的内联控件输入状态。
 ///
-/// 在 render 前一次性从 `ItemState`/`FieldState` 提取 `Entity<InputState>` 句柄，
-/// 供 Tree 的 render_item 闭包直接创建 Input/Dropdown 控件。
+/// 在 render 前一次性从 `ItemState`/`FieldState` 提取 `Entity` 句柄，
+/// 供 Tree 的 render_item 闭包直接创建 Input/Select/Switch 控件。
 /// `Entity` 是引用计数句柄（Clone + 'static），可安全移入渲染闭包。
+#[allow(dead_code)]
 pub(super) struct RowInputs {
     /// 名称输入句柄。
     pub name: Entity<InputState>,
@@ -35,8 +38,14 @@ pub(super) struct RowInputs {
     pub type_value: String,
     /// 类型显示标签（本地化）。
     pub type_label: String,
+    /// 类型选择 SelectState 句柄。
+    pub type_select: Entity<SelectState<Vec<SharedString>>>,
     /// 默认值输入句柄（基础类型为 Some；结构类型为 None）。
     pub value: Option<Entity<InputState>>,
+    /// 是否可选（仅顶层项）。
+    pub is_optional: bool,
+    /// 是否数组（仅顶层项）。
+    pub is_array: bool,
     /// 项索引（用于回调）。
     pub item_idx: usize,
     /// 子字段索引（子字段时为 Some）。
