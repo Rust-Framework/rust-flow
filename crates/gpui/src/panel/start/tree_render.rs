@@ -1,11 +1,13 @@
 //! Tree 控件渲染：参数/变量树形编辑。
 //!
-//! 行模板（顶层项）：`[chevron?] [名称 Input] [类型 Select] [可选][数组] [值 Input?] [删除]`
+//! 行模板（顶层项）：`[chevron?] [名称 Input] [类型 Select] [☑可选][☑数组] [值 Input?] [删除]`
 //! 行模板（子字段）：`[indent]    [名称 Input] [类型 Select] [值 Input]    [删除]`
 //!
 //! - 所有控件内联在 Tree 行中，无浮层编辑面板
 //! - Select 组件用于类型选择（gpui-component Select）
-//! - 尽可能消除 Tree/TreeItem 内外边距，充分利用空间
+//! - Checkbox 替代 Switch，节约水平空间
+//! - 点击 Input/Select 触发行选中（事件冒泡到 Tree 行 mousedown 处理器）
+//! - 紧凑布局：消除 ListItem/row_content 多余 padding/gap
 
 use std::collections::HashMap;
 
@@ -14,10 +16,10 @@ use gpui::{
     MouseButton, ParentElement, Styled,
 };
 use gpui_component::button::{Button, ButtonVariants};
+use gpui_component::checkbox::Checkbox;
 use gpui_component::input::Input;
 use gpui_component::list::ListItem;
 use gpui_component::select::Select;
-use gpui_component::switch::Switch;
 use gpui_component::tree::{tree, TreeEntry, TreeItem, TreeState};
 use gpui_component::{Icon, IconName, Sizable, StyledExt};
 
@@ -204,38 +206,41 @@ fn render_tree_row(
         Some(div().w(px(16.0)))
     };
 
-    // 名称 Input
+    // 名称 Input（不 stop_propagation：点击冒泡触发行选中）
+    // 注意：必须用 Styled::h_full 而不是 Input 自身的 .h_full()，
+    // 因为 Input 的 inherent h_full() 只在 multi-line 模式生效（见 gpui-component input.rs），
+    // 在单行模式下不设置 style.size.height；这里通过 Styled trait 显式设置 style.size.height，
+    // 渲染时会经 refine_style 覆盖 input_h() 写入的固定高度（h_6=24px）。
     let name_input = div()
         .flex_1()
-        .min_w(px(60.0))
-        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-        .child(Input::new(&row.name).small().appearance(true));
+        .h_full()
+        .items_center()
+        .child(Styled::h_full(
+            Input::new(&row.name).small().appearance(true),
+        ));
 
-    // 类型 Select
+    // 类型 Select（不 stop_propagation：点击冒泡触发行选中）
     let type_select = div()
-        .w(px(90.0))
-        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-        .child(Select::new(&row.type_select).small().appearance(true));
+        .h_full()
+        .items_center()
+        .child(Select::new(&row.type_select).small().appearance(true).h_full());
 
-    // 可选 / 数组 Switch（仅顶层项）
+    // 可选 / 数组 Checkbox（仅顶层项；Checkbox 相比 Switch 更紧凑）
     let optional_label = t(lang, TKey::PanelParamOptional).to_string();
     let array_label = t(lang, TKey::PanelParamArray).to_string();
 
-    let optional_switch = if !is_field {
+    let optional_checkbox = if !is_field {
         let entity_opt = entity.clone();
         let fk_opt = field_key.to_string();
         let item_idx = row.item_idx;
         Some(
             div()
-                .w(px(28.0))
-                .flex()
                 .items_center()
                 .justify_center()
                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                 .child(
-                    Switch::new(("row-opt", ix))
+                    Checkbox::new(("row-opt", ix))
                         .checked(row.is_optional)
-                        .small()
                         .tooltip(optional_label.clone())
                         .on_click(move |checked: &bool, _, cx| {
                             entity_opt.update(cx, |this, cx| {
@@ -248,21 +253,18 @@ fn render_tree_row(
         None
     };
 
-    let array_switch = if !is_field {
+    let array_checkbox = if !is_field {
         let entity_arr = entity.clone();
         let fk_arr = field_key.to_string();
         let item_idx = row.item_idx;
         Some(
             div()
-                .w(px(28.0))
-                .flex()
                 .items_center()
                 .justify_center()
                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                 .child(
-                    Switch::new(("row-arr", ix))
+                    Checkbox::new(("row-arr", ix))
                         .checked(row.is_array)
-                        .small()
                         .tooltip(array_label.clone())
                         .on_click(move |checked: &bool, _, cx| {
                             entity_arr.update(cx, |this, cx| {
@@ -275,23 +277,21 @@ fn render_tree_row(
         None
     };
 
-    // 值 Input（基础类型有值，结构类型无）
+    // 值 Input（基础类型有值，结构类型无；不 stop_propagation：点击冒泡触发行选中）
     let value_input = row.value.as_ref().map(|val| {
-        div()
-            .flex_1()
-            .min_w(px(60.0))
-            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .child(Input::new(val).small().appearance(true))
+        // 同 name_input：使用 Styled::h_full 让单行模式的高度铺满
+        div().flex_1().h_full().items_center().child(Styled::h_full(
+            Input::new(val).small().appearance(true),
+        ))
     });
 
-    // 删除按钮
+    // 删除按钮（保留 stop_propagation：删除操作不触发选中）
     let entity_del = entity.clone();
     let fk_del = field_key.to_string();
     let item_idx_del = row.item_idx;
     let field_idx_del = row.field_idx;
     let delete_btn = div()
         .w(px(24.0))
-        .flex()
         .items_center()
         .justify_center()
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
@@ -311,20 +311,21 @@ fn render_tree_row(
                 }),
         );
 
-    // 行内容：紧凑布局，消除多余边距
+    // 行内容：所有子项填满行高（height=TREE_ENTRY_HEIGHT），gap 最小化
     let row_content = div()
         .w_full()
         .h(px(TREE_ENTRY_HEIGHT))
+        .py(px(2.0))
         .pl(indent)
-        .pr(px(4.0))
+        .pr(px(0.0))
         .flex()
         .items_center()
-        .gap(px(4.0))
+        .gap(px(2.0))
         .children(chevron)
         .child(name_input)
         .child(type_select)
-        .children(optional_switch)
-        .children(array_switch)
+        .children(optional_checkbox)
+        .children(array_checkbox)
         .children(value_input)
         .child(delete_btn);
 

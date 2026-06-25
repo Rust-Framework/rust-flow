@@ -27,6 +27,10 @@ pub use theme::Theme;
 /// 初始化 GPUI 组件库（必须在打开窗口前调用）。
 ///
 /// 封装 `gpui_component::init`，调用方只需一次调用。
+///
+/// 同时关闭 `ListItem` 的 `active_highlight`，避免选中态出现 1px 边框
+/// （保留背景高亮，仅去除外框）。
 pub fn init(cx: &mut gpui::App) {
     gpui_component::init(cx);
+    gpui_component::Theme::global_mut(cx).list.active_highlight = false;
 }
