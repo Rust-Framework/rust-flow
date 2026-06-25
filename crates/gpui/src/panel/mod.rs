@@ -64,6 +64,20 @@ impl PanelEntity {
             }),
         }
     }
+
+    /// 同步主题到当前面板（用于外部切换主题时通知已有面板重渲染）。
+    pub fn set_theme(&self, theme: Theme, cx: &mut App) {
+        match self {
+            PanelEntity::Generic(entity) => entity.update(cx, |view, cx| {
+                view.theme = theme;
+                cx.notify();
+            }),
+            PanelEntity::Start(entity) => entity.update(cx, |view, cx| {
+                view.theme = theme;
+                cx.notify();
+            }),
+        }
+    }
 }
 
 /// 单个字段的编辑状态。

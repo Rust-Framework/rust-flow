@@ -42,6 +42,8 @@ pub(super) struct RowInputs {
     pub type_select: Entity<SelectState<Vec<SharedString>>>,
     /// 默认值输入句柄（基础类型为 Some；结构类型为 None）。
     pub value: Option<Entity<InputState>>,
+    /// 描述输入句柄（仅顶层项；用于选中时 Popover 内编辑）。
+    pub description: Option<Entity<InputState>>,
     /// 是否可选（仅顶层项）。
     pub is_optional: bool,
     /// 是否数组（仅顶层项）。

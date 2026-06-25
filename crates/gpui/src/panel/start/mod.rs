@@ -246,8 +246,7 @@ impl Render for StartPanelView {
             cx,
         );
 
-        // 浮层详细编辑面板已移除：所有控件内联在 Tree 行中
-        // （render_section_tree 已包含名称/类型/可选/数组/值/删除按钮）
+        // 选中项的编辑表单通过 Popover 浮层显示在选中行左侧
 
         div()
             .relative()

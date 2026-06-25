@@ -312,6 +312,10 @@ impl FlowEditorView {
             gpui_component::ThemeMode::Light
         };
         gpui_component::Theme::change(mode, None, cx);
+        // 同步主题到已构建的面板：面板内部存有 theme 快照，必须显式通知
+        if let Some(panel) = &self.panel_view {
+            panel.set_theme(self.theme, cx);
+        }
         cx.refresh_windows();
         cx.notify();
     }
@@ -327,6 +331,10 @@ impl FlowEditorView {
             gpui_component::ThemeMode::Light
         };
         gpui_component::Theme::change(mode, None, cx);
+        // 同步主题到已构建的面板：面板内部存有 theme 快照，必须显式通知
+        if let Some(panel) = &self.panel_view {
+            panel.set_theme(self.theme, cx);
+        }
         cx.refresh_windows();
         cx.notify();
     }

@@ -1,0 +1,563 @@
+{
+  "meta": {
+    "title": "Rust Agent Flow",
+    "subtitle": "GPUI 流程图设计器·图灵完备控制流·策略模式扩展",
+    "docTitle": "rust-agent-flow 应用最佳实践：基于 GPUI 的可视化流程编排框架",
+    "description": "基于 GPUI 与 gpui-component 构建的框架无关流程图设计组件库，提供图灵完备控制流节点（Start/End/Action/Condition/Loop/Variable/Adapter/Agent）、dagre 自动布局、ReactFlow 风格边路径算法、Schema 驱动属性面板与 trait 注入扩展体系，适合构建 Agent 编排、数据管道等可视化设计器。",
+    "category": "framework",
+    "tags": ["rust", "gpui", "flow-editor", "agent-flow", "reactflow"],
+    "repoUrl": "https://gitcode.com/rf2026/rust-agent-flow",
+    "demoUrl": "",
+    "featured": true,
+    "sortOrder": 1,
+    "version": "0.1",
+    "language": "zh-CN",
+    "author": "Start",
+    "foreword": "FOREWORD.md",
+    "pathRules": {
+      "chapterIndex": "{chapterId}/INDEX.md",
+      "sectionFile": "{chapterId}/{sectionId}.md"
+    }
+  },
+  "parts": [
+    {
+      "id": "part-1-start",
+      "title": "第一部分 · 入门与认知",
+      "chapters": [
+        {
+          "id": "01-introduction",
+          "title": "认识 rust-agent-flow",
+          "subtitle": "框架定位、适用场景与生态全景",
+          "sections": [
+            {
+              "id": "what-is-rust-agent-flow",
+              "title": "什么是 rust-agent-flow",
+              "summary": "框架定义、核心能力与设计目标",
+              "readingTime": 8,
+              "difficulty": "beginner"
+            },
+            {
+              "id": "who-should-use",
+              "title": "适用场景与边界",
+              "summary": "适合谁用、不适合什么场景",
+              "readingTime": 7,
+              "difficulty": "beginner"
+            },
+            {
+              "id": "ecosystem-overview",
+              "title": "生态与 Crate 全景",
+              "summary": "core / gpui / demo 分层与技术栈",
+              "readingTime": 10,
+              "difficulty": "beginner"
+            }
+          ]
+        },
+        {
+          "id": "02-quickstart",
+          "title": "快速上手",
+          "subtitle": "从零搭建第一个可运行的流程设计器",
+          "sections": [
+            {
+              "id": "create-project",
+              "title": "创建项目与依赖",
+              "summary": "Cargo 工作区、依赖引入与目录约定",
+              "readingTime": 10,
+              "difficulty": "beginner"
+            },
+            {
+              "id": "hello-world",
+              "title": "Hello World 详解",
+              "summary": "最小窗口、FlowEditorView 与初始化",
+              "readingTime": 12,
+              "difficulty": "beginner"
+            },
+            {
+              "id": "first-flow",
+              "title": "第一个流程图",
+              "summary": "FlowDocument 数据驱动构建图",
+              "readingTime": 14,
+              "difficulty": "beginner"
+            },
+            {
+              "id": "run-and-debug",
+              "title": "运行、调试与验证",
+              "summary": "本地运行、交互验证与日志",
+              "readingTime": 8,
+              "difficulty": "beginner"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "part-2-design",
+      "title": "第二部分 · 设计与架构",
+      "chapters": [
+        {
+          "id": "03-philosophy",
+          "title": "设计理念与哲学",
+          "subtitle": "从 ReactFlow 到 GPUI 的类型安全实践",
+          "sections": [
+            {
+              "id": "design-principles",
+              "title": "核心设计原则",
+              "summary": "框架无关、策略模式、Schema 驱动",
+              "readingTime": 10,
+              "difficulty": "beginner"
+            },
+            {
+              "id": "reactflow-inspiration",
+              "title": "ReactFlow 的启发",
+              "summary": "边路径算法移植与概念对齐",
+              "readingTime": 12,
+              "difficulty": "beginner"
+            },
+            {
+              "id": "gpui-idioms",
+              "title": "GPUI 惯用法与所有权",
+              "summary": "Entity、Context、命中测试与闭包约束",
+              "readingTime": 14,
+              "difficulty": "intermediate"
+            },
+            {
+              "id": "progressive-disclosure",
+              "title": "渐进式披露与框架边界",
+              "summary": "框架只提供能力，UI 交给调用侧",
+              "readingTime": 10,
+              "difficulty": "intermediate"
+            }
+          ]
+        },
+        {
+          "id": "04-architecture",
+          "title": "架构全景",
+          "subtitle": "Crate 分层、数据模型与渲染生命周期",
+          "sections": [
+            {
+              "id": "crate-layout",
+              "title": "Crate 分层结构",
+              "summary": "core / gpui / demo 职责与依赖方向",
+              "readingTime": 12,
+              "difficulty": "intermediate"
+            },
+            {
+              "id": "graph-model",
+              "title": "流程图数据模型",
+              "summary": "FlowGraph + Node/Edge/Port 三层抽象",
+              "readingTime": 12,
+              "difficulty": "intermediate"
+            },
+            {
+              "id": "render-lifecycle",
+              "title": "渲染生命周期",
+              "summary": "从 relayout 到 render 的完整路径",
+              "readingTime": 14,
+              "difficulty": "intermediate"
+            },
+            {
+              "id": "hit-test-interaction",
+              "title": "命中测试交互模型",
+              "summary": "画布统一处理事件，几何命中确定目标",
+              "readingTime": 12,
+              "difficulty": "advanced"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "part-3-core",
+      "title": "第三部分 · 核心数据模型",
+      "chapters": [
+        {
+          "id": "05-graph-model",
+          "title": "流程图数据模型",
+          "subtitle": "FlowGraph、slotmap 键与文档互转",
+          "sections": [
+            {
+              "id": "flowgraph",
+              "title": "FlowGraph 与 slotmap 键",
+              "summary": "稳定键、版本计数与增删改查",
+              "readingTime": 12,
+              "difficulty": "intermediate"
+            },
+            {
+              "id": "node-edge-port",
+              "title": "Node / Edge / Port 三要素",
+              "summary": "节点、边、端口的方向与位置",
+              "readingTime": 12,
+              "difficulty": "intermediate"
+            },
+            {
+              "id": "document-interop",
+              "title": "FlowDocument 互转",
+              "summary": "JSON 序列化与索引引用",
+              "readingTime": 10,
+              "difficulty": "intermediate"
+            }
+          ]
+        },
+        {
+          "id": "06-schema-system",
+          "title": "Schema 与字段系统",
+          "subtitle": "声明式节点定义驱动属性面板",
+          "sections": [
+            {
+              "id": "node-schema-port",
+              "title": "NodeSchema 与 PortSpec",
+              "summary": "节点声明、端口规格与默认尺寸",
+              "readingTime": 12,
+              "difficulty": "intermediate"
+            },
+            {
+              "id": "fieldspec-types",
+              "title": "FieldSpec 与字段类型",
+              "summary": "Text/Code/Dropdown/List 等编辑控件映射",
+              "readingTime": 14,
+              "difficulty": "intermediate"
+            },
+            {
+              "id": "flowdocument",
+              "title": "FlowDocument 序列化协议",
+              "summary": "版本、元数据、节点与边定义",
+              "readingTime": 10,
+              "difficulty": "intermediate"
+            }
+          ]
+        },
+        {
+          "id": "07-geometry-layout",
+          "title": "几何与布局引擎",
+          "subtitle": "边路径、端点计算、dagre 与视口",
+          "sections": [
+            {
+              "id": "edge-path-algorithms",
+              "title": "边路径算法",
+              "summary": "Bezier / Straight / Step / SmoothStep / LoopBack",
+              "readingTime": 16,
+              "difficulty": "advanced"
+            },
+            {
+              "id": "port-calc",
+              "title": "端口端点计算",
+              "summary": "Auto 边方向推导与同侧端口分布",
+              "readingTime": 12,
+              "difficulty": "advanced"
+            },
+            {
+              "id": "dagre-layout",
+              "title": "Dagre 布局引擎",
+              "summary": "Sugiyama 分层算法与循环体分组",
+              "readingTime": 14,
+              "difficulty": "advanced"
+            },
+            {
+              "id": "viewport",
+              "title": "Viewport 视口数学",
+              "summary": "平移、缩放与坐标变换",
+              "readingTime": 10,
+              "difficulty": "intermediate"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "part-4-node",
+      "title": "第四部分 · 节点系统",
+      "chapters": [
+        {
+          "id": "08-iflow-node",
+          "title": "IFlowNode 扩展接口",
+          "subtitle": "策略模式、注册表与渲染上下文",
+          "sections": [
+            {
+              "id": "strategy-pattern",
+              "title": "策略模式与 IFlowNode",
+              "summary": "按 kind 匹配实现的节点扩展",
+              "readingTime": 12,
+              "difficulty": "intermediate"
+            },
+            {
+              "id": "noderegistry",
+              "title": "NodeRegistry 注册表",
+              "summary": "kind → Arc<dyn IFlowNode> 注册与查找",
+              "readingTime": 10,
+              "difficulty": "intermediate"
+            },
+            {
+              "id": "nodeviewctx-action",
+              "title": "NodeViewCtx 与 NodeAction",
+              "summary": "渲染上下文与动作回调机制",
+              "readingTime": 12,
+              "difficulty": "intermediate"
+            }
+          ]
+        },
+        {
+          "id": "09-builtin-nodes",
+          "title": "内置节点详解",
+          "subtitle": "图灵完备控制流的八种节点",
+          "sections": [
+            {
+              "id": "start-end-action",
+              "title": "Start / End / Action",
+              "summary": "顺序流程的起点、终点与步骤",
+              "readingTime": 12,
+              "difficulty": "intermediate"
+            },
+            {
+              "id": "condition-branch",
+              "title": "Condition 条件分支",
+              "summary": "多分支出口、动态端口与收起态",
+              "readingTime": 14,
+              "difficulty": "intermediate"
+            },
+            {
+              "id": "loop-iteration",
+              "title": "Loop 循环迭代",
+              "summary": "循环体支线、回环边与 body 收起",
+              "readingTime": 16,
+              "difficulty": "advanced"
+            },
+            {
+              "id": "variable-adapter-agent",
+              "title": "Variable / Adapter / Agent",
+              "summary": "变量、数据适配与智能体配置",
+              "readingTime": 12,
+              "difficulty": "intermediate"
+            }
+          ]
+        },
+        {
+          "id": "10-custom-node",
+          "title": "自定义节点开发",
+          "subtitle": "实现专属节点与精确端口控制",
+          "sections": [
+            {
+              "id": "implement-iflownode",
+              "title": "实现 IFlowNode",
+              "summary": "kind/get_view/get_panel/schema 四要素",
+              "readingTime": 14,
+              "difficulty": "advanced"
+            },
+            {
+              "id": "dynamic-ports",
+              "title": "动态端口与 ports_for_node",
+              "summary": "随数据变化的端口列表",
+              "readingTime": 12,
+              "difficulty": "advanced"
+            },
+            {
+              "id": "port-position-size",
+              "title": "port_position 与 content_size",
+              "summary": "精确端口定位与内容驱动尺寸",
+              "readingTime": 14,
+              "difficulty": "advanced"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "part-5-render",
+      "title": "第五部分 · 渲染与交互",
+      "chapters": [
+        {
+          "id": "11-editor-view",
+          "title": "FlowEditorView 主视图",
+          "subtitle": "结构、渲染管线与视口变换",
+          "sections": [
+            {
+              "id": "structure",
+              "title": "主视图结构",
+              "summary": "graph/viewport/interaction/registry 等核心字段",
+              "readingTime": 12,
+              "difficulty": "intermediate"
+            },
+            {
+              "id": "render-pipeline",
+              "title": "渲染管线",
+              "summary": "画布/节点/边/工具栏/面板的组装",
+              "readingTime": 14,
+              "difficulty": "intermediate"
+            },
+            {
+              "id": "viewport-transform",
+              "title": "视口变换与缩放",
+              "summary": "逐元素缩放与坐标映射",
+              "readingTime": 12,
+              "difficulty": "intermediate"
+            }
+          ]
+        },
+        {
+          "id": "12-interaction",
+          "title": "交互与命中测试",
+          "subtitle": "状态机、命中测试与鼠标事件",
+          "sections": [
+            {
+              "id": "interaction-fsm",
+              "title": "交互状态机",
+              "summary": "Idle/Panning/DraggingNode/DrawingEdge/AddingNode",
+              "readingTime": 14,
+              "difficulty": "advanced"
+            },
+            {
+              "id": "hit-test",
+              "title": "命中测试",
+              "summary": "几何判定确定点击目标",
+              "readingTime": 12,
+              "difficulty": "advanced"
+            },
+            {
+              "id": "mouse-events-picker",
+              "title": "鼠标事件与节点选择浮层",
+              "summary": "事件分发与插入节点浮层",
+              "readingTime": 12,
+              "difficulty": "intermediate"
+            }
+          ]
+        },
+        {
+          "id": "13-edge-rendering",
+          "title": "边渲染与连线",
+          "subtitle": "EdgeView、回环边与「+」按钮",
+          "sections": [
+            {
+              "id": "edgeview-types",
+              "title": "EdgeView 与边类型",
+              "summary": "四种边类型与路径生成",
+              "readingTime": 12,
+              "difficulty": "intermediate"
+            },
+            {
+              "id": "loop-back",
+              "title": "循环回环边",
+              "summary": "U 形路由与 loop_in 回连",
+              "readingTime": 14,
+              "difficulty": "advanced"
+            },
+            {
+              "id": "plus-button",
+              "title": "边「+」按钮与插入节点",
+              "summary": "拆边插入与 plus_button_at_target",
+              "readingTime": 12,
+              "difficulty": "intermediate"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "part-6-panel",
+      "title": "第六部分 · 面板与扩展",
+      "chapters": [
+        {
+          "id": "14-panel",
+          "title": "Schema 驱动属性面板",
+          "subtitle": "PanelView、字段状态与同步",
+          "sections": [
+            {
+              "id": "panelview",
+              "title": "PanelView 面板实体",
+              "summary": "Generic/Start 分发与生命周期",
+              "readingTime": 12,
+              "difficulty": "intermediate"
+            },
+            {
+              "id": "fieldstate-sync",
+              "title": "FieldState 与同步机制",
+              "summary": "Input/Switch/Dropdown/List 状态与防回环",
+              "readingTime": 14,
+              "difficulty": "advanced"
+            },
+            {
+              "id": "start-panel",
+              "title": "Start 节点专属面板",
+              "summary": "参数/变量树形编辑与数据类型",
+              "readingTime": 14,
+              "difficulty": "advanced"
+            }
+          ]
+        },
+        {
+          "id": "15-extensions",
+          "title": "扩展点体系",
+          "subtitle": "trait + Arc<dyn> + setter 注入模式",
+          "sections": [
+            {
+              "id": "toolbar-provider",
+              "title": "ToolbarProvider 工具栏扩展",
+              "summary": "自定义工具项注入与渲染",
+              "readingTime": 12,
+              "difficulty": "intermediate"
+            },
+            {
+              "id": "data-type-provider",
+              "title": "IDataTypeProvider 数据类型扩展",
+              "summary": "自定义复杂类型与注册表合并",
+              "readingTime": 12,
+              "difficulty": "intermediate"
+            },
+            {
+              "id": "syntax-service",
+              "title": "SyntaxService 语法高亮扩展",
+              "summary": "代码编辑器高亮服务注入",
+              "readingTime": 10,
+              "difficulty": "intermediate"
+            },
+            {
+              "id": "theme-i18n",
+              "title": "主题与国际化",
+              "summary": "亮暗主题切换与中英文 i18n",
+              "readingTime": 12,
+              "difficulty": "intermediate"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "part-7-practice",
+      "title": "第七部分 · 工程化与实践",
+      "chapters": [
+        {
+          "id": "16-best-practices",
+          "title": "最佳实践与案例",
+          "subtitle": "项目组织、避坑指南与 Demo 案例",
+          "sections": [
+            {
+              "id": "project-structure",
+              "title": "项目组织与集成",
+              "summary": "工作区布局与嵌入目标应用",
+              "readingTime": 12,
+              "difficulty": "intermediate"
+            },
+            {
+              "id": "common-pitfalls",
+              "title": "常见陷阱与排查",
+              "summary": "端口闭包、尺寸同步与回环边",
+              "readingTime": 14,
+              "difficulty": "intermediate"
+            },
+            {
+              "id": "performance-tips",
+              "title": "性能优化技巧",
+              "summary": "缓存策略与按需重排",
+              "readingTime": 12,
+              "difficulty": "advanced"
+            },
+            {
+              "id": "demo-case-study",
+              "title": "Demo 案例研究",
+              "summary": "数据驱动流程与工具栏扩展实践",
+              "readingTime": 14,
+              "difficulty": "intermediate"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

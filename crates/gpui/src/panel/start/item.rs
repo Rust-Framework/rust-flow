@@ -123,6 +123,7 @@ impl ItemState {
         });
         let description = cx.new(|cx| {
             InputState::new(window, cx)
+                .multi_line(true)
                 .default_value(desc_text.as_str())
                 .placeholder("description")
         });
