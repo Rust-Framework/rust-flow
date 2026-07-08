@@ -206,7 +206,7 @@ impl IFlowNode for ActionNode {
         node: &Node,
         port_id: &PortId,
         layout: LayoutDirection,
-    ) -> Option<PointF> {
+    ) -> Option<(PointF, PortSide)> {
         let left = node.position.x;
         let right = node.position.x + node.size.w;
         let top = node.position.y;
@@ -216,12 +216,12 @@ impl IFlowNode for ActionNode {
 
         match port_id.as_str() {
             "in" => match layout {
-                LayoutDirection::Horizontal => Some(PointF::new(left, node_mid_y)),
-                LayoutDirection::Vertical => Some(PointF::new(mid_x, top)),
+                LayoutDirection::Horizontal => Some((PointF::new(left, node_mid_y), PortSide::Left)),
+                LayoutDirection::Vertical => Some((PointF::new(mid_x, top), PortSide::Top)),
             },
             "out" => match layout {
-                LayoutDirection::Horizontal => Some(PointF::new(right, node_mid_y)),
-                LayoutDirection::Vertical => Some(PointF::new(mid_x, bottom)),
+                LayoutDirection::Horizontal => Some((PointF::new(right, node_mid_y), PortSide::Right)),
+                LayoutDirection::Vertical => Some((PointF::new(mid_x, bottom), PortSide::Bottom)),
             },
             _ => None,
         }

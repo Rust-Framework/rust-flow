@@ -102,8 +102,8 @@ impl LoopNode {
                 // 循环体支线 LoopBody/LoopIn：两个方向均为 右/左（固定，向下绕圈回环）
                 .with_port(PortSpec::new("in", PortDirection::In, PortSide::Auto))
                 .with_port(PortSpec::new("done", PortDirection::Out, PortSide::Auto))
-                .with_port(PortSpec::new("loop_body", PortDirection::Out, PortSide::Auto))
-                .with_port(PortSpec::new("loop_in", PortDirection::In, PortSide::Auto))
+                .with_port(PortSpec::new("loop_body", PortDirection::Out, PortSide::Right).with_fixed(true))
+                .with_port(PortSpec::new("loop_in", PortDirection::In, PortSide::Left).with_fixed(true))
                 .with_field(
                     FieldSpec::new("label", "Label", FieldType::Text)
                         .with_default(serde_json::json!("")),
@@ -351,32 +351,28 @@ impl IFlowNode for LoopNode {
         node: &Node,
         port_id: &PortId,
         layout: LayoutDirection,
-    ) -> Option<PointF> {
-        // Loop 节点始终完整显示，端口位置固定（不随 body_collapsed 变化）
+    ) -> Option<(PointF, PortSide)> {
         let left = node.position.x;
         let right = node.position.x + node.size.w;
         let top = node.position.y;
         let mid_x = node.position.x + node.size.w * 0.5;
         let node_mid_y = node.position.y + node.size.h * 0.5;
-
-        // 使用固定高度，保证端口位置与实际渲染高度一致
         let bottom = node.position.y + TITLE_H + BODY_H;
         let body_mid_y = node.position.y + TITLE_H + BODY_H * 0.5;
 
         match port_id.as_str() {
-            // 主线 In→Done：纵向上进下出，横向左进右出（节点垂直中心）
+            // 主线 In→Done：随布局方向切换（弱约束语义，但显式返回 side）
             "in" => match layout {
-                LayoutDirection::Horizontal => Some(PointF::new(left, node_mid_y)),
-                LayoutDirection::Vertical => Some(PointF::new(mid_x, top)),
+                LayoutDirection::Horizontal => Some((PointF::new(left, node_mid_y), PortSide::Left)),
+                LayoutDirection::Vertical => Some((PointF::new(mid_x, top), PortSide::Top)),
             },
             "done" => match layout {
-                LayoutDirection::Horizontal => Some(PointF::new(right, node_mid_y)),
-                LayoutDirection::Vertical => Some(PointF::new(mid_x, bottom)),
+                LayoutDirection::Horizontal => Some((PointF::new(right, node_mid_y), PortSide::Right)),
+                LayoutDirection::Vertical => Some((PointF::new(mid_x, bottom), PortSide::Bottom)),
             },
-            // 循环体支线：loop_body 始终右出，loop_in 始终左进（两种布局一致）
-            // 循环体节点纵向编排（上进下出），回环边从 body 底部向下绕回 loop_in
-            "loop_body" => Some(PointF::new(right, body_mid_y)),
-            "loop_in" => Some(PointF::new(left, body_mid_y)),
+            // 循环体支线：强约束固定右/左（两种布局一致，对应 PortSpec.fixed = true）
+            "loop_body" => Some((PointF::new(right, body_mid_y), PortSide::Right)),
+            "loop_in" => Some((PointF::new(left, body_mid_y), PortSide::Left)),
             _ => None,
         }
     }

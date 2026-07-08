@@ -12,17 +12,20 @@ pub enum PortDirection {
     Out,
 }
 
-/// Which side of the node a port sits on.
+/// Which side of a node a port sits on.
 ///
-/// `Auto` means the framework computes the side dynamically based on the
-/// relative position of the connected nodes (floating-edge behaviour).
+/// `Auto` is a weak constraint: the framework computes the side based on
+/// layout direction. Concrete sides (Top/Right/Bottom/Left) may be either
+/// weak or strong, determined by `PortSpec.fixed`:
+/// - `fixed = false` (default): weak constraint, side may be overridden
+/// - `fixed = true`: strong constraint, side is fixed by the node impl
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 pub enum PortSide {
     Top,
     Right,
     Bottom,
     Left,
-    /// Framework computes the side from relative node positions.
+    /// Weak constraint: framework computes the side from layout direction.
     #[default]
     Auto,
 }

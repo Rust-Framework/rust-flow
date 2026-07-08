@@ -54,17 +54,19 @@ pub(super) fn compute_loop_bounds(
 
 /// 计算边的端点。
 ///
-/// **端口策略**（与布局方向协同，减少拐弯）：
-/// - **循环体节点**：始终强制 Top/Bottom（垂直子流，上进下出），无论主布局方向如何。
-///   这样 Loop 的 `loop_body` 出口（Right）→ body 入口（Top），
-///   body 出口（Bottom）→ Loop 的 `loop_in` 入口（Left），回环边向下绕回。
-/// - **非循环体节点**：按布局方向使用默认端口对（纵向 Top/Bottom，横向 Left/Right）。
+/// **端口策略**（强弱约束模型）：
+/// - 端口 side 由节点声明（PortSpec + IFlowNode::port_position），外部只读不写
+/// - 强约束端口（fixed=true）：side 由节点实现决定，本函数不覆盖
+/// - 弱约束端口（fixed=false, side=Auto）：按布局方向回退到默认 side
+///
+/// 循环体节点的端口 side 不再被外部强制为 Top/Bottom。循环体的垂直子流语义
+/// 由 Loop 节点的 loop_body/loop_in 强约束 side + 边路径算法协同保证。
 pub(crate) fn compute_edge_endpoints(
     edge: &Edge,
     graph: &FlowGraph,
     registry: &NodeRegistry,
     layout: LayoutDirection,
-    body_nodes: &HashSet<NodeId>,
+    _body_nodes: &HashSet<NodeId>,
     default_src_side: PortSide,
     default_dst_side: PortSide,
 ) -> (PointF, PortSide, PointF, PortSide) {
@@ -77,31 +79,14 @@ pub(crate) fn compute_edge_endpoints(
         None => return (PointF::default(), default_src_side, PointF::default(), default_dst_side),
     };
 
-    let src_is_body = body_nodes.contains(&edge.source);
-    let dst_is_body = body_nodes.contains(&edge.target);
-
-    // 循环体节点始终强制 Top/Bottom（垂直子流，上进下出），无论主布局方向。
-    let force_src_bottom = src_is_body;
-    let force_dst_top = dst_is_body;
-
-    // 源端点
-    let (src, src_side) = if force_src_bottom {
-        (port_position_by_side(src_node, PortSide::Bottom), PortSide::Bottom)
-    } else {
-        match edge.source_port.as_deref() {
-            Some(pid) => resolve_port(src_node, pid, registry, layout),
-            None => (port_position_by_side(src_node, default_src_side), default_src_side),
-        }
+    let (src, src_side) = match edge.source_port.as_deref() {
+        Some(pid) => resolve_port(src_node, pid, registry, layout),
+        None => (port_position_by_side(src_node, default_src_side), default_src_side),
     };
 
-    // 目标端点
-    let (dst, dst_side) = if force_dst_top {
-        (port_position_by_side(dst_node, PortSide::Top), PortSide::Top)
-    } else {
-        match edge.target_port.as_deref() {
-            Some(pid) => resolve_port(dst_node, pid, registry, layout),
-            None => (port_position_by_side(dst_node, default_dst_side), default_dst_side),
-        }
+    let (dst, dst_side) = match edge.target_port.as_deref() {
+        Some(pid) => resolve_port(dst_node, pid, registry, layout),
+        None => (port_position_by_side(dst_node, default_dst_side), default_dst_side),
     };
 
     (src, src_side, dst, dst_side)

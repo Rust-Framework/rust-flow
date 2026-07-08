@@ -568,7 +568,7 @@ impl IFlowNode for ConditionNode {
         node: &Node,
         port_id: &PortId,
         layout: LayoutDirection,
-    ) -> Option<PointF> {
+    ) -> Option<(PointF, PortSide)> {
         let collapsed = is_collapsed(node);
         let left = node.position.x;
         let right = node.position.x + node.size.w;
@@ -577,63 +577,52 @@ impl IFlowNode for ConditionNode {
         let node_mid_y = node.position.y + node.size.h * 0.5;
 
         // ====== 收起状态：In 入口 + 单一 Out 出口（else 位置） ======
-        // 收起时高度 = TITLE_H + ITEM_H，进出端点均位于节点垂直中心
         if collapsed {
             let bottom = node.position.y + TITLE_H + ITEM_H;
             return match port_id.as_str() {
                 "in" => match layout {
-                    LayoutDirection::Horizontal => Some(PointF::new(left, node_mid_y)),
-                    LayoutDirection::Vertical => Some(PointF::new(mid_x, top)),
+                    LayoutDirection::Horizontal => Some((PointF::new(left, node_mid_y), PortSide::Left)),
+                    LayoutDirection::Vertical => Some((PointF::new(mid_x, top), PortSide::Top)),
                 },
-                // 所有 out 端口（if_0, if_1, ..., else）合并到节点边缘垂直中心
                 _ => match layout {
-                    LayoutDirection::Horizontal => Some(PointF::new(right, node_mid_y)),
-                    LayoutDirection::Vertical => Some(PointF::new(mid_x, bottom)),
+                    LayoutDirection::Horizontal => Some((PointF::new(right, node_mid_y), PortSide::Right)),
+                    LayoutDirection::Vertical => Some((PointF::new(mid_x, bottom), PortSide::Bottom)),
                 },
             };
         }
 
-        // ====== 展开状态：保持现有逻辑 ======
-        // 先计算 n_cond，再推导 n_br = n_cond + 1，避免重复调用 get_conditions
+        // ====== 展开状态 ======
         let n_cond = get_conditions(node).len();
         let n_br = n_cond + 1;
-        // 内联 content_height：复用 n_br，避免重复调用 get_conditions
         let bottom = node.position.y + TITLE_H + ITEM_H * n_br as f32;
 
         match port_id.as_str() {
-            // In：横向节点左侧垂直中心 / 纵向顶部中心
             "in" => match layout {
-                LayoutDirection::Horizontal => Some(PointF::new(left, node_mid_y)),
-                LayoutDirection::Vertical => Some(PointF::new(mid_x, top)),
+                LayoutDirection::Horizontal => Some((PointF::new(left, node_mid_y), PortSide::Left)),
+                LayoutDirection::Vertical => Some((PointF::new(mid_x, top), PortSide::Top)),
             },
-            // Else 兜底出口（最后一行/最右）：
-            // 横向 → 最后一行右侧中心
-            // 纵向 → 底部最右侧出口端点
             "else" => match layout {
                 LayoutDirection::Horizontal => {
                     let y = node.position.y + TITLE_H + ITEM_H * (n_cond as f32 + 0.5);
-                    Some(PointF::new(right, y))
+                    Some((PointF::new(right, y), PortSide::Right))
                 }
                 LayoutDirection::Vertical => {
                     let t = (n_cond as f32 + 0.5) / n_br as f32;
                     let x = left + node.size.w * t;
-                    Some(PointF::new(x, bottom))
+                    Some((PointF::new(x, bottom), PortSide::Bottom))
                 }
             },
-            // if_i 条件出口：
-            // 横向 → 条件行右侧中心
-            // 纵向 → 底部均匀分布（if_0 最左，..., if_{n-1}，else 最右）
             pid if pid.starts_with("if_") => {
                 let idx: usize = pid[3..].parse().ok()?;
                 match layout {
                     LayoutDirection::Horizontal => {
                         let y = node.position.y + TITLE_H + ITEM_H * (idx as f32 + 0.5);
-                        Some(PointF::new(right, y))
+                        Some((PointF::new(right, y), PortSide::Right))
                     }
                     LayoutDirection::Vertical => {
                         let t = (idx as f32 + 0.5) / n_br as f32;
                         let x = left + node.size.w * t;
-                        Some(PointF::new(x, bottom))
+                        Some((PointF::new(x, bottom), PortSide::Bottom))
                     }
                 }
             }

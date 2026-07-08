@@ -7,7 +7,7 @@
 use std::sync::Arc;
 
 use gpui::{AnyElement, App, Window};
-use rust_agent_flow::{LayoutDirection, Node, NodeSchema, PortId, PortSpec, PointF, SizeF};
+use rust_agent_flow::{LayoutDirection, Node, NodeSchema, PortId, PortSide, PortSpec, PointF, SizeF};
 
 use crate::i18n::Language;
 use crate::theme::Theme;
@@ -85,23 +85,25 @@ pub trait IFlowNode: Send + Sync {
 
     /// 自定义端口位置计算（可选，不依赖渲染上下文）。
     ///
-    /// 返回端口圆心在**逻辑坐标**（节点 position 为左上角原点的绝对坐标）下的位置。
-    /// 默认返回 `None`，表示用框架统一算法（按 side 计算节点边缘中点）。
+    /// 返回 `(位置, side)`。位置为端口圆心在**逻辑坐标**（节点 position 为
+    /// 左上角原点的绝对坐标）下的位置，side 为端口所在边（用于边路径算法
+    /// 的方向控制）。默认返回 `None`，表示用框架统一算法（按 side 计算
+    /// 节点边缘中点）。
     ///
-    /// 特殊节点（如条件分支的多出口、循环节点的循环回环端口）覆写此方法
-    /// 以精确控制每个端口的位置，使连线端点与视觉端口对齐。
+    /// **强弱约束语义**：
+    /// - 弱约束端口（`PortSpec.fixed = false`）：可返回 `None` 让框架按布局
+    ///   方向计算，或返回 `(pos, side)` 显式指定
+    /// - 强约束端口（`PortSpec.fixed = true`）：必须返回 `(pos, side)`，
+    ///   外部布局层只读不写，不覆盖此 side
     ///
     /// **方向感知**：`layout` 参数指示当前布局方向（Horizontal/Vertical），
-    /// 端口位置应根据方向调整。例如 Condition 节点的 In 端口在横向布局下
-    /// 位于左侧，在纵向布局下位于顶部。
-    ///
-    /// 位置计算应基于 `node.position` + `node.size` + 端口在节点内的相对偏移。
+    /// 端口位置和 side 应根据方向调整（除非是强约束固定端口）。
     fn port_position(
         &self,
         _node: &Node,
         _port_id: &PortId,
         _layout: LayoutDirection,
-    ) -> Option<PointF> {
+    ) -> Option<(PointF, PortSide)> {
         None
     }
 

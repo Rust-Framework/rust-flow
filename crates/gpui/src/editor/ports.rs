@@ -1,11 +1,13 @@
 //! 端口位置计算。
 //!
 //! 支持两种端口位置模式：
-//! 1. **自定义位置**：节点覆写 [`IFlowNode::port_position`]，按 port_id 返回精确位置
-//!    （用于 Condition 多出口、Loop 循环回环端口等结构化节点）。
+//! 1. **自定义位置 + 显式 side**：节点覆写 [`IFlowNode::port_position`]，返回
+//!    `(位置, side)`（用于 Condition 多出口、Loop 循环回环端口等结构化节点）。
 //! 2. **默认 side-based**：按 side 计算节点边缘中点（用于 Start/End/Action 简单节点）。
 //!
-//! 端口 side 从 schema 获取（非 Auto 时用 schema 值，Auto 时按布局方向回退）。
+//! 端口 side 由节点显式声明（强弱约束模型）：强约束端口（fixed=true）的 side
+//! 由节点实现决定，外部布局层只读不写；弱约束端口（fixed=false, Auto）按布局
+//! 方向回退。
 
 use rust_agent_flow::{Edge, FlowGraph, Node, NodeId, PointF, PortDirection, PortId, PortSide};
 
@@ -85,9 +87,9 @@ fn layout_default_for_unknown(port_id: &str, layout: LayoutDirection) -> PortSid
 
 /// 计算指定端口的精确位置（统一入口）。
 ///
-/// 1. 先尝试 `IFlowNode::port_position`（自定义位置，方向感知）
-///    - 若返回自定义位置，**从位置自动推导 side**（离哪条边最近）
-/// 2. 回退到 side-based 计算
+/// 1. 先尝试 `IFlowNode::port_position`（自定义位置 + 显式 side）
+///    - 返回 `Some((pos, side))` 时直接使用，side 为节点显式声明
+/// 2. 回退到 side-based 计算（schema side，Auto 按布局方向回退）
 ///
 /// 返回 `(位置, side)`。side 用于边的路径算法（bezier/smoothstep 方向控制）。
 pub(crate) fn resolve_port(
@@ -96,50 +98,20 @@ pub(crate) fn resolve_port(
     registry: &NodeRegistry,
     layout: LayoutDirection,
 ) -> (PointF, PortSide) {
-    // 1. 尝试自定义位置（传入 core LayoutDirection）
     if let Some(flow_node) = registry.get(&node.kind) {
         let pid: PortId = port_id.to_string();
         let core_layout = match layout {
             LayoutDirection::Horizontal => rust_agent_flow::LayoutDirection::Horizontal,
             LayoutDirection::Vertical => rust_agent_flow::LayoutDirection::Vertical,
         };
-        if let Some(pos) = flow_node.port_position(node, &pid, core_layout) {
-            // 从自定义位置自动推导 side（离哪条边最近）
-            let side = derive_side_from_position(node, &pos);
+        if let Some((pos, side)) = flow_node.port_position(node, &pid, core_layout) {
             return (pos, side);
         }
     }
 
-    // 2. 回退到 side-based
+    // 回退到 side-based
     let side = port_side(registry, &node.kind, port_id, layout);
     (port_position_by_side(node, side), side)
-}
-
-/// 从端口位置自动推导 side（离节点哪条边最近）。
-///
-/// 用于自定义 `port_position` 返回位置后，推导边的出入方向。
-/// 例如 Loop 的 loop_body 在横向布局下位于顶边（Top），纵向布局下位于右边（Right）。
-fn derive_side_from_position(node: &Node, pos: &PointF) -> PortSide {
-    let left = node.position.x;
-    let right = node.position.x + node.size.w;
-    let top = node.position.y;
-    let bottom = node.position.y + node.size.h;
-
-    let dist_left = (pos.x - left).abs();
-    let dist_right = (pos.x - right).abs();
-    let dist_top = (pos.y - top).abs();
-    let dist_bottom = (pos.y - bottom).abs();
-
-    let min = dist_left.min(dist_right).min(dist_top).min(dist_bottom);
-    if min == dist_top {
-        PortSide::Top
-    } else if min == dist_bottom {
-        PortSide::Bottom
-    } else if min == dist_left {
-        PortSide::Left
-    } else {
-        PortSide::Right
-    }
 }
 
 /// 计算边的源端口和目标端口位置。

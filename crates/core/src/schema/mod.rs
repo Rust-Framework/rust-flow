@@ -22,9 +22,14 @@ use serde::{Deserialize, Serialize};
 pub struct PortSpec {
     pub id: PortId,
     pub direction: PortDirection,
-    /// `Auto` lets the framework compute the side dynamically.
+    /// Port side. `Auto` lets the framework compute by layout direction.
     #[serde(default)]
     pub side: PortSide,
+    /// Strong constraint flag: when true, `side` is fixed by the node
+    /// implementation and must not be overridden by the layout layer.
+    /// When false (default), `side` is a weak constraint.
+    #[serde(default)]
+    pub fixed: bool,
     pub label: Option<String>,
 }
 
@@ -34,12 +39,20 @@ impl PortSpec {
             id: id.into(),
             direction,
             side,
+            fixed: false,
             label: None,
         }
     }
 
     pub fn with_label(mut self, label: impl Into<String>) -> Self {
         self.label = Some(label.into());
+        self
+    }
+
+    /// Mark this port's side as a strong constraint (fixed by node impl,
+    /// not overridable by the layout layer).
+    pub fn with_fixed(mut self, fixed: bool) -> Self {
+        self.fixed = fixed;
         self
     }
 }

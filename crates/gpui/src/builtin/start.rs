@@ -222,7 +222,7 @@ impl IFlowNode for StartNode {
         node: &Node,
         port_id: &PortId,
         layout: LayoutDirection,
-    ) -> Option<PointF> {
+    ) -> Option<(PointF, PortSide)> {
         let right = node.position.x + node.size.w;
         let mid_x = node.position.x + node.size.w * 0.5;
         let node_mid_y = node.position.y + node.size.h * 0.5;
@@ -230,8 +230,8 @@ impl IFlowNode for StartNode {
 
         match port_id.as_str() {
             "out" => match layout {
-                LayoutDirection::Horizontal => Some(PointF::new(right, node_mid_y)),
-                LayoutDirection::Vertical => Some(PointF::new(mid_x, bottom)),
+                LayoutDirection::Horizontal => Some((PointF::new(right, node_mid_y), PortSide::Right)),
+                LayoutDirection::Vertical => Some((PointF::new(mid_x, bottom), PortSide::Bottom)),
             },
             _ => None,
         }
