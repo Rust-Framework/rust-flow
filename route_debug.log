@@ -1,0 +1,72 @@
+edge NodeId(8v1)→NodeId(12v1) (src_port=None dst_port=None) src=PointF { x: 1580.0, y: 263.5 } dst=PointF { x: 2500.0, y: 143.0 } src_side=Right dst_side=Left
+  A* routed: Some([PointF { x: 1580.0, y: 263.5 }, PointF { x: 1920.0, y: 263.5 }, PointF { x: 1920.0, y: 273.5 }, PointF { x: 2490.0, y: 273.5 }, PointF { x: 2490.0, y: 143.5 }, PointF { x: 2500.0, y: 143.0 }])
+  loop_obstacles: [RectF { origin: PointF { x: 1940.0, y: 103.0 }, size: SizeF { w: 480.0, h: 144.0 } }]
+
+edge NodeId(8v1)→NodeId(12v1) (src_port=None dst_port=None) src=PointF { x: 527.5, y: 896.0 } dst=PointF { x: 265.0, y: 1424.0 } src_side=Bottom dst_side=Top
+  A* routed: Some([PointF { x: 527.5, y: 896.0 }, PointF { x: 527.5, y: 1100.0 }, PointF { x: 657.5, y: 1100.0 }, PointF { x: 657.5, y: 1410.0 }, PointF { x: 267.5, y: 1410.0 }, PointF { x: 265.0, y: 1424.0 }])
+  loop_obstacles: [RectF { origin: PointF { x: 155.0, y: 1120.0 }, size: SizeF { w: 480.0, h: 144.0 } }]
+
+edge NodeId(8v1)→NodeId(12v1) (src_port=None dst_port=None) src=PointF { x: 527.5, y: 896.0 } dst=PointF { x: 265.0, y: 1424.0 } src_side=Bottom dst_side=Top
+  A* routed: Some([PointF { x: 527.5, y: 896.0 }, PointF { x: 527.5, y: 1100.0 }, PointF { x: 127.5, y: 1100.0 }, PointF { x: 127.5, y: 1410.0 }, PointF { x: 267.5, y: 1410.0 }, PointF { x: 265.0, y: 1424.0 }])
+  loop_obstacles: [RectF { origin: PointF { x: 155.0, y: 1120.0 }, size: SizeF { w: 682.5, h: 165.5 } }]
+
+  A* crosses other edge → trying dst offset (dst=PointF { x: 265.0, y: 1424.0 } dst_side=Top)
+
+  dst offset failed → fallback to original A*
+
+edge NodeId(8v1)→NodeId(12v1) (src_port=None dst_port=None) src=PointF { x: 527.5, y: 896.0 } dst=PointF { x: 265.0, y: 1424.0 } src_side=Bottom dst_side=Top
+  A* routed: Some([PointF { x: 527.5, y: 896.0 }, PointF { x: 527.5, y: 1100.0 }, PointF { x: 127.5, y: 1100.0 }, PointF { x: 127.5, y: 1410.0 }, PointF { x: 267.5, y: 1410.0 }, PointF { x: 265.0, y: 1424.0 }])
+  loop_obstacles: [RectF { origin: PointF { x: 155.0, y: 1120.0 }, size: SizeF { w: 781.0, h: 150.0 } }]
+
+  A* crosses other edge → trying dst offset (dst=PointF { x: 265.0, y: 1424.0 } dst_side=Top)
+
+  dst offset failed → fallback to original A*
+
+edge NodeId(8v1)→NodeId(12v1) (src_port=None dst_port=None) src=PointF { x: 1580.0, y: 263.5 } dst=PointF { x: 2500.0, y: 143.0 } src_side=Right dst_side=Left
+  A* routed: Some([PointF { x: 1580.0, y: 263.5 }, PointF { x: 1920.0, y: 263.5 }, PointF { x: 1920.0, y: 273.5 }, PointF { x: 2490.0, y: 273.5 }, PointF { x: 2490.0, y: 143.5 }, PointF { x: 2500.0, y: 143.0 }])
+  loop_obstacles: [RectF { origin: PointF { x: 1940.0, y: 103.0 }, size: SizeF { w: 480.0, h: 144.0 } }]
+
+  A* crosses other edge → trying dst offset (dst=PointF { x: 2500.0, y: 143.0 } dst_side=Left)
+
+  dst offset resolved crossing → path: [PointF { x: 1580.0, y: 263.5 }, PointF { x: 1920.0, y: 263.5 }, PointF { x: 1920.0, y: 273.5 }, PointF { x: 2490.0, y: 273.5 }, PointF { x: 2490.0, y: 153.5 }, PointF { x: 2500.0, y: 155.0 }]
+
+edge NodeId(8v1)→NodeId(12v1) (src_port=None dst_port=None) src=PointF { x: 1580.0, y: 263.5 } dst=PointF { x: 2500.0, y: 143.0 } src_side=Right dst_side=Left
+  A* routed: Some([PointF { x: 1580.0, y: 263.5 }, PointF { x: 1920.0, y: 263.5 }, PointF { x: 1920.0, y: 73.5 }, PointF { x: 2490.0, y: 73.5 }, PointF { x: 2490.0, y: 143.5 }, PointF { x: 2500.0, y: 143.0 }])
+  loop_obstacles: [RectF { origin: PointF { x: 1940.0, y: 103.0 }, size: SizeF { w: 444.5, h: 236.0 } }]
+
+  A* crosses other edge → trying dst offset (dst=PointF { x: 2500.0, y: 143.0 } dst_side=Left)
+
+  dst offset resolved crossing → path: [PointF { x: 1580.0, y: 263.5 }, PointF { x: 1920.0, y: 263.5 }, PointF { x: 1920.0, y: 363.5 }, PointF { x: 2490.0, y: 363.5 }, PointF { x: 2490.0, y: 183.5 }, PointF { x: 2500.0, y: 179.0 }]
+
+edge NodeId(8v1)→NodeId(12v1) (src_port=None dst_port=None) src=PointF { x: 1580.0, y: 263.5 } dst=PointF { x: 2500.0, y: 143.0 } src_side=Right dst_side=Left
+  A* routed: Some([PointF { x: 1580.0, y: 263.5 }, PointF { x: 1920.0, y: 263.5 }, PointF { x: 1920.0, y: 73.5 }, PointF { x: 2490.0, y: 73.5 }, PointF { x: 2490.0, y: 143.5 }, PointF { x: 2500.0, y: 143.0 }])
+  loop_obstacles: [RectF { origin: PointF { x: 1940.0, y: 103.0 }, size: SizeF { w: 425.5, h: 273.5 } }]
+
+  A* crosses other edge → trying dst offset (dst=PointF { x: 2500.0, y: 143.0 } dst_side=Left)
+
+  dst offset failed → fallback to original A*
+
+edge NodeId(8v1)→NodeId(12v1) (src_port=None dst_port=None) src=PointF { x: 527.5, y: 896.0 } dst=PointF { x: 265.0, y: 1424.0 } src_side=Bottom dst_side=Top
+  A* routed: Some([PointF { x: 527.5, y: 896.0 }, PointF { x: 527.5, y: 1100.0 }, PointF { x: 657.5, y: 1100.0 }, PointF { x: 657.5, y: 1410.0 }, PointF { x: 267.5, y: 1410.0 }, PointF { x: 265.0, y: 1424.0 }])
+  loop_obstacles: [RectF { origin: PointF { x: 155.0, y: 1120.0 }, size: SizeF { w: 480.0, h: 144.0 } }]
+
+  A* crosses other edge → trying dst offset (dst=PointF { x: 265.0, y: 1424.0 } dst_side=Top)
+
+  dst offset resolved crossing → path: [PointF { x: 527.5, y: 896.0 }, PointF { x: 527.5, y: 1100.0 }, PointF { x: 657.5, y: 1100.0 }, PointF { x: 657.5, y: 1410.0 }, PointF { x: 277.5, y: 1410.0 }, PointF { x: 277.0, y: 1424.0 }]
+
+edge NodeId(8v1)→NodeId(12v1) (src_port=None dst_port=None) src=PointF { x: 527.5, y: 896.0 } dst=PointF { x: 539.0, y: 1455.0 } src_side=Bottom dst_side=Top
+  A* routed: Some([PointF { x: 527.5, y: 896.0 }, PointF { x: 527.5, y: 1100.0 }, PointF { x: 657.5, y: 1100.0 }, PointF { x: 657.5, y: 1450.0 }, PointF { x: 537.5, y: 1450.0 }, PointF { x: 539.0, y: 1455.0 }])
+  loop_obstacles: [RectF { origin: PointF { x: 155.0, y: 1120.0 }, size: SizeF { w: 480.0, h: 144.0 } }]
+
+  A* crosses other edge → trying dst offset (dst=PointF { x: 539.0, y: 1455.0 } dst_side=Top)
+
+  dst offset resolved crossing → path: [PointF { x: 527.5, y: 896.0 }, PointF { x: 527.5, y: 1100.0 }, PointF { x: 657.5, y: 1100.0 }, PointF { x: 657.5, y: 1450.0 }, PointF { x: 547.5, y: 1450.0 }, PointF { x: 551.0, y: 1455.0 }]
+
+edge NodeId(8v1)→NodeId(12v1) (src_port=None dst_port=None) src=PointF { x: 527.5, y: 896.0 } dst=PointF { x: 264.5, y: 1411.5 } src_side=Bottom dst_side=Top
+  A* routed: Some([PointF { x: 527.5, y: 896.0 }, PointF { x: 527.5, y: 1100.0 }, PointF { x: 657.5, y: 1100.0 }, PointF { x: 657.5, y: 1400.0 }, PointF { x: 267.5, y: 1400.0 }, PointF { x: 264.5, y: 1411.5 }])
+  loop_obstacles: [RectF { origin: PointF { x: 155.0, y: 1120.0 }, size: SizeF { w: 480.0, h: 144.0 } }]
+
+  A* crosses other edge → trying dst offset (dst=PointF { x: 264.5, y: 1411.5 } dst_side=Top)
+
+  dst offset resolved crossing → path: [PointF { x: 527.5, y: 896.0 }, PointF { x: 527.5, y: 1100.0 }, PointF { x: 657.5, y: 1100.0 }, PointF { x: 657.5, y: 1400.0 }, PointF { x: 277.5, y: 1400.0 }, PointF { x: 276.5, y: 1411.5 }]
+

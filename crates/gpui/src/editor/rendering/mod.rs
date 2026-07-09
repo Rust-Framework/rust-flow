@@ -21,8 +21,7 @@ mod nodes;
 mod panel;
 
 // Re-export stable geometry API for hit_test.rs / routing.rs
-// (super::rendering::compute_edge_endpoints)
-pub(crate) use edge_geometry::compute_edge_endpoints;
+pub(crate) use edge_geometry::{compute_edge_endpoints, compute_loop_bounds};
 
 use super::flow_editor::FlowEditorView;
 

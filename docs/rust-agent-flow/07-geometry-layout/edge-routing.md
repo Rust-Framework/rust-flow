@@ -96,7 +96,11 @@ render_edges()
 
 **障碍排除**：所有节点原始 bounds 作为碰撞检测候选，但排除当前边的 src/dst 节点自身（路径需要进出这些节点）。`route_edge` 内部还会在 src/dst 周围清除 4×cell_size 区域保证端口可达。
 
-**loop 缝隙障碍**：每个 Loop 节点与其每个 body 节点之间的"连接走廊"作为额外障碍，避免 A* 从 Loop 与 body 节点之间的缝隙穿过（视觉上"穿 loop body"）。缝隙矩形按 Loop 与 body 的相对位置选主轴计算：水平为主时取 `Loop.right` 到 `body.left`（或反向），副轴覆盖两者 y 并集；垂直为主时取 `Loop.bottom` 到 `body.top`（或反向），副轴覆盖两者 x 并集。相比 union bounds（凸包围盒），缝隙矩形只堵缝不扩展成大矩形，不会误包紧邻的非 loop 节点。排除 src/dst 所在的 loop，保证 loop 内部边（loop_body/done）不被自身缝隙阻挡。
+**loop 障碍策略**（union bounds 优先 + 缝隙矩形回退）：每个 Loop 节点的障碍分两层：
+- **union bounds**（优先）：Loop + 所有 body 节点的凸包围盒，堵住整个 loop 区域。A* 必须从整体外围绕行，不会从 Loop 与 body 之间的上方/下方空隙穿过（视觉上"穿 loop body"）。
+- **缝隙矩形**（回退）：当 union bounds 与当前边的 src/dst 节点相交时（如 Summarize 紧邻 Process 被包进 union bounds），改用缝隙矩形——只堵 Loop 与 body 之间的直接缝隙，不阻挡 src/dst 端口方向。缝隙矩形按 Loop 与 body 的相对位置选主轴计算：水平为主时取 `Loop.right` 到 `body.left`，副轴覆盖两者 y 并集；垂直为主时取 `Loop.bottom` 到 `body.top`，副轴覆盖两者 x 并集。
+
+排除 src/dst 所在的 loop，保证 loop 内部边（loop_body/done）不被自身障碍阻挡。
 
 **缓存**：结果存入 `FlowEditorView.cached_edge_routes: HashMap<EdgeId, Vec<PointF>>`，**仅包含需避障的边**。不穿节点的边不写入缓存，渲染层走 `Normal` 分支。路由失败的边也不写入，同样回退 `Normal`。
 
@@ -157,7 +161,7 @@ render_edges()
 | **混合策略** | smoothstep 优先 + 碰撞检测 + 选择性 A* | 大部分边保持整齐 + 垂直进出 + 规范箭头，少数穿节点的边走避障 |
 | **碰撞检测障碍** | 节点原始 bounds（不外扩 margin） | 用户要「不穿节点」即可；外扩 margin 会让擦边路径误判为穿节点，转走 A* 破坏整齐 |
 | **A* 障碍** | 外扩 OBSTACLE_MARGIN | A* 路径需与节点保持视觉间距，避免贴边 |
-| **loop 缝隙障碍** | 缝隙矩形（非 union bounds） | 堵 Loop 与 body 之间的缝，避免 A* 穿 loop body；缝隙矩形只堵缝不扩展成大矩形，不误包紧邻的非 loop 节点 |
+| **loop 障碍** | union bounds 优先 + 缝隙矩形回退 | union bounds 堵住整个 loop 区域防止 A* 穿 body；与 src/dst 相交时回退到缝隙矩形避免阻挡端口 |
 | **smoothstep 圆角** | 12.0（与渲染层一致） | 检测路径与实际渲染路径吻合，避免「检测不穿但渲染穿」的偏差 |
 | 网格分辨率 | 10px/cell | 2000×1500 画布 → 30K 格，A* 搜索空间小；10px 精度足以避免视觉碰撞 |
 | 障碍外扩 | 15px | 确保路径与节点保持视觉间距，小于 nodesep(40px) 不过度限制空间 |
