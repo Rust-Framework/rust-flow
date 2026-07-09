@@ -12,6 +12,14 @@
 //! 这样大部分边走 smoothstep（整齐、箭头垂直），少数穿节点的边走 A*（避障），
 //! 兼顾视觉规范与障碍规避。
 //!
+//! **障碍来源**（A* 寻路时避让）：
+//! - 其他节点原始 bounds（外扩 margin 保证间距）
+//! - loop 组合区域（union bounds 优先 + 缝隙矩形回退）
+//! - **其他不共享端点的边路径**：每条边的 smoothstep/loop_back 路径转为薄矩形
+//!   障碍，A* 寻路时天然避让所有连线，从根源消除边间视觉交叉。共享端点的边
+//!   在端口处汇聚，不互为障碍（避免围死端口），其交叉由 `resolve_edge_crossing`
+//!   的 dst 偏移处理。
+//!
 //! 渲染层（[`super::rendering::edges`]）优先使用缓存的路由 waypoints，
 //! 命中测试（[`super::hit_test`]）复用同一份缓存。未缓存的边回退到
 //! ReactFlow 几何算法（[`EdgeRender::Normal`]）。
@@ -22,7 +30,7 @@ use std::collections::{HashMap, HashSet};
 
 use rust_agent_flow::{
     EdgeId, FlowGraph, NodeId, PointF, PortSide, RectF, SizeF, GRID_CELL_SIZE, OBSTACLE_MARGIN,
-    route_edge, smoothstep_path,
+    loop_back_path, route_edge, smoothstep_path,
 };
 
 use crate::node::NodeRegistry;
@@ -82,15 +90,22 @@ pub(crate) fn route_all_edges(
         })
         .collect();
 
-    // 预计算所有非 LoopBack 边的 smoothstep 路径，用于检测 A* 路径是否与
-    // 其他边视觉交叉。当 A* 路径与 done 边等 smoothstep 边在 dst 附近重叠时，
-    // 触发 dst 偏移重新 A* 路由，选择不交叉且最短的方向。
+    // 预计算所有边的视觉路径，用于检测 A* 路径是否与其他边视觉交叉。
+    // - 普通边（含 loop_body/done）：smoothstep_path
+    // - 回环边（target_port == "loop_in"）：loop_back_path（U 形绕 body 下方）
+    //
+    // 当 A* 路径与其他边在 dst 附近或绕行区域交叉时（如 Notify→Summarize 从
+    // Loop 下方绕行时穿过回环边的 U 形水平段），触发 dst 偏移重新 A* 路由，
+    // 选择不交叉且最短的方向。
+    //
+    // 注意：回环边必须纳入检测——它在 body group 下方走 U 形，A* 从下方绕行
+    // loop 障碍时极易穿过其水平段。早期版本过滤掉了 loop_in 边，导致 A* 路径
+    // 穿过回环边却检测不到，无法触发 dst 偏移。
     let edge_smooth_paths: HashMap<EdgeId, Vec<PointF>> = graph
         .edges()
-        .filter(|e| e.target_port.as_deref() != Some("loop_in"))
         .filter(|e| !hidden_nodes.contains(&e.source) && !hidden_nodes.contains(&e.target))
         .map(|e| {
-            let (s, ss, d, ds) = compute_edge_endpoints(
+            let (s, _ss, d, _ds) = compute_edge_endpoints(
                 e,
                 graph,
                 registry,
@@ -99,7 +114,17 @@ pub(crate) fn route_all_edges(
                 dst_side_default,
                 body_nodes,
             );
-            (e.id, smoothstep_path(s, d, ss, ds, SMOOTHSTEP_BORDER_RADIUS))
+            let path = if e.target_port.as_deref() == Some("loop_in") {
+                // 回环边：用 loop_back_path 计算 U 形路径（与渲染层一致）。
+                let node_bounds = loop_data
+                    .get(&e.target)
+                    .map(|d| d.union_bounds)
+                    .unwrap_or_default();
+                loop_back_path(s, d, false, node_bounds)
+            } else {
+                smoothstep_path(s, d, _ss, _ds, SMOOTHSTEP_BORDER_RADIUS)
+            };
+            (e.id, path)
         })
         .collect();
 
@@ -179,12 +204,43 @@ pub(crate) fn route_all_edges(
             })
             .collect();
 
-        // 合并障碍：单个节点 bounds + loop 障碍。
+        // 合并障碍：单个节点 bounds + loop 障碍 + 其他边路径障碍。
         let mut all_obstacles = other_bounds.clone();
         all_obstacles.extend(loop_obstacles.iter().copied());
 
+        // 其他边路径障碍：把每条不共享端点的边路径转为薄矩形障碍，让 A* 寻路时
+        // 天然避让所有连线，从根源消除边间视觉交叉。
+        //
+        // 这是解决"连线交叉"的本质方案——不区分布局方向、不区分绕行方向，A* 任何
+        // 穿过其他边的路径都会被障碍挡住，自动选择不交叉的绕行。无论纵向右移、
+        // 横向下移，只要 A* 想穿过其他边，障碍就迫使它改道。
+        //
+        // 排除规则：
+        // - 自身（路径不能挡自己）
+        // - 共享 source 或 target 节点的边：这类边在共享端口处路径汇聚，转障碍会
+        //   把端口围死导致 A* 不可达。它们之间的交叉由 `resolve_edge_crossing` 的
+        //   dst 偏移处理。
+        let edge_obs: Vec<RectF> = graph
+            .edges()
+            .filter(|e| e.id != edge.id)
+            .filter(|e| !hidden_nodes.contains(&e.source) && !hidden_nodes.contains(&e.target))
+            .filter(|e| {
+                e.source != edge.source
+                    && e.target != edge.source
+                    && e.source != edge.target
+                    && e.target != edge.target
+            })
+            .filter_map(|e| edge_smooth_paths.get(&e.id))
+            .flat_map(|path| polyline_to_obstacles(path, GRID_CELL_SIZE))
+            .collect();
+
         // 混合策略第一步：先用 smoothstep 几何路径检测是否穿其他节点或 loop 区域。
         // 不穿 → 跳过（渲染层回退 Normal smoothstep，保持整齐 + 垂直进出 + 规范箭头）。
+        //
+        // 注意：此处只用节点+loop 障碍，**不含边路径障碍**。否则原本不穿节点的短边
+        // （如 Loop→Process）会因 smoothstep 路径与其他边路径障碍相交而被误判为
+        // "穿障碍"，强制走 A*，破坏垂直进出对齐，甚至箭头与端口断裂。边路径障碍
+        // 只在下方 A* 寻路阶段叠加，用于让 A* 避让其他连线。
         let smooth_path =
             smoothstep_path(src, dst, src_side, dst_side, SMOOTHSTEP_BORDER_RADIUS);
         let smooth_hits = path_intersects_obstacles(&smooth_path, &all_obstacles);
@@ -197,11 +253,13 @@ pub(crate) fn route_all_edges(
             continue;
         }
 
-        // 穿节点 → A* 避障路由（obstacles 外扩 margin 保证路径离节点有间距）。
-        let obstacles: Vec<RectF> = all_obstacles
+        // 穿节点 → A* 避障路由。此时叠加边路径障碍，让 A* 同时避让其他连线，
+        // 从根源消除边间交叉。所有障碍外扩 margin 保证路径离节点/连线有间距。
+        let mut obstacles: Vec<RectF> = all_obstacles
             .iter()
             .map(|r| r.expand(OBSTACLE_MARGIN))
             .collect();
+        obstacles.extend(edge_obs.iter().map(|r| r.expand(OBSTACLE_MARGIN)));
 
         let routed = route_edge(src, dst, src_side, dst_side, &obstacles, GRID_CELL_SIZE);
         #[cfg(debug_assertions)]
@@ -400,6 +458,27 @@ fn compute_loop_gaps(
         }
     }
     gaps
+}
+
+/// 把折线路径转为薄矩形障碍列表（用于 A* 避障）。
+///
+/// 对每段构造轴对齐包围盒并四周扩展 `thickness/2`，形成薄矩形。
+/// 回环边路径是正交折线（仅水平/垂直段），转出的矩形刚好覆盖路径。
+/// A* 网格大小为 `GRID_CELL_SIZE`，`thickness >= GRID_CELL_SIZE` 保证至少一个
+/// 网格被完全覆盖，A* 无法穿过。
+fn polyline_to_obstacles(path: &[PointF], thickness: f32) -> Vec<RectF> {
+    let half = thickness / 2.0;
+    path.windows(2)
+        .map(|w| {
+            let a = w[0];
+            let b = w[1];
+            let x = a.x.min(b.x) - half;
+            let y = a.y.min(b.y) - half;
+            let w = (b.x - a.x).abs() + thickness;
+            let h = (b.y - a.y).abs() + thickness;
+            RectF::new(PointF::new(x, y), SizeF::new(w, h))
+        })
+        .collect()
 }
 
 /// 诊断日志：追加到文件（仅 debug 构建）。
@@ -645,13 +724,13 @@ mod tests {
     /// - Notify 右端口: (1580, 263.5)
     /// - Summarize 左端口: (2500, 143)
     /// - Loop done port: (2160, 143)（Loop 在 (1940, 103, 220, 80)，done = right, mid_y）
-    /// - loop_obstacles union: (1940, 103, 480, 144)
-    /// - A* 路径: [1580,263.5]→[1920,263.5]→[1920,273.5]→[2490,273.5]→[2490,143.5]→[2500,143]
-    /// - done 边 smoothstep: (2160, 143) → (2500, 143) 水平
+    /// - loop_obstacles union: (1940, 103, 444.5, 236)（body group 扩大后）
+    /// - 回环边: Process(2290,339) → (2290,379) → (1910,379) → (1910,143) → Loop(1940,143)
+    /// - A* 路径从下方绕行: [1580,263.5]→[1920,263.5]→[1920,363.5]→[2490,363.5]→[2490,183.5]→[2500,179]
     ///
-    /// 问题：A* 路径垂直段 (2490, 273.5→143.5) 与 done 边水平段 (2490, 143) 在
-    /// (2490, 143) 附近相交，但 polylines_intersect 未检测到（points_close
-    /// 阈值 1.0px 把 (2490, 143.5) 和 (2490, 143) 视为重合端点跳过）。
+    /// 问题：A* 水平段 (1920→2490, 363.5) 穿过回环边垂直段 (2290, 339→379)，
+    /// 交叉于 (2290, 363.5)。早期版本 edge_smooth_paths 过滤了 loop_in 回环边，
+    /// 导致交叉检测不到，无法触发 dst 偏移。
     #[test]
     fn diag_horizontal_notify_to_summarize_routing() {
         // 生产环境几何
@@ -659,12 +738,12 @@ mod tests {
         let summarize_left = PointF::new(2500.0, 143.0);
         let loop_done_port = PointF::new(2160.0, 143.0);
 
-        // loop_obstacles union bounds（生产环境捕获）
-        let union = RectF::new(PointF::new(1940.0, 103.0), SizeF::new(480.0, 144.0));
+        // loop_obstacles union bounds（生产环境捕获，body group 扩大后）
+        let union = RectF::new(PointF::new(1940.0, 103.0), SizeF::new(444.5, 236.0));
         println!("union bounds: {:?}", union);
 
         // 障碍（外扩 margin）— 用 union 作为单一障碍
-        let obstacles: Vec<RectF> = vec![union.expand(OBSTACLE_MARGIN)];
+        let mut obstacles: Vec<RectF> = vec![union.expand(OBSTACLE_MARGIN)];
 
         // done 边 smoothstep 路径
         let done_smooth = smoothstep_path(
@@ -676,8 +755,40 @@ mod tests {
         );
         println!("done edge smoothstep: {:?}", done_smooth);
 
-        // Notify→Summarize A* 路由（复现生产环境路径）
-        let routed = route_edge(
+        // 回环边 loop_back_path（生产环境几何）
+        // Process body bottom port = (2290, 339)，Loop loop_in port = (1940, 143)
+        let loop_back_src = PointF::new(2290.0, 339.0);
+        let loop_back_dst = PointF::new(1940.0, 143.0);
+        let loop_back = loop_back_path(loop_back_src, loop_back_dst, false, union);
+        println!("loop_back_path: {:?}", loop_back);
+
+        // 回环边路径转障碍（新增方案：让 A* 自动避开回环边）
+        let loop_back_obs = polyline_to_obstacles(&loop_back, GRID_CELL_SIZE);
+        println!("loop_back obstacles: {:?}", loop_back_obs);
+
+        // === 场景 1：不含回环边障碍（旧方案，A* 穿过回环边）===
+        let obstacles_no_back: Vec<RectF> = obstacles.clone();
+        let routed_no_back = route_edge(
+            notify_right,
+            summarize_left,
+            PortSide::Right,
+            PortSide::Left,
+            &obstacles_no_back,
+            GRID_CELL_SIZE,
+        );
+        println!("\n[no loop_back obstacle] A* routed: {:?}", routed_no_back);
+        if let Some(wp) = &routed_no_back {
+            let crosses_done = polylines_intersect(wp, &done_smooth);
+            let crosses_loop_back = polylines_intersect(wp, &loop_back);
+            println!(
+                "  crosses done: {}, crosses loop_back: {}",
+                crosses_done, crosses_loop_back
+            );
+        }
+
+        // === 场景 2：含回环边障碍（新方案，A* 避开回环边）===
+        obstacles.extend(loop_back_obs.iter().map(|r| r.expand(OBSTACLE_MARGIN)));
+        let routed_with_back = route_edge(
             notify_right,
             summarize_left,
             PortSide::Right,
@@ -685,51 +796,85 @@ mod tests {
             &obstacles,
             GRID_CELL_SIZE,
         );
-        println!("Notify→Summarize A* routed: {:?}", routed);
-
-        // 检测 A* 路径是否与 done 边 smoothstep 交叉
-        if let Some(wp) = &routed {
-            let crosses = polylines_intersect(wp, &done_smooth);
-            println!("A* crosses done smooth (points_close 0.1): {}", crosses);
+        println!("\n[with loop_back obstacle] A* routed: {:?}", routed_with_back);
+        if let Some(wp) = &routed_with_back {
+            let crosses_done = polylines_intersect(wp, &done_smooth);
+            let crosses_loop_back = polylines_intersect(wp, &loop_back);
+            println!(
+                "  crosses done: {}, crosses loop_back: {}",
+                crosses_done, crosses_loop_back
+            );
         }
+    }
 
-        // 测试 dst 偏移方案：dst 偏移 +12px (y 方向)，重新 A* 路由
-        let dst_offset = 12.0;
-        let shifted_dst = PointF::new(summarize_left.x, summarize_left.y + dst_offset);
-        let shifted_routed = route_edge(
+    /// 诊断测试：把其他边路径作为 A* 障碍，从根源消除边间视觉交叉。
+    ///
+    /// 生产环境几何（纵向布局，Process 拖到右侧后）：
+    /// - Notify 右端口: (527.5, 896)
+    /// - Summarize 顶端口: (265, 1424)
+    /// - union bounds ≈ [225, 1120, 483.5, 120]（Loop+Process 凸包围）
+    /// - 主线边 Adapter→Loop: 垂直段 x=265, y∈[1080, 1120]
+    ///
+    /// 问题：union 右扩后 A* 改从左侧绕行，水平段在 (265, 1100) 穿过主线垂直段。
+    ///
+    /// 本方案：把主线边路径转为薄矩形障碍加入 A* 障碍集，A* 寻路时天然避让，
+    /// 自动选择不交叉的右侧绕行。无需区分布局方向/绕行方向，抓住"交叉"本质。
+    #[test]
+    fn diag_edge_obstacle_prevents_crossing() {
+        let notify_right = PointF::new(527.5, 896.0);
+        let summarize_top = PointF::new(265.0, 1424.0);
+
+        // loop union bounds（Loop+Process 凸包围，Process 拖到右侧后）
+        let union = RectF::new(PointF::new(225.0, 1120.0), SizeF::new(483.5, 120.0));
+
+        // 主线边 Adapter→Loop：垂直段 x=265, y∈[1080, 1120]
+        let main_line_edge = vec![
+            PointF::new(265.0, 1080.0),
+            PointF::new(265.0, 1120.0),
+        ];
+
+        // 基础障碍：union 外扩 margin
+        let base_obstacles: Vec<RectF> = vec![union.expand(OBSTACLE_MARGIN)];
+
+        // === 场景 1：无边障碍（A* 从左侧绕行，穿主线）===
+        let routed_no_edge = route_edge(
             notify_right,
-            shifted_dst,
+            summarize_top,
             PortSide::Right,
-            PortSide::Left,
-            &obstacles,
+            PortSide::Top,
+            &base_obstacles,
             GRID_CELL_SIZE,
         );
-        println!(
-            "dst offset +{:.0} → shifted_dst={:?} routed: {:?}",
-            dst_offset, shifted_dst, shifted_routed
-        );
-        if let Some(wp) = &shifted_routed {
-            let crosses = polylines_intersect(wp, &done_smooth);
-            println!("shifted A* crosses done smooth: {}", crosses);
-        }
+        println!("\n[no edge obstacle] A* routed: {:?}", routed_no_edge);
+        let crosses_no_edge = routed_no_edge
+            .as_ref()
+            .map(|wp| polylines_intersect(wp, &main_line_edge))
+            .unwrap_or(false);
+        println!("  crosses main_line_edge: {}", crosses_no_edge);
 
-        // 测试 dst 偏移 -12px (y 方向)
-        let shifted_dst_neg = PointF::new(summarize_left.x, summarize_left.y - dst_offset);
-        let shifted_routed_neg = route_edge(
+        // === 场景 2：有边障碍（主线边路径转障碍，A* 避让）===
+        let edge_obs = polyline_to_obstacles(&main_line_edge, GRID_CELL_SIZE);
+        let mut obstacles_with_edge = base_obstacles.clone();
+        obstacles_with_edge.extend(edge_obs.iter().map(|r| r.expand(OBSTACLE_MARGIN)));
+        let routed_with_edge = route_edge(
             notify_right,
-            shifted_dst_neg,
+            summarize_top,
             PortSide::Right,
-            PortSide::Left,
-            &obstacles,
+            PortSide::Top,
+            &obstacles_with_edge,
             GRID_CELL_SIZE,
         );
-        println!(
-            "dst offset -{:.0} → shifted_dst={:?} routed: {:?}",
-            dst_offset, shifted_dst_neg, shifted_routed_neg
+        println!("\n[with edge obstacle] A* routed: {:?}", routed_with_edge);
+        let crosses_with_edge = routed_with_edge
+            .as_ref()
+            .map(|wp| polylines_intersect(wp, &main_line_edge))
+            .unwrap_or(false);
+        println!("  crosses main_line_edge: {}", crosses_with_edge);
+
+        // 有边障碍后不应再穿过主线 Adapter→Loop 垂直段
+        assert!(
+            !crosses_with_edge,
+            "edge obstacle should prevent crossing main line vertical edge"
         );
-        if let Some(wp) = &shifted_routed_neg {
-            let crosses = polylines_intersect(wp, &done_smooth);
-            println!("shifted A* crosses done smooth: {}", crosses);
-        }
     }
 }

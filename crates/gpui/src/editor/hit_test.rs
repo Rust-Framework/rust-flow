@@ -167,7 +167,8 @@ impl FlowEditorView {
     /// - 默认：源端口 + 沿 src_side 轴向偏移 25px
     /// - `plus_button_at_target()` 为 true 的源节点：目标端口 + 沿 dst_side 轴向偏移 25px
     ///
-    /// 跳过回环边（`target_port == "loop_in"`）。
+    /// 回环边（`target_port == "loop_in"`）也参与命中测试，其 + 按钮在
+    /// Process 起始侧。
     fn hit_test_edge_plus(&self, logical: PointF) -> Option<EdgeId> {
         const RADIUS: f32 = 12.0;
         const OFFSET: f32 = 25.0;
@@ -177,11 +178,6 @@ impl FlowEditorView {
         let (src_side_default, dst_side_default) = self.port_sides();
 
         for edge in self.graph.edges() {
-            // 跳过回环边
-            if edge.target_port.as_deref() == Some("loop_in") {
-                continue;
-            }
-
             let (src, src_side, dst, dst_side) = super::rendering::compute_edge_endpoints(
                 edge,
                 &self.graph,

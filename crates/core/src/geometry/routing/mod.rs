@@ -124,9 +124,202 @@ pub fn route_edge(
     if waypoints.len() >= 2 {
         waypoints[0] = src;
         *waypoints.last_mut().unwrap() = dst;
+        // 9. 端点段对齐：A* 网格量化 + 方向约束放宽后，首尾段可能不严格垂直于
+        //    端口面，导致箭头与入面不垂直。插入拐点强制首段垂直于 src_side、
+        //    末段垂直于 dst_side，保证箭头方向规范。
+        align_endpoints(&mut waypoints, src_side, dst_side);
     }
 
     Some(waypoints)
+}
+
+/// 对齐 A* 路径的端点段，确保起点段垂直于 `src_side`、终点段垂直于 `dst_side`，
+/// 且端点段长度不小于 `MIN_LEN`，避免拐弯与箭头贴在一起。
+///
+/// A* 在网格上寻路，受网格量化与方向约束逐步放宽的影响，首尾段方向可能与端口
+/// 面不严格垂直（如 dst 上方被障碍堵住时 `goal_dir` 被放宽，末段从侧方进入），
+/// 且末段可能过短。本函数在首尾插入拐点，强制端点段沿端口法线方向并保证最小
+/// 长度，使箭头方向规范、与拐弯分离。拐点落在端口附近（已由 `clear_obstacle`
+/// 清理），不会穿障碍。
+fn align_endpoints(
+    waypoints: &mut Vec<PointF>,
+    src_side: PortSide,
+    dst_side: PortSide,
+) {
+    if waypoints.len() < 2 {
+        return;
+    }
+    const MIN_LEN: f32 = 20.0;
+
+    // 终点段对齐（先处理尾部，不影响头部索引）。
+    let dst_pt = waypoints.pop().unwrap();
+    let prev = *waypoints.last().unwrap();
+    if let Some(corners) = align_tail(prev, dst_pt, dst_side, MIN_LEN) {
+        for c in corners {
+            waypoints.push(c);
+        }
+    }
+    waypoints.push(dst_pt);
+
+    // 起点段对齐。
+    let src_pt = waypoints.remove(0);
+    let second = waypoints[0];
+    if let Some(corners) = align_head(src_pt, second, src_side, MIN_LEN) {
+        let mut rebuilt = Vec::with_capacity(waypoints.len() + 1 + corners.len());
+        rebuilt.push(src_pt);
+        rebuilt.extend(corners);
+        rebuilt.extend_from_slice(&waypoints);
+        *waypoints = rebuilt;
+    } else {
+        waypoints.insert(0, src_pt);
+    }
+}
+
+/// 计算终点段对齐所需的拐点（插入在 `prev` 与 `dst` 之间）。
+///
+/// 返回 `None` 表示末段已规范无需修正；`Some(corners)` 为需插入的拐点序列。
+/// 当 `prev` 位于 dst 入面内侧（如 dst_side=Top 但 prev 在 dst 下方）时返回
+/// `None`，避免拐点路径穿入 dst 节点。
+fn align_tail(
+    prev: PointF,
+    dst: PointF,
+    dst_side: PortSide,
+    min_len: f32,
+) -> Option<Vec<PointF>> {
+    match dst_side {
+        PortSide::Top => {
+            // 末段垂直 x=dst.x，从上方进入。prev 应在 dst 上方（prev.y < dst.y）。
+            if prev.y >= dst.y || (prev.x - dst.x).abs() < 0.5 {
+                return None;
+            }
+            let corner_y = if dst.y - prev.y >= min_len {
+                prev.y
+            } else {
+                dst.y - min_len
+            };
+            Some(tail_corners(prev.x, dst.x, corner_y, prev.y))
+        }
+        PortSide::Bottom => {
+            if prev.y <= dst.y || (prev.x - dst.x).abs() < 0.5 {
+                return None;
+            }
+            let corner_y = if prev.y - dst.y >= min_len {
+                prev.y
+            } else {
+                dst.y + min_len
+            };
+            Some(tail_corners(prev.x, dst.x, corner_y, prev.y))
+        }
+        PortSide::Left => {
+            if prev.x >= dst.x || (prev.y - dst.y).abs() < 0.5 {
+                return None;
+            }
+            let corner_x = if dst.x - prev.x >= min_len {
+                prev.x
+            } else {
+                dst.x - min_len
+            };
+            Some(tail_corners(prev.y, dst.y, corner_x, prev.x))
+        }
+        PortSide::Right => {
+            if prev.x <= dst.x || (prev.y - dst.y).abs() < 0.5 {
+                return None;
+            }
+            let corner_x = if prev.x - dst.x >= min_len {
+                prev.x
+            } else {
+                dst.x + min_len
+            };
+            Some(tail_corners(prev.y, dst.y, corner_x, prev.x))
+        }
+        PortSide::Auto => None,
+    }
+}
+
+/// 终点段拐点构造（统一处理 Top/Bottom 与 Left/Right 两种轴向）。
+///
+/// 对于垂直入面（Top/Bottom）：`a`=`prev.x`、`b`=`dst.x`、`c`=`corner_y`、
+/// `p`=`prev.y`，拐点形如 `(b, c)`，不足最小长度时补 `(a, c)`。
+/// 对于水平入面（Left/Right）：`a`=`prev.y`、`b`=`dst.y`、`c`=`corner_x`、
+/// `p`=`prev.x`，拐点形如 `(c, b)`，不足时补 `(c, a)`。
+fn tail_corners(a: f32, b: f32, c: f32, p: f32) -> Vec<PointF> {
+    // 单拐点：corner 与 prev 同轴坐标（c == p），直接连到 dst 入面。
+    if (c - p).abs() < 0.5 {
+        vec![PointF::new(b, c)]
+    } else {
+        // 双拐点：prev → (a, c) → (b, c) → dst，末段长 min_len。
+        vec![PointF::new(a, c), PointF::new(b, c)]
+    }
+}
+
+/// 计算起点段对齐所需的拐点（插入在 `src` 与 `second` 之间）。
+///
+/// 返回 `None` 表示首段已规范；`Some(corners)` 为需插入的拐点序列。
+/// 当 `second` 位于 src 出面内侧时返回 `None`，避免穿入 src 节点。
+fn align_head(
+    src: PointF,
+    second: PointF,
+    src_side: PortSide,
+    min_len: f32,
+) -> Option<Vec<PointF>> {
+    match src_side {
+        PortSide::Right => {
+            // 首段水平 y=src.y，向右出。second 应在 src 右侧（second.x > src.x）。
+            if second.x <= src.x || (second.y - src.y).abs() < 0.5 {
+                return None;
+            }
+            let corner_x = if second.x - src.x >= min_len {
+                second.x
+            } else {
+                src.x + min_len
+            };
+            Some(head_corners(src.y, second.y, corner_x, second.x))
+        }
+        PortSide::Left => {
+            if second.x >= src.x || (second.y - src.y).abs() < 0.5 {
+                return None;
+            }
+            let corner_x = if src.x - second.x >= min_len {
+                second.x
+            } else {
+                src.x - min_len
+            };
+            Some(head_corners(src.y, second.y, corner_x, second.x))
+        }
+        PortSide::Bottom => {
+            if second.y <= src.y || (second.x - src.x).abs() < 0.5 {
+                return None;
+            }
+            let corner_y = if second.y - src.y >= min_len {
+                second.y
+            } else {
+                src.y + min_len
+            };
+            Some(head_corners(src.x, second.x, corner_y, second.y))
+        }
+        PortSide::Top => {
+            if second.y >= src.y || (second.x - src.x).abs() < 0.5 {
+                return None;
+            }
+            let corner_y = if src.y - second.y >= min_len {
+                second.y
+            } else {
+                src.y - min_len
+            };
+            Some(head_corners(src.x, second.x, corner_y, second.y))
+        }
+        PortSide::Auto => None,
+    }
+}
+
+/// 起点段拐点构造。对于水平出面（Right/Left）：`a`=`src.y`、`b`=`second.y`、
+/// `c`=`corner_x`、`p`=`second.x`，拐点形如 `(c, a)`，不足时补 `(c, b)`。
+fn head_corners(a: f32, b: f32, c: f32, p: f32) -> Vec<PointF> {
+    if (c - p).abs() < 0.5 {
+        vec![PointF::new(c, a)]
+    } else {
+        vec![PointF::new(c, a), PointF::new(c, b)]
+    }
 }
 
 #[cfg(test)]

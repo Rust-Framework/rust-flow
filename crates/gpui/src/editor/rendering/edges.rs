@@ -66,11 +66,14 @@ impl FlowEditorView {
                 let is_loop_back = edge.target_port.as_deref() == Some("loop_in");
 
                 // 优先使用障碍感知路由路径（LoopBack 边除外，它有专用 loop_back_path）。
-                // 拖动节点时，连接到被拖节点的边跳过缓存路由，回退到几何路径跟随。
-                // 路由失败或未缓存的边也回退到下方的几何路径计算。
+                // 拖动节点时，只有 source/target 是被拖节点的边跳过缓存路由、回退
+                // 几何路径跟随；其他边保持缓存路由，避免拖动瞬间回退到穿 body 的
+                // smoothstep 几何路径造成闪烁。松手后由 reroute_edges 用最终位置
+                // 重算所有 A* 路由。
                 if !is_loop_back {
-                    let affected = dragging_node
-                        .map_or(false, |id| edge.source == id || edge.target == id);
+                    let affected = dragging_node.map_or(false, |id| {
+                        edge.source == id || edge.target == id
+                    });
                     if !affected {
                         if let Some(waypoints) = self.cached_edge_routes.get(&edge.id) {
                             return EdgeRender::Routed {
@@ -201,8 +204,10 @@ impl FlowEditorView {
     /// 落在 smoothstep/bezier 路径的起始段上（路径从端口沿 side 方向出发）。
     /// 同一节点不同端口（如 Condition 的 if_0/if_1/else）的按钮不会重叠。
     ///
-    /// 跳过回环边（target_port == "loop_in"）和连接到隐藏循环体节点的边。
-    /// 按钮位置计算与 `hit_test_edge_plus` 保持完全一致。
+    /// 跳过连接到隐藏循环体节点的边。回环边（target_port == "loop_in"）
+    /// 也会渲染 + 按钮（在 Process 起始侧），与 loop_body 出口的按钮（在
+    /// 循环体目标侧）分置循环体两端。按钮位置计算与 `hit_test_edge_plus`
+    /// 保持完全一致。
     ///
     /// 循环体节点和隐藏节点信息从 `cached_all_body_nodes`/`cached_hidden_nodes`
     /// 读取（在 `relayout` 末尾更新），无需调用方传入。
@@ -223,7 +228,6 @@ impl FlowEditorView {
         let buttons: Vec<_> = self
             .graph
             .edges()
-            .filter(|edge| edge.target_port.as_deref() != Some("loop_in"))
             .filter(|edge| {
                 !hidden_nodes.contains(&edge.source) && !hidden_nodes.contains(&edge.target)
             })

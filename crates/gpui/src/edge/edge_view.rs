@@ -81,13 +81,14 @@ fn to_px(p: PointF) -> Point<Pixels> {
 /// 绘制折线（或贝塞尔曲线）。
 ///
 /// `points` 为**逻辑坐标**，通过 `scale` + `offset` 变换到屏幕空间。
-/// 线宽随 `scale` 缩放，确保缩放时视觉比例一致。
+/// `line_width` 为逻辑线宽，随 `scale` 缩放，确保缩放时视觉比例一致。
 ///
 /// `dashed` 为 true 时使用虚线样式（用于回环边等语义区分）。
 pub(crate) fn paint_polyline(
     points: &[PointF],
     is_bezier: bool,
     dashed: bool,
+    line_width: f32,
     scale: f32,
     offset: Point<Pixels>,
     color: Rgba,
@@ -96,7 +97,7 @@ pub(crate) fn paint_polyline(
     if points.len() < 2 {
         return;
     }
-    let mut path = PathBuilder::stroke(px(1.5 * scale));
+    let mut path = PathBuilder::stroke(px(line_width * scale));
     if dashed {
         path = path.dash_array(&[px(6.0 * scale), px(4.0 * scale)]);
     }
@@ -218,7 +219,7 @@ pub(crate) fn paint_edge_scaled(
         EdgeType::SmoothStep => smoothstep_path(src, dst, src_side, dst_side, 12.0),
     };
     let is_bezier = edge_type == EdgeType::Bezier && points.len() == 4;
-    paint_polyline(&points, is_bezier, false, scale, offset, color, window);
+    paint_polyline(&points, is_bezier, false, 1.5, scale, offset, color, window);
     paint_arrow(&points, is_bezier, scale, offset, color, window);
 }
 
@@ -232,11 +233,9 @@ pub(crate) fn paint_edge_scaled(
 /// `loop_back_path` 产生的折线应用 `round_corners` 圆角处理，与普通边
 /// 保持一致的圆角风格。
 ///
-/// **虚线样式**：回环边始终使用虚线绘制，与主流程边视觉区分，突出
-/// 循环回环语义。
-///
-/// **颜色区分**：回环边使用 `color` 参数（来自主题的回环边色），与普通边
-/// 的默认色区分，突出循环语义。
+/// **虚线 + 细淡样式**：回环边使用更细的线宽（1.0 vs 普通边 1.5）+ 虚线
+/// + 降低透明度（alpha × 0.65），与主流程边视觉区分，弱化回环语义连线、
+/// 突出主流程。
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn paint_loop_back_edge(
     src: PointF,
@@ -261,9 +260,13 @@ pub(crate) fn paint_loop_back_edge(
         EdgeType::SmoothStep => round_corners(&raw, 12.0),
         _ => raw,
     };
-    // 回环边使用虚线样式，与主流程边区分。
-    paint_polyline(&points, false, true, scale, offset, color, window);
-    paint_arrow(&points, false, scale, offset, color, window);
+    // 回环边：细线宽 + 虚线 + 降低透明度，弱化视觉权重。
+    let faded = Rgba {
+        a: color.a * 0.65,
+        ..color
+    };
+    paint_polyline(&points, false, true, 1.0, scale, offset, faded, window);
+    paint_arrow(&points, false, scale, offset, faded, window);
 }
 
 /// 绘制路由边：对 A* 产生的 waypoints 应用圆角后绘制折线 + 箭头。
@@ -293,6 +296,6 @@ pub(crate) fn paint_edge_routed(
         EdgeType::SmoothStep => round_corners(waypoints, 12.0),
         _ => waypoints.to_vec(),
     };
-    paint_polyline(&points, false, false, scale, offset, color, window);
+    paint_polyline(&points, false, false, 1.5, scale, offset, color, window);
     paint_arrow(&points, false, scale, offset, color, window);
 }
