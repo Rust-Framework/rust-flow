@@ -46,14 +46,19 @@ registry.register(Arc::new(MyCustomNode::new()));
 ### 层级四：直接使用 core 算法
 
 ```rust
-use rust_agent_flow::{smoothstep_path, resolve_endpoints, DagreLayout, LayoutDirection};
+use rust_agent_flow::{
+    smoothstep_path, compute_side_from_position, distribute_on_side,
+    DagreLayout, LayoutDirection,
+};
 
 // 完全脱离 gpui 层，只用算法
-let resolved = resolve_endpoints(&graph, |id| vec![]);
 let layout = DagreLayout::new().layout(&graph, LayoutDirection::Horizontal);
+// core 层仅暴露纯几何工具：方向推导 / 同侧分布 / 边路径
+let side = compute_side_from_position(src_center, dst_center);
+let pts = distribute_on_side(bounds, side, dir, has_opposite, count);
 ```
 
-适合在非 GPUI 项目中复用图模型与几何算法。
+> 注意：旧的批量入口 `resolve_endpoints` **已废弃**（`#[deprecated]`）——它不识别 `PortSpec.fixed` 强约束，也无法调用节点实现的 `port_position` 回调。完整的「边端点解析」已上移到 gpui 渲染层（`resolve_port` + `compute_edge_endpoints`，为 `pub(crate)` 内部 API）。core 层对外只保留 `compute_side_from_position` / `distribute_on_side` / `point_on_side` 等无副作用的纯几何工具，供在非 GPUI 项目中复用。
 
 ## 框架边界：能力 vs UI
 

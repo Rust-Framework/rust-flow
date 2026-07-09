@@ -9,7 +9,7 @@
 //! 由节点实现决定，外部布局层只读不写；弱约束端口（fixed=false, Auto）按布局
 //! 方向回退。
 
-use rust_agent_flow::{Edge, FlowGraph, Node, NodeId, PointF, PortDirection, PortId, PortSide};
+use rust_agent_flow::{Node, PointF, PortDirection, PortId, PortSide};
 
 use crate::node::NodeRegistry;
 
@@ -51,11 +51,18 @@ pub(crate) fn port_position_by_side(node: &Node, side: PortSide) -> PointF {
         PortSide::Left => PointF::new(left - PORT_RADIUS, mid_y),
         PortSide::Top => PointF::new(mid_x, top - PORT_RADIUS),
         PortSide::Bottom => PointF::new(mid_x, bottom + PORT_RADIUS),
-        PortSide::Auto => PointF::new(right + PORT_RADIUS, mid_y),
+        PortSide::Auto => {
+            debug_assert!(false, "PortSide::Auto must be resolved before position calculation");
+            PointF::new(right + PORT_RADIUS, mid_y)
+        }
     }
 }
 
 /// 解析端口的 side（从 schema 获取，Auto 回退到布局方向默认值）。
+///
+/// **强弱约束感知**：
+/// - 强约束（fixed=true）：始终返回 spec.side，外部不可覆盖
+/// - 弱约束（fixed=false）：spec.side != Auto 时用 spec.side；Auto 按布局方向回退
 pub(crate) fn port_side(
     registry: &NodeRegistry,
     kind: &str,
@@ -64,7 +71,9 @@ pub(crate) fn port_side(
 ) -> PortSide {
     if let Some(flow_node) = registry.get(kind) {
         if let Some(spec) = flow_node.schema().ports.iter().find(|p| p.id == port_id) {
-            if spec.side != PortSide::Auto {
+            // Strong constraint (fixed=true): always use declared side.
+            // Weak constraint (fixed=false): Auto → default_side by layout.
+            if spec.fixed || spec.side != PortSide::Auto {
                 return spec.side;
             }
             return default_side(spec.direction, layout);
@@ -112,57 +121,4 @@ pub(crate) fn resolve_port(
     // 回退到 side-based
     let side = port_side(registry, &node.kind, port_id, layout);
     (port_position_by_side(node, side), side)
-}
-
-/// 计算边的源端口和目标端口位置。
-///
-/// 优先使用 edge.source_port / edge.target_port（精确端口），
-/// 否则回退到布局方向默认 side。
-#[allow(dead_code)]
-pub(crate) fn edge_endpoints(
-    edge: &Edge,
-    graph: &FlowGraph,
-    registry: &NodeRegistry,
-    layout: LayoutDirection,
-    default_src_side: PortSide,
-    default_dst_side: PortSide,
-) -> (PointF, PortSide, PointF, PortSide) {
-    let src = compute_endpoint(
-        edge.source,
-        edge.source_port.as_deref(),
-        graph,
-        registry,
-        layout,
-        default_src_side,
-    );
-    let dst = compute_endpoint(
-        edge.target,
-        edge.target_port.as_deref(),
-        graph,
-        registry,
-        layout,
-        default_dst_side,
-    );
-    (src.0, src.1, dst.0, dst.1)
-}
-
-/// 计算单个端点位置（内部辅助）。
-#[allow(dead_code)]
-fn compute_endpoint(
-    node_id: NodeId,
-    port_id: Option<&str>,
-    graph: &FlowGraph,
-    registry: &NodeRegistry,
-    layout: LayoutDirection,
-    default_side: PortSide,
-) -> (PointF, PortSide) {
-    let node = match graph.node(node_id) {
-        Some(n) => n,
-        None => return (PointF::default(), default_side),
-    };
-
-    match port_id {
-        Some(pid) => resolve_port(node, pid, registry, layout),
-        None => (port_position_by_side(node, default_side), default_side),
-    }
 }

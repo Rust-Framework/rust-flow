@@ -19,6 +19,7 @@ mod hit_test;
 mod interaction;
 mod ports;
 mod rendering;
+mod routing;
 mod toolbar;
 mod toolbar_ext;
 mod viewport;

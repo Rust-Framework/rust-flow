@@ -29,4 +29,7 @@ pub use geometry::edge_path::{
     straight_path,
 };
 pub use geometry::hit_test::{point_in_rect, point_to_polyline_distance};
+pub use geometry::port_calc::{compute_side_from_position, distribute_on_side, point_on_side};
+pub use geometry::routing::{route_edge, GRID_CELL_SIZE, OBSTACLE_MARGIN, TURN_PENALTY};
+#[allow(deprecated)]
 pub use geometry::port_calc::{resolve_endpoints, ResolvedEdge};

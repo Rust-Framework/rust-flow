@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use rust_agent_flow::{NodeId, PortSpec};
+use rust_agent_flow::PortSpec;
 
 use super::IFlowNode;
 
@@ -41,17 +41,5 @@ impl NodeRegistry {
             .get(kind)
             .map(|n| n.schema().ports.clone())
             .unwrap_or_default()
-    }
-
-    /// 提供给 [`resolve_endpoints`] 的回调：返回指定节点的端口规格列表。
-    ///
-    /// 调用方需先用 graph 查询节点 kind，再调用此方法。
-    ///
-    /// [`resolve_endpoints`]: rust_agent_flow::resolve_endpoints
-    pub fn specs_fn(&self) -> impl Fn(NodeId) -> Vec<PortSpec> + '_ {
-        // 注意：此处无法直接返回闭包查询 graph，因为 registry 不持有 graph。
-        // 实际使用时，FlowEditorView 会构造一个捕获 graph 和 registry 的闭包。
-        // 此方法保留为 port_specs_for 的别名用途说明。
-        |_| Vec::new()
     }
 }

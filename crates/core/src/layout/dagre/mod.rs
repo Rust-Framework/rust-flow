@@ -23,15 +23,17 @@ use dagre::{layout, EdgeLabel, LayoutOptions, NodeLabel, RankDir, Ranker};
 mod branch;
 mod linear;
 mod loop_layout;
+mod main_flow;
 
 #[cfg(test)]
 mod tests;
 
 use branch::reorder_branch_targets;
 use linear::align_linear_chain;
+use main_flow::align_main_flow;
 use loop_layout::{
     align_loop_body_target, align_loop_done_target, align_loop_in_sources,
-    align_post_done_chain, reserve_loop_back_edge_space,
+    align_post_done_chain, avoid_body_group_collision, reserve_loop_back_edge_space,
 };
 
 /// Dagre-based layout engine.
@@ -152,23 +154,30 @@ impl LayoutEngine for DagreLayout {
         // ── Post-processing pipeline (order-sensitive) ──
         //
         // 1. Branch target reordering — match exit port order (if_N/else).
-        // 2. Linear chain alignment — straighten main flow (Kahn topo sort).
-        // 3. Loop back-edge space reservation — shift nodes below body group.
-        // 4. Loop `in` source alignment — move Loop to median of sources.
-        //    (must run before 5/6 so they adjust to the new Loop position)
-        // 5. Loop `done` target alignment — straighten done edge.
-        // 6. Loop `loop_body` target alignment — position body group right of Loop.
-        // 7. Post-done chain alignment — straighten forward chain after done target.
+        // 2. Linear chain alignment — straighten simple 1-in-1-out chains (Kahn topo sort).
+        // 3. Main flow alignment — align non-branch, non-body nodes to median cross-axis.
+        //    (runs after linear chain so median is dominated by already-aligned nodes;
+        //     runs before loop steps so Loop + successors are on the main line early)
+        // 4. Loop back-edge space reservation — shift nodes below Loop bottom
+        //    (must run before step 5 so sources are at final Y when Loop aligns).
+        // 5. Loop `in` source alignment — move Loop to median of sources.
+        //    (must run before 6/7 so they adjust to the new Loop position)
+        // 6. Loop `done` target alignment — straighten done edge.
+        // 7. Loop `loop_body` target alignment — position body group right of Loop.
+        // 8. Body group collision avoidance — push overlapping nodes out of body group.
+        // 9. Post-done chain alignment — straighten forward chain after done target.
 
-        // 计算 loop_body_groups 一次，供步骤 3/6 复用（避免重复 BFS 遍历）。
+        // 计算 loop_body_groups 一次，供步骤 3/7/8 复用（避免重复 BFS 遍历）。
         let loop_groups = graph.loop_body_groups();
 
         reorder_branch_targets(graph, &mut positions, direction);
         align_linear_chain(graph, &mut positions, direction);
+        align_main_flow(graph, &mut positions, direction, &loop_groups);
         reserve_loop_back_edge_space(graph, &mut positions, direction, &loop_groups);
         align_loop_in_sources(graph, &mut positions, direction);
         align_loop_done_target(graph, &mut positions, direction);
         align_loop_body_target(graph, &mut positions, direction, &loop_groups);
+        avoid_body_group_collision(graph, &mut positions, direction, &loop_groups);
         align_post_done_chain(graph, &mut positions, direction);
 
         LayoutResult { positions }

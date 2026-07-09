@@ -77,7 +77,7 @@ fn compute_side_from_position(self_center, other_center) -> PortSide {
 
 ### 同侧端口分布
 
-当同一节点的同一侧既有 In 又有 Out 端口时，`resolve_endpoints` 自动将 In 放下半区、Out 放上半区，避免重叠：
+当同一节点的同一侧既有 In 又有 Out 端口时，框架自动将 In 放下半区、Out 放上半区，避免重叠：
 
 ```rust
 let (start, end) = if has_opposite {
@@ -89,6 +89,8 @@ let (start, end) = if has_opposite {
     (0.0, 1.0)
 };
 ```
+
+> 说明：此分区算法由 core 层纯几何工具 `distribute_on_side` 提供。历史上的批量入口 `resolve_endpoints` **已废弃**（`#[deprecated]`）——它不识别 `PortSpec.fixed` 强约束，也无法调用节点实现的 `port_position` 回调。渲染层现在改走 gpui 层的 `resolve_port` + `compute_edge_endpoints` 路径，二者在内部复用上述分区逻辑。
 
 ReactFlow 需手动处理这种布局，rust-agent-flow 内置解决。
 

@@ -98,6 +98,13 @@ pub struct FlowEditorView {
     /// 在 `relayout` 末尾更新。当 Loop 节点 `body_collapsed == true` 时，
     /// 其循环体节点已隐藏，连接到这些节点的边也不渲染。
     pub cached_hidden_nodes: HashSet<NodeId>,
+    /// 缓存的边路由路径（EdgeId → waypoints）。
+    ///
+    /// 在 `relayout` 末尾由 [`super::routing::route_all_edges`] 更新，
+    /// `render_edges` 优先使用，`hit_test` 复用。路由失败的边不包含在此
+    /// map 中，渲染层回退到几何路径（`EdgeRender::Normal`）。
+    /// 拖拽/平移不触发 relayout → 复用缓存，避免每帧 A* 搜索。
+    pub cached_edge_routes: HashMap<EdgeId, Vec<PointF>>,
     /// 自定义工具栏扩展（由调用侧通过 `add_toolbar_provider` 注入）。
     ///
     /// 工具项渲染在内置工具栏末尾，以竖线分隔符区隔。
@@ -142,6 +149,7 @@ impl FlowEditorView {
             cached_body_groups: HashMap::new(),
             cached_all_body_nodes: HashSet::new(),
             cached_hidden_nodes: HashSet::new(),
+            cached_edge_routes: HashMap::new(),
             custom_toolbar: Vec::new(),
             data_type_provider: None,
             panel_width: px(320.0),
@@ -208,6 +216,32 @@ impl FlowEditorView {
                 }
             }
         }
+
+        // 计算边路由缓存：为所有非 LoopBack 边计算避障路径。
+        // 与 cached_body_groups/cached_all_body_nodes/cached_hidden_nodes 一同更新，
+        // 保证渲染与命中测试使用同一份路由数据。路由失败的边不写入缓存，
+        // 渲染层回退到 ReactFlow 几何路径。
+        self.reroute_edges();
+    }
+
+    /// 重新计算边路由缓存（不调 dagre 布局与后处理）。
+    ///
+    /// 拖动节点后调用：节点位置已变但图结构未变，无需重算 dagre 分层与 9 步
+    /// 后处理，只需用新位置重新路由所有边。比 `relayout` 轻量（跳过 dagre）。
+    /// 拖动期间受影响的边用几何路径跟随（见 `render_edges` 的 dragging_node
+    /// 逻辑），松手后由此方法用最终位置重新计算避障路由。
+    pub(crate) fn reroute_edges(&mut self) {
+        let (src_side_default, dst_side_default) = self.port_sides();
+        self.cached_edge_routes = super::routing::route_all_edges(
+            &self.graph,
+            &self.registry,
+            &self.cached_all_body_nodes,
+            &self.cached_body_groups,
+            &self.cached_hidden_nodes,
+            self.layout_direction,
+            src_side_default,
+            dst_side_default,
+        );
     }
 
     /// 同步所有节点的 `size` 为实际渲染尺寸（`IFlowNode::content_size`）。

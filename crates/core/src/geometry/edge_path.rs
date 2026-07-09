@@ -23,7 +23,10 @@ fn outward(side: PortSide) -> PointF {
         PortSide::Right => PointF::new(1.0, 0.0),
         PortSide::Top => PointF::new(0.0, -1.0),
         PortSide::Bottom => PointF::new(0.0, 1.0),
-        PortSide::Auto => PointF::new(1.0, 0.0),
+        PortSide::Auto => {
+            debug_assert!(false, "PortSide::Auto must be resolved before path calculation");
+            PointF::new(1.0, 0.0)
+        }
     }
 }
 
@@ -324,6 +327,10 @@ pub fn straight_path(src: PointF, dst: PointF) -> Vec<PointF> {
 ///
 /// Each control point is offset from its endpoint along the endpoint's outward
 /// side direction. The offset magnitude follows ReactFlow's `calculateControlOffset`.
+///
+/// **Mixed side** (one horizontal, one vertical — e.g. Right→Top): both control
+/// points share a unified offset based on the diagonal distance, preventing
+/// imbalance when the axial distances differ greatly.
 pub fn bezier_path(
     src: PointF,
     dst: PointF,
@@ -331,8 +338,22 @@ pub fn bezier_path(
     dst_side: PortSide,
     curvature: f32,
 ) -> Vec<PointF> {
-    let ctrl1 = bezier_control(src, dst, src_side, true, curvature);
-    let ctrl2 = bezier_control(dst, src, dst_side, false, curvature);
+    let mixed = src_side.is_horizontal() != dst_side.is_horizontal();
+    let (ctrl1, ctrl2) = if mixed {
+        let diag = ((dst.x - src.x).powi(2) + (dst.y - src.y).powi(2)).sqrt();
+        let offset = control_offset(diag, curvature);
+        let dir1 = outward(src_side);
+        let dir2 = outward(dst_side);
+        (
+            PointF::new(src.x + dir1.x * offset, src.y + dir1.y * offset),
+            PointF::new(dst.x + dir2.x * offset, dst.y + dir2.y * offset),
+        )
+    } else {
+        (
+            bezier_control(src, dst, src_side, true, curvature),
+            bezier_control(dst, src, dst_side, false, curvature),
+        )
+    };
     vec![src, ctrl1, ctrl2, dst]
 }
 
@@ -485,6 +506,54 @@ mod tests {
         assert!(pts[1].x > 0.0);
         // ctrl2 should be to the left of dst.
         assert!(pts[2].x < 200.0);
+    }
+
+    #[test]
+    fn bezier_mixed_side_balanced_offset() {
+        // Right→Top: src at (0,0) facing right, dst at (200,-100) facing top.
+        // Both control points must share the same offset magnitude (diagonal-based).
+        let pts = bezier_path(
+            PointF::new(0.0, 0.0),
+            PointF::new(200.0, -100.0),
+            PortSide::Right,
+            PortSide::Top,
+            0.5,
+        );
+        assert_eq!(pts.len(), 4);
+        // ctrl1 offset along X (Right = +x), ctrl2 offset along Y (Top = -y).
+        let ctrl1_offset = pts[1].x - pts[0].x;
+        let ctrl2_offset = pts[3].y - pts[2].y; // dst.y - ctrl2.y (top → negative dir)
+        assert!(
+            (ctrl1_offset - ctrl2_offset).abs() < 0.01,
+            "mixed-side control points must share offset magnitude: {} vs {}",
+            ctrl1_offset,
+            ctrl2_offset
+        );
+        // ctrl1 must be to the right of src (not crossing into src node).
+        assert!(pts[1].x > 0.0);
+        // ctrl2 must be above dst (not crossing into dst node).
+        assert!(pts[2].y < -100.0);
+    }
+
+    #[test]
+    fn bezier_mixed_side_right_bottom() {
+        // Right→Bottom: src at (0,0) facing right, dst at (200,100) facing bottom.
+        let pts = bezier_path(
+            PointF::new(0.0, 0.0),
+            PointF::new(200.0, 100.0),
+            PortSide::Right,
+            PortSide::Bottom,
+            0.5,
+        );
+        assert_eq!(pts.len(), 4);
+        let ctrl1_offset = pts[1].x - pts[0].x;
+        let ctrl2_offset = pts[2].y - pts[3].y; // ctrl2.y - dst.y (bottom = +y)
+        assert!(
+            (ctrl1_offset - ctrl2_offset).abs() < 0.01,
+            "mixed-side offsets must match: {} vs {}",
+            ctrl1_offset,
+            ctrl2_offset
+        );
     }
 
     #[test]

@@ -234,7 +234,14 @@ impl FlowEditorView {
                 }
                 self.interaction = InteractionState::Idle;
             }
-            InteractionState::DraggingNode { .. } | InteractionState::Panning { .. } => {
+            InteractionState::DraggingNode { .. } => {
+                self.interaction = InteractionState::Idle;
+                // 拖动结束：用新位置重新路由所有边。拖动期间受影响的边用几何
+                // 路径跟随（见 render_edges 的 dragging_node 逻辑），松手后由此
+                // 用最终位置重新计算避障路由。
+                self.reroute_edges();
+            }
+            InteractionState::Panning { .. } => {
                 self.interaction = InteractionState::Idle;
             }
             InteractionState::AddingNodeFromEdge { .. } | InteractionState::Idle => {}

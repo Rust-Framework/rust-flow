@@ -1,63 +1,66 @@
-# 端口端点计算
+# 端口 side 解析与端点计算
 
-边路径算法需要每条边两端的精确坐标与方向（side）。`resolve_endpoints` 把图里「Node + 可选端口」的抽象引用解析成 `ResolvedEdge { src, src_side, dst, dst_side }`，是边渲染的前置步骤。它解决两个核心问题：Auto side 的方向推导、同侧多端口的均匀分布。
+边路径算法需要每条边两端的精确坐标与方向（side）。本模块负责把「Node + 可选端口」的抽象引用解析成 `(PointF, PortSide)` 对，是边渲染的前置步骤。
 
-## resolve_endpoints 总览
+## 两条路径的历史与统一
 
-```rust
-pub fn resolve_endpoints<F>(
-    graph: &FlowGraph,
-    port_specs: F,  // Fn(NodeId) -> Vec<PortSpec>
-) -> HashMap<EdgeId, ResolvedEdge>
-where F: Fn(NodeId) -> Vec<PortSpec>
-```
+### 旧路径：`resolve_endpoints`（已废弃）
 
-`port_specs` 是闭包，gpui 层从 `NodeRegistry` 提供——它返回某节点的 schema 端口声明，用于尊重固定 side 与知道端口方向。
+历史上 core 层提供 `resolve_endpoints` 批量计算所有边的端点。**该函数已废弃**（`#[deprecated]`），原因：
 
-`ResolvedEdge` 携带两端点坐标与 side：
+1. **不感知 `PortSpec.fixed`**（强弱约束）：`resolve_side` 只看 `spec.side != Auto`，无法区分强约束端口（fixed=true，如 Loop 的 `loop_body`/`loop_in`）和弱约束端口
+2. **不支持节点 `port_position` 回调**：Condition 多出口、Loop 强约束端口等结构化节点依赖 `IFlowNode::port_position` 回调返回精确位置和 side，`resolve_endpoints` 只能基于 schema 的 PortSpec 工作，无法调用此回调
 
-```rust
-pub struct ResolvedEdge {
-    pub src: PointF,
-    pub src_side: PortSide,
-    pub dst: PointF,
-    pub dst_side: PortSide,
-}
-```
+### 新路径：gpui 层 `resolve_port`（当前使用）
 
-## 四步流程
-
-```mermaid
-flowchart TB
-  S1[Step1: 确定每条边两端 side] --> S2[Step2: 按 node+side+direction 分组]
-  S2 --> S3[Step3: distribute_on_side 沿边均匀分布]
-  S3 --> S4[Step4: 组装 ResolvedEdge]
-```
-
-### Step 1：确定每条边两端 side
+渲染层使用 `crates/gpui/src/editor/ports.rs` 的 `resolve_port` + `edge_geometry.rs` 的 `compute_edge_endpoints`，正确处理强弱约束和节点回调：
 
 ```rust
-let src_side = resolve_side(edge.source_port.as_deref(), &src_specs, src_node, dst_node);
-let dst_side = resolve_side(edge.target_port.as_deref(), &dst_specs, dst_node, src_node);
+// resolve_port 优先级：
+// 1. IFlowNode::port_position 回调（节点显式声明位置和 side）
+// 2. port_side：schema spec.fixed → spec.side（强约束）
+//                spec.side != Auto → spec.side（节点声明）
+//                spec.side == Auto → default_side（按布局方向，弱约束）
 ```
 
-`resolve_side` 优先用 schema 声明的固定 side，否则用 `compute_side_from_position` 推导：
+**浮动边**（无 port_id）使用 `compute_side_from_position` 按节点相对位置推导 side，而非按布局方向。
+
+## 统一后的 side 解析策略
+
+| 场景 | side 来源 | 实现位置 |
+|------|----------|----------|
+| 有 port_id + 节点实现 port_position | 节点回调返回的 side | `resolve_port` → `flow_node.port_position` |
+| 有 port_id + spec.fixed=true | spec.side（强约束） | `port_side` 防御性分支 |
+| 有 port_id + spec.side != Auto | spec.side（节点声明） | `port_side` |
+| 有 port_id + spec.side == Auto | `default_side`（按布局方向，弱约束） | `port_side` → `default_side` |
+| 无 port_id（浮动边） | `compute_side_from_position`（按节点相对位置） | `compute_edge_endpoints` |
+
+### 循环体节点的布局上下文
+
+循环体节点（body 节点）由 `align_loop_body_target` 纵向堆叠在 Loop 节点右侧，
+构成一个"纵向子流"。虽然主布局方向可能是 Horizontal，但 body 节点的端口
+必须按 Vertical 方向解析（In→Top, Out→Bottom），否则端口方向与节点排布
+不一致。
+
+**实现方式**：`compute_edge_endpoints` 接收 `body_nodes` 集合，对 body 节点
+传入 `LayoutDirection::Vertical` 作为有效布局方向。这不是覆写 side——节点
+自身的 `port_position` 回调仍决定最终 side：
+
+- **fixed 端口**（如 Loop 的 loop_body/loop_in）：回调忽略 layout，返回固定 side
+- **Auto 端口**（如 Action 的 in/out）：回调按 Vertical 返回 Top/Bottom
+
+同样，节点渲染（`render_nodes`）、端口命中测试（`hit_test`）、边命中测试
+均通过 `cached_all_body_nodes` 判断 body 节点，使用 Vertical 布局上下文。
+
+
+## 保留的纯算法函数
+
+`resolve_endpoints` 虽已废弃，但以下纯算法函数仍作为可复用工具保留（`pub`）：
+
+### compute_side_from_position：相对位置推导
 
 ```rust
-fn resolve_side(port_id, specs, self_node, other_node) -> PortSide {
-    if let Some(id) = port_id {
-        if let Some(spec) = specs.iter().find(|s| s.id == id) {
-            if spec.side != PortSide::Auto { return spec.side; } // 固定 side
-        }
-    }
-    compute_side_from_position(self_node.center(), other_node.center()) // Auto
-}
-```
-
-### compute_side_from_position：Auto 方向推导
-
-```rust
-fn compute_side_from_position(self_center, other_center) -> PortSide {
+pub fn compute_side_from_position(self_center: PointF, other_center: PointF) -> PortSide {
     let dx = other_center.x - self_center.x;
     let dy = other_center.y - self_center.y;
     if dx.abs() >= dy.abs() {
@@ -66,42 +69,21 @@ fn compute_side_from_position(self_center, other_center) -> PortSide {
 }
 ```
 
-比较 `dx`/`dy` 绝对值，取大者所在轴：水平轴主导则选 Left/Right，垂直轴主导则选 Top/Bottom。这是「对端在哪个方向就选那个方向的边」的直观策略。
+比较 `dx`/`dy` 绝对值，取大者所在轴：水平轴主导则选 Left/Right，垂直轴主导则选 Top/Bottom。用于浮动边（无 port_id）的 side 推导。
 
-```
-对端在右下方 (dx>dy)：         对端在正上方 (|dy|>|dx|)：
-  self → Right                  self → Top
-       ╲                             │
-        other                        other
-```
-
-### Step 2：按 (node, side, direction) 分组
+### distribute_on_side：同侧多端口均匀分布
 
 ```rust
-let mut slots: HashMap<(NodeId, PortSide, PortDirection), Vec<(EdgeId, bool)>> = HashMap::new();
-for edge in graph.edges() {
-    slots.entry((edge.source, src_side, PortDirection::Out)).or_default().push((edge.id, true));
-    slots.entry((edge.target, dst_side, PortDirection::In)).or_default().push((edge.id, false));
-}
+pub fn distribute_on_side(
+    bounds: RectF,
+    side: PortSide,
+    dir: PortDirection,
+    has_opposite: bool,
+    count: usize,
+) -> Vec<PointF>
 ```
 
-把所有边端点按「节点 + 所在 side + 入/出方向」分桶。同一桶里的端口要在同一条边上均匀分布。
-
-### Step 3：distribute_on_side 沿边均匀分布
-
-```rust
-fn distribute_on_side(bounds, side, dir, has_opposite, count) -> Vec<PointF> {
-    let (start, end) = if has_opposite {
-        match dir {
-            PortDirection::In  => (0.5, 1.0),  // In 占下半
-            PortDirection::Out => (0.0, 0.5),  // Out 占上半
-        }
-    } else { (0.0, 1.0) };
-    // 在 [start, end] 区间均匀分 count 个点
-}
-```
-
-**关键：In/Out 同侧分区**。当某个 (node, side) 同时有 In 和 Out 端口时（如节点右侧既有入边又有出边），两者各占半边避免重叠：
+当某个 (node, side) 同时有 In 和 Out 端口时（`has_opposite=true`），两者各占半边避免重叠：
 
 ```
 同侧有 In+Out：               同侧只有 Out：
@@ -111,76 +93,33 @@ fn distribute_on_side(bounds, side, dir, has_opposite, count) -> Vec<PointF> {
 │  node   │ ─── 分界          │  node   │ ● out3
 │         │ ● in1             │         │
 │         │ ● in2             │         │
-└─────────┘ ← In 下半          └─────────┘
+└─────────┐ ← In 下半          └─────────┘
 ```
 
-`has_opposite` 预先计算哪些 (node, side) 同时有 In 和 Out，避免在分布循环里重复查表。
-
-分布点的参数化：`count>1` 时第一个点在 `start + step*0.5`（居中），步长 `(end-start)/count`；`count==1` 时取中点 `(start+end)/2`。
+可被节点 `port_position` 回调调用，实现同侧多端口的均匀分布。
 
 ### point_on_side：边上的绝对坐标
 
 ```rust
-fn point_on_side(bounds, side, t, outward) -> PointF {
-    // t ∈ [0,1] 沿 side 参数化位置
-    // outward=2.0 像素外移，避免边压在节点边界上
-}
+pub fn point_on_side(bounds: RectF, side: PortSide, t: f32, outward: f32) -> PointF
 ```
 
-`outward=2.0` 把端口端点向外推 2 像素，让连线视觉上「接出」节点边界而非压在边上。每个 side 的参数化方向：
-
-| side | 参数轴 | t=0 → t=1 |
-|------|--------|-----------|
-| Top | X | 左 → 右 |
-| Right | Y | 上 → 下 |
-| Bottom | X | 左 → 右 |
-| Left | Y | 上 → 下 |
-| Auto | — | 取 right + center.y 兜底 |
-
-### Step 4：组装 ResolvedEdge
-
-```rust
-for edge in graph.edges() {
-    let src = positions.get(&(edge.id, true)).copied()
-        .unwrap_or_else(|| src_node.center());  // 兜底用节点中心
-    let dst = positions.get(&(edge.id, false)).copied()
-        .unwrap_or_else(|| dst_node.center());
-    result.insert(edge.id, ResolvedEdge { src, src_side, dst, dst_side });
-}
-```
-
-兜底逻辑：若某端点未进入分布槽（如节点无端口声明且 side 推导失败），用节点中心点，保证总能产出合法坐标，不 panic。
-
-## 分布顺序的稳定性
-
-Step 3 中 `entries.sort_by_key(|(_, is_src)| *is_src)` 把同槽内的边按「是否为源」排序——源端点（`is_src=true`）排前，目标端点排后。这保证分布点的分配顺序稳定，避免同一边在多次 `resolve_endpoints` 调用间端点位置跳变（否则视觉上边会「跳」）。
+`t ∈ [0,1]` 沿 side 参数化位置，`outward` 像素外移避免边压在节点边界上。
 
 ## 与边路径算法的衔接
 
-`resolve_endpoints` 输出的 `ResolvedEdge` 直接喂给边路径算法：
+gpui 渲染层通过 `compute_edge_endpoints` 获取端点后，直接喂给边路径算法：
 
 ```rust
-let resolved = resolve_endpoints(&graph, |id| registry.specs(id));
-for edge in graph.edges() {
-    let r = resolved[&edge.id];
-    let points = match edge.edge_type {
-        EdgeType::Bezier => bezier_path(r.src, r.dst, r.src_side, r.dst_side, 0.25),
-        EdgeType::Straight => straight_path(r.src, r.dst),
-        EdgeType::Step => step_path(r.src, r.dst, r.src_side, r.dst_side),
-        EdgeType::SmoothStep => smoothstep_path(r.src, r.dst, r.src_side, r.dst_side, 8.0),
-    };
-    // 渲染 points...
-}
+let (src, src_side, dst, dst_side) = compute_edge_endpoints(edge, &graph, &registry, layout, ...);
+let points = match edge.edge_type {
+    EdgeType::Bezier => bezier_path(src, dst, src_side, dst_side, 0.5),
+    EdgeType::Straight => straight_path(src, dst),
+    EdgeType::Step => step_path(src, dst, src_side, dst_side),
+    EdgeType::SmoothStep => smoothstep_path(src, dst, src_side, dst_side, 12.0),
+};
 ```
 
-回环边（`EdgeKind::LoopBack`）走 `loop_back_path`，传入循环体联合包围盒作为 `node_bounds`。
-
-## 何时调用
-
-`resolve_endpoints` 是 O(E) 遍历 + 哈希分桶，开销与边数线性相关。渲染层在 `relayout` 后缓存结果，图结构变化（`version` 变）时重算——拖拽、平移等不改结构的交互复用缓存。
-
-## 小结
-
-`resolve_endpoints` 四步：确定 side → 分组 → 分布 → 组装。Auto side 用 `compute_side_from_position` 按 `dx`/`dy` 绝对值选轴；同侧 In/Out 用半边分区避免重叠；`outward=2` 像素外移让连线视觉接出节点。分布顺序按 `is_src` 排序保证稳定。输出 `ResolvedEdge` 直接喂边路径算法，缓存随 `version` 失效。
+回环边（`target_port == "loop_in"`）走 `loop_back_path`，传入循环体联合包围盒作为 `node_bounds`。
 
 下一节：[Dagre 布局引擎](dagre-layout.md)

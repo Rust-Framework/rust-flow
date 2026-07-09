@@ -88,30 +88,6 @@ view.registry.register(Arc::new(MyCustomNode::new()));
 
 如果 kind 与内置节点冲突，**后注册者覆盖前者**（HashMap::insert 语义）。这让你可以替换内置节点的视觉表现而不改框架代码——例如把 Action 的卡片改成带进度条的版本。
 
-## specs_fn 的设计警示
-
-`NodeRegistry::specs_fn` 返回一个闭包，但实现是占位的：
-
-```rust
-pub fn specs_fn(&self) -> impl Fn(NodeId) -> Vec<PortSpec> + '_ {
-    |_| Vec::new()  // 占位
-}
-```
-
-注释说明：registry 不持有 graph，无法单独按 NodeId 查询端口。**实际使用时由 FlowEditorView 构造捕获 graph + registry 的闭包**：
-
-```rust
-// 概念示意（实际由 resolve_endpoints 调用方构造）
-let specs_fn = |node_id: NodeId| -> Vec<PortSpec> {
-    let kind = &self.graph.node(node_id).unwrap().kind;
-    self.registry.get(kind)
-        .map(|n| n.ports_for_node(self.graph.node(node_id).unwrap()))
-        .unwrap_or_default()
-};
-```
-
-这是一个**有意的接口边界**：registry 是纯查表，graph 是纯数据，把两者结合的闭包由调用方持有——避免 registry 持有 graph 引用导致的生命周期纠缠。
-
 ## Arc 克隆的成本
 
 `get` 返回 `Option<Arc<dyn IFlowNode>>`，每次查找都 `Arc::clone`。这是原子引用计数加一，开销约 10-20ns。每帧渲染 N 个节点就有 N 次克隆——对典型流程图（<100 节点）完全可忽略。
@@ -120,6 +96,6 @@ let specs_fn = |node_id: NodeId| -> Vec<PortSpec> {
 
 ## 小结
 
-`NodeRegistry` 用最朴素的 HashMap 实现策略分发的核心。`register_all` 集中注册 8 种内置节点，自定义节点通过 `register` 追加。registry 与 graph 通过 `kind` 字符串解耦，specs_fn 占位警示了 registry 不持有 graph 的接口边界。`Arc` 共享让多编辑器实例零成本复用实现。
+`NodeRegistry` 用最朴素的 HashMap 实现策略分发的核心。`register_all` 集中注册 8 种内置节点，自定义节点通过 `register` 追加。registry 与 graph 通过 `kind` 字符串解耦，`port_specs_for` 提供静态端口规格查询。`Arc` 共享让多编辑器实例零成本复用实现。
 
 下一节：[NodeViewCtx 与 NodeAction](nodeviewctx-action.md)

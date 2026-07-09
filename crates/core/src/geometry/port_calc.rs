@@ -1,9 +1,18 @@
-//! Smart endpoint calculation (requirement 3).
+//! Port-side calculation utilities.
 //!
-//! Computes, for each edge, the actual endpoint positions on the source and
-//! target nodes. Non-fixed (`Auto`) sides are derived from the relative
-//! position of the two nodes; multiple ports on the same side are distributed
-//! evenly, with In/Out ports split to avoid overlap.
+//! Historically this module provided `resolve_endpoints`, a batch endpoint
+//! resolver. That function is **deprecated** — it does not respect
+//! `PortSpec.fixed` (strong constraints) and cannot invoke node-provided
+//! `port_position` callbacks. The gpui rendering layer uses its own
+//! `resolve_port` path (in `crates/gpui/src/editor/ports.rs`) which correctly
+//! handles both.
+//!
+//! The remaining functions here are pure geometric utilities reused by the
+//! gpui layer:
+//! - `compute_side_from_position`: derive side from relative node positions
+//!   (for floating edges without a port_id)
+//! - `distribute_on_side`: evenly distribute multiple ports on one side
+//! - `point_on_side`: absolute position at parameter t along a side
 
 use crate::geometry::{PointF, RectF};
 use crate::graph::{EdgeId, FlowGraph, NodeId, PortDirection, PortSide};
@@ -11,6 +20,11 @@ use crate::schema::PortSpec;
 use std::collections::HashMap;
 
 /// Resolved endpoints for a single edge.
+///
+/// **Deprecated**: This struct does not carry enough information to respect
+/// `PortSpec.fixed` (strong constraints) or node-provided `port_position`
+/// callbacks. Use the gpui layer's `resolve_port` path instead.
+#[deprecated(note = "Use gpui layer resolve_port instead; does not respect PortSpec.fixed")]
 #[derive(Debug, Clone, Copy)]
 pub struct ResolvedEdge {
     pub src: PointF,
@@ -24,6 +38,13 @@ pub struct ResolvedEdge {
 /// `port_specs` returns the declared port specs for a given node (used to
 /// respect fixed sides and to know port directions). The gpui layer supplies
 /// this from the `NodeRegistry`.
+///
+/// **Deprecated**: This function does not respect `PortSpec.fixed` (strong
+/// constraints) and cannot invoke node-provided `port_position` callbacks.
+/// Use the gpui layer's `resolve_port` / `compute_edge_endpoints` path
+/// (in `crates/gpui/src/editor/ports.rs` and `edge_geometry.rs`) instead.
+#[deprecated(note = "Use gpui layer resolve_port instead; does not respect PortSpec.fixed")]
+#[allow(deprecated)]
 pub fn resolve_endpoints<F>(graph: &FlowGraph, port_specs: F) -> HashMap<EdgeId, ResolvedEdge>
 where
     F: Fn(NodeId) -> Vec<PortSpec>,
@@ -153,7 +174,10 @@ fn resolve_side(
 }
 
 /// Pick the side of `self_center` that faces `other_center`.
-fn compute_side_from_position(self_center: PointF, other_center: PointF) -> PortSide {
+///
+/// Used for floating edges (no port_id) where side is derived from the
+/// relative position of the two nodes rather than the layout direction.
+pub fn compute_side_from_position(self_center: PointF, other_center: PointF) -> PortSide {
     let dx = other_center.x - self_center.x;
     let dy = other_center.y - self_center.y;
     if dx.abs() >= dy.abs() {
@@ -173,7 +197,10 @@ fn compute_side_from_position(self_center: PointF, other_center: PointF) -> Port
 ///
 /// When the opposite direction also occupies this side, In and Out each get
 /// half the side to avoid overlap (requirement 3.3).
-fn distribute_on_side(
+///
+/// Reusable by node `port_position` callbacks that need to evenly distribute
+/// multiple ports on the same side.
+pub fn distribute_on_side(
     bounds: RectF,
     side: PortSide,
     dir: PortDirection,
@@ -216,7 +243,9 @@ fn distribute_on_side(
 
 /// Absolute position at parameter `t` (0..1) along `side` of `bounds`,
 /// pushed outward by `outward` pixels.
-fn point_on_side(bounds: RectF, side: PortSide, t: f32, outward: f32) -> PointF {
+///
+/// Reusable geometric utility for computing a point on a node's edge.
+pub fn point_on_side(bounds: RectF, side: PortSide, t: f32, outward: f32) -> PointF {
     match side {
         PortSide::Top => PointF::new(
             bounds.left() + bounds.size.w * t,
@@ -239,6 +268,7 @@ fn point_on_side(bounds: RectF, side: PortSide, t: f32, outward: f32) -> PointF 
 }
 
 #[cfg(test)]
+#[allow(deprecated)]
 mod tests {
     use super::*;
     use crate::geometry::{PointF, SizeF};

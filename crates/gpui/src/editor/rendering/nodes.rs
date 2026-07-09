@@ -57,6 +57,14 @@ impl FlowEditorView {
                         .into_any_element();
                 }
 
+                // body 节点处于纵向子流中（align_loop_body_target 纵向堆叠），
+                // 使用 Vertical 布局上下文让节点 port_position 回调返回 Top/Bottom 端口。
+                let effective_layout = if is_body {
+                    rust_agent_flow::LayoutDirection::Vertical
+                } else {
+                    layout
+                };
+
                 // 创建动作回调：闭包捕获 node_id 和 entity
                 let on_action: ActionCallback = {
                     let entity = entity.clone();
@@ -71,7 +79,7 @@ impl FlowEditorView {
                     .with_flow_node_opt(flow_node)
                     .selected(is_selected)
                     .with_scale(s)
-                    .with_layout(layout)
+                    .with_layout(effective_layout)
                     .with_body_mode(is_body)
                     .with_theme(theme)
                     .with_hovered(is_hovered)

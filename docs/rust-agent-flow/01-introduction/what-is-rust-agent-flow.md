@@ -19,7 +19,7 @@
 | 图数据结构不稳定 | `FlowGraph` 基于 slotmap 稳定键，增删不失效 |
 | 布局算法难写 | `DagreLayout` 包装 dagre（ReactFlow 同款 Sugiyama 算法） |
 | 边路径几何复杂 | 移植 ReactFlow 的 Bezier/Step/SmoothStep 算法 |
-| 端口连线端点错位 | `resolve_endpoints` 智能推导 Auto 方向 + 同侧端口分布 |
+| 端口连线端点错位 | gpui 层 `resolve_port` + `compute_edge_endpoints` 推导 Auto 方向 + 同侧端口分布（旧 `resolve_endpoints` 已废弃，不识别 `PortSpec.fixed`） |
 | 节点类型硬编码 | `IFlowNode` 策略模式 + `NodeRegistry` 按 kind 匹配 |
 | 属性面板重复 | `FieldSpec` 驱动自动生成编辑界面 |
 | 扩展能力不足 | trait + `Arc<dyn>` + setter 注入（Toolbar/DataType/Syntax） |

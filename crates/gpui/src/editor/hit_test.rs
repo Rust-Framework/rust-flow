@@ -49,8 +49,13 @@ impl FlowEditorView {
 
             // 1. 检查端口命中（遍历节点实例的端口列表，支持动态端口）
             if let Some(flow_node) = self.registry.get(&node.kind) {
+                let node_layout = if self.cached_all_body_nodes.contains(&node.id) {
+                    LayoutDirection::Vertical
+                } else {
+                    layout
+                };
                 for port_spec in &flow_node.ports_for_node(node) {
-                    let (port_pos, _) = resolve_port(node, &port_spec.id, &self.registry, layout);
+                    let (port_pos, _) = resolve_port(node, &port_spec.id, &self.registry, node_layout);
                     // 端口命中区域：以端口位置为中心的正方形
                     let hit_rect = RectF::new(
                         PointF::new(
@@ -170,8 +175,6 @@ impl FlowEditorView {
 
         let layout = self.layout_direction;
         let (src_side_default, dst_side_default) = self.port_sides();
-        // 使用缓存的派生集合，避免每次 hit_test 重复 flat_map 收集。
-        let all_body_nodes = &self.cached_all_body_nodes;
 
         for edge in self.graph.edges() {
             // 跳过回环边
@@ -184,9 +187,9 @@ impl FlowEditorView {
                 &self.graph,
                 &self.registry,
                 layout,
-                &all_body_nodes,
                 src_side_default,
                 dst_side_default,
+                &self.cached_all_body_nodes,
             );
 
             // 检查源节点是否要求按钮放在目标端（与 render_edge_plus_buttons 一致）
@@ -207,7 +210,10 @@ impl FlowEditorView {
                 PortSide::Bottom => (0.0, OFFSET),
                 PortSide::Left => (-OFFSET, 0.0),
                 PortSide::Top => (0.0, -OFFSET),
-                PortSide::Auto => (OFFSET, 0.0),
+                PortSide::Auto => {
+                    debug_assert!(false, "PortSide::Auto must be resolved before button offset calculation");
+                    (OFFSET, 0.0)
+                }
             };
             let button_pos = PointF::new(base.x + dx, base.y + dy);
 

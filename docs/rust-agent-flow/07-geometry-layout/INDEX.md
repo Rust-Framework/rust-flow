@@ -8,7 +8,8 @@
 |------|------|
 | [边路径算法](edge-path-algorithms.md) | Bezier / Straight / Step / SmoothStep / LoopBack 路径生成 |
 | [端口端点计算](port-calc.md) | Auto 方向推导与同侧 In/Out 端口分布 |
-| [Dagre 布局引擎](dagre-layout.md) | Sugiyama 分层算法与 7 步后处理管线 |
+| [边路由算法](edge-routing.md) | 障碍感知 Grid A* 路由 + 渲染适配 |
+| [Dagre 布局引擎](dagre-layout.md) | Sugiyama 分层算法与 9 步后处理管线 |
 | [Viewport 视口数学](viewport.md) | 平移、缩放与坐标变换 |
 
 ## 学习目标
@@ -17,8 +18,9 @@
 
 - 说出五种边路径算法的输出点数与适用场景
 - 解释 `bezier_path` 控制点偏移在反向连接时如何防塌缩
-- 描述 `resolve_endpoints` 的四步流程与 In/Out 同侧分区策略
-- 列出 dagre 后处理管线的 7 个阶段及其执行顺序
+- 描述 gpui 层 `resolve_port` + `compute_edge_endpoints` 的端口解析流程、`PortSpec.fixed` 强弱约束模型与 In/Out 同侧分区策略（旧 `resolve_endpoints` 已废弃）
+- 描述障碍感知边路由的占用网格、A* 方向约束与回退策略
+- 列出 dagre 后处理管线的 9 个阶段及其执行顺序
 - 写出 `Viewport` 的 `to_screen`/`to_logical` 公式与 `zoom_around` 的锚点保持推导
 
 ## 前置知识

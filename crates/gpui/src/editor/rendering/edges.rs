@@ -9,7 +9,7 @@ use gpui::{canvas, div, px, IntoElement, ParentElement, Point, Styled};
 use gpui_component::{Icon, IconName, Sizable};
 use rust_agent_flow::{NodeId, PointF, PortSide};
 
-use crate::edge::{paint_edge_scaled, paint_loop_back_edge};
+use crate::edge::{paint_edge_routed, paint_edge_scaled, paint_loop_back_edge};
 use super::super::interaction::InteractionState;
 use super::super::ports::resolve_port;
 use crate::i18n;
@@ -22,8 +22,8 @@ impl FlowEditorView {
     /// 渲染所有边（canvas paint），使用**逻辑坐标** + PathBuilder 变换。
     ///
     /// 边端点通过 [`compute_edge_endpoints`] 计算：
-    /// - 循环体节点始终强制 Top/Bottom（垂直子流，上进下出），无论主布局方向
-    /// - 非循环体节点按布局方向使用默认端口对
+    /// - 循环体节点使用 Vertical 布局上下文解析端口（垂直子流，上进下出）
+    /// - 非循环体节点按主布局方向使用默认端口对
     /// - 回环边（target_port == "loop_in"）使用 `loop_back_path` 向下绕过
     ///
     /// `body_groups` 由调用方（`render`）计算一次并传入，避免与 `render_nodes`
@@ -42,10 +42,17 @@ impl FlowEditorView {
         let grid_spacing = self.grid_spacing;
 
         // 使用缓存的派生集合，避免每帧重复 flat_map 收集。
-        let all_body_nodes = &self.cached_all_body_nodes;
         let hidden_nodes = &self.cached_hidden_nodes;
 
         let horizontal_layout = matches!(layout, LayoutDirection::Horizontal);
+
+        // 拖动节点时，连接到该节点的边用旧路由会断裂（路由基于旧坐标）——
+        // 临时回退到几何路径（Normal，跟随节点实时位置），松手后由
+        // `reroute_edges` 用新位置重新路由。其他未受影响的边保持路由避障。
+        let dragging_node = match &self.interaction {
+            InteractionState::DraggingNode { node_id, .. } => Some(*node_id),
+            _ => None,
+        };
 
         // 为每条边计算渲染指令（跳过连接到隐藏循环体节点的边）
         let edge_renders: Vec<EdgeRender> = self
@@ -58,14 +65,30 @@ impl FlowEditorView {
             .map(|edge| {
                 let is_loop_back = edge.target_port.as_deref() == Some("loop_in");
 
+                // 优先使用障碍感知路由路径（LoopBack 边除外，它有专用 loop_back_path）。
+                // 拖动节点时，连接到被拖节点的边跳过缓存路由，回退到几何路径跟随。
+                // 路由失败或未缓存的边也回退到下方的几何路径计算。
+                if !is_loop_back {
+                    let affected = dragging_node
+                        .map_or(false, |id| edge.source == id || edge.target == id);
+                    if !affected {
+                        if let Some(waypoints) = self.cached_edge_routes.get(&edge.id) {
+                            return EdgeRender::Routed {
+                                waypoints: waypoints.clone(),
+                                edge_type: edge.edge_type,
+                            };
+                        }
+                    }
+                }
+
                 let (src, src_side, dst, dst_side) = compute_edge_endpoints(
                     edge,
                     &self.graph,
                     &registry,
                     layout,
-                    &all_body_nodes,
                     src_side_default,
                     dst_side_default,
+                    &self.cached_all_body_nodes,
                 );
 
                 if is_loop_back {
@@ -86,6 +109,7 @@ impl FlowEditorView {
                         edge_type: edge.edge_type,
                     }
                 } else {
+                    // 回退到 ReactFlow 几何路径（路由失败或未缓存）。
                     EdgeRender::Normal {
                         src,
                         dst,
@@ -105,7 +129,12 @@ impl FlowEditorView {
                 current,
                 ..
             } => self.graph.node(*from_node).map(|n| {
-                let (src, src_side) = resolve_port(n, from_port, &registry, layout);
+                let src_layout = if self.cached_all_body_nodes.contains(from_node) {
+                    LayoutDirection::Vertical
+                } else {
+                    layout
+                };
+                let (src, src_side) = resolve_port(n, from_port, &registry, src_layout);
                 let dst = *current;
                 (src, dst, src_side, dst_side_default, default_edge_type)
             }),
@@ -139,6 +168,13 @@ impl FlowEditorView {
                             paint_loop_back_edge(
                                 *src, *dst, *horizontal, *node_bounds, *edge_type, s, total_offset,
                                 edge_loop_back_color, window,
+                            );
+                        }
+                        EdgeRender::Routed { waypoints, edge_type } => {
+                            paint_edge_routed(
+                                waypoints, *edge_type,
+                                s, total_offset,
+                                edge_default_color, window,
                             );
                         }
                     }
@@ -182,7 +218,6 @@ impl FlowEditorView {
         let (src_side_default, dst_side_default) = self.port_sides();
 
         // 使用缓存的派生集合，避免每帧重复 flat_map 收集。
-        let all_body_nodes = &self.cached_all_body_nodes;
         let hidden_nodes = &self.cached_hidden_nodes;
 
         let buttons: Vec<_> = self
@@ -199,9 +234,9 @@ impl FlowEditorView {
                     &self.graph,
                     &registry,
                     layout,
-                    &all_body_nodes,
                     src_side_default,
                     dst_side_default,
+                    &self.cached_all_body_nodes,
                 );
 
                 // 检查源节点是否要求按钮放在目标端（如 Loop 节点的 done 出口）
@@ -225,7 +260,10 @@ impl FlowEditorView {
                     PortSide::Bottom => (0.0, 25.0),
                     PortSide::Left => (-25.0, 0.0),
                     PortSide::Top => (0.0, -25.0),
-                    PortSide::Auto => (25.0, 0.0),
+                    PortSide::Auto => {
+                        debug_assert!(false, "PortSide::Auto must be resolved before button offset calculation");
+                        (25.0, 0.0)
+                    }
                 };
                 let button_pos = PointF::new(base.x + dx, base.y + dy);
 
@@ -280,17 +318,14 @@ impl FlowEditorView {
         let registry = self.registry.clone();
         let (src_side_default, dst_side_default) = self.port_sides();
 
-        // 使用缓存的派生集合，避免每帧重复 flat_map 收集。
-        let all_body_nodes = &self.cached_all_body_nodes;
-
         let (src, src_side, dst, dst_side) = compute_edge_endpoints(
             edge,
             &self.graph,
             &registry,
             layout,
-            &all_body_nodes,
             src_side_default,
             dst_side_default,
+            &self.cached_all_body_nodes,
         );
 
         // 检查源节点是否要求按钮放在目标端（与 render_edge_plus_buttons 一致）
@@ -312,7 +347,10 @@ impl FlowEditorView {
             PortSide::Bottom => (0.0, 25.0),
             PortSide::Left => (-25.0, 0.0),
             PortSide::Top => (0.0, -25.0),
-            PortSide::Auto => (25.0, 0.0),
+            PortSide::Auto => {
+                debug_assert!(false, "PortSide::Auto must be resolved before button offset calculation");
+                (25.0, 0.0)
+            }
         };
         let button_pos = PointF::new(base.x + dx, base.y + dy);
         let screen_x = offset_x + button_pos.x * s;

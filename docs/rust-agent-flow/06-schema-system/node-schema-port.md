@@ -54,6 +54,7 @@ pub struct PortSpec {
     pub id: PortId,                // String，节点内唯一
     pub direction: PortDirection,  // In / Out
     pub side: PortSide,            // Top/Right/Bottom/Left/Auto
+    pub fixed: bool,               // 强约束标志（默认 false）
     pub label: Option<String>,     // 端口标签（可选）
 }
 ```
@@ -62,10 +63,30 @@ pub struct PortSpec {
 
 ```rust
 impl PortSpec {
-    pub fn new(id, direction, side) -> Self { /* label = None */ }
+    pub fn new(id, direction, side) -> Self { /* fixed = false, label = None */ }
     pub fn with_label(mut self, label) -> Self { self.label = Some(label); self }
+    pub fn with_fixed(mut self, fixed: bool) -> Self { self.fixed = fixed; self }
 }
 ```
+
+### fixed：强约束 vs 弱约束
+
+`fixed` 决定 `side` 字段是「硬声明」还是「软提示」，是端口 side 声明机制重构后引入的核心字段：
+
+| fixed 值 | 行为 | 适用场景 |
+|----------|------|----------|
+| `false`（默认，弱约束） | `side=Auto` 时由布局层按主布局方向回退到默认 side（横向→Right/Left，纵向→Bottom/Top）；布局层可自由调整 | Start/Action/End 等普通节点 |
+| `true`（强约束） | `side` 由节点实现决定，外部布局层**不可覆盖**；`compute_edge_endpoints` 跳过位置推导，直接按声明分配 | Condition 的 if/else、Loop 的 `loop_body`/`loop_in` 等结构化端口 |
+
+典型用法：
+
+```rust
+// Loop：loop_body 出口强约束右侧、loop_in 入口强约束左侧，保证回环语义清晰
+PortSpec::new("loop_body", PortDirection::Out, PortSide::Right).with_fixed(true)
+PortSpec::new("loop_in",   PortDirection::In,  PortSide::Left).with_fixed(true)
+```
+
+> 设计取舍：强弱约束采用 `fixed: bool` 标志（而非给 `PortSide` 增加 `Fixed` 变体），保持现有 `match` 分支不破坏。`PortSpec::new` 签名不变（`fixed` 默认 false），所有旧调用向后兼容。
 
 ### side 的两种策略
 
@@ -78,15 +99,17 @@ impl PortSpec {
 
 ```rust
 // Condition：if_N 出口固定在右侧不同高度
-PortSpec::new("if_0", PortDirection::Out, PortSide::Right).with_label("分支1")
-PortSpec::new("else", PortDirection::Out, PortSide::Right).with_label("Else")
+PortSpec::new("if_0", PortDirection::Out, PortSide::Right).with_label("分支1").with_fixed(true)
+PortSpec::new("else", PortDirection::Out, PortSide::Right).with_label("Else").with_fixed(true)
 
 // Loop：done 出口固定右侧，loop_body 出口固定右侧
-PortSpec::new("done",      PortDirection::Out, PortSide::Right)
-PortSpec::new("loop_body", PortDirection::Out, PortSide::Right)
+PortSpec::new("done",      PortDirection::Out, PortSide::Right).with_fixed(true)
+PortSpec::new("loop_body", PortDirection::Out, PortSide::Right).with_fixed(true)
 ```
 
-固定 side 让 `resolve_endpoints`（见 [端口端点计算](../07-geometry-layout/port-calc.md)）跳过位置推导，直接按声明分配——这对结构化节点的可读性至关重要。
+`fixed=true` 让 gpui 层的 `compute_edge_endpoints`（见 [端口端点计算](../07-geometry-layout/port-calc.md)）跳过位置推导，直接按声明分配——这对结构化节点的可读性至关重要。
+
+> 注：历史上此职责由 core 层的 `resolve_endpoints` 承担，该函数**已废弃**（`#[deprecated]`）——它不读取 `PortSpec.fixed`，无法区分强/弱约束，也不会调用节点实现的 `port_position` 回调。渲染层现改走 `resolve_port` + `compute_edge_endpoints` 路径，二者是处理强约束端点的正确入口。
 
 ## ports_by_direction：按方向过滤
 

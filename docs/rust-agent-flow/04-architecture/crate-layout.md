@@ -79,11 +79,13 @@
    ↓ FlowDocument → FlowGraph::from_document
 core层: FlowGraph (nodes + edges)
    ↓ DagreLayout::layout()
-   ↓ resolve_endpoints()
 gpui层: FlowEditorView.render()
+   ↓ resolve_port() → compute_edge_endpoints()  // 边端点解析在渲染层完成
    ↓ sync_node_sizes() → relayout() → render_edges/nodes/panel
    ↓ 命中测试 → InteractionState → graph_ops
 ```
+
+> 注：历史上端点解析由 core 层的 `resolve_endpoints()` 批量完成，该函数**已废弃**（`#[deprecated]`）——它不识别 `PortSpec.fixed` 强约束，也无法调用节点实现的 `port_position` 回调。现改由 gpui 层的 `resolve_port`（`crates/gpui/src/editor/ports.rs`）配合 `compute_edge_endpoints`（`crates/gpui/src/editor/rendering/edge_geometry.rs`）完成，二者能正确处理强/弱约束端口。
 
 ## 模块稳定性分层
 

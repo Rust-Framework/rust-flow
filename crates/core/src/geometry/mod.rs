@@ -6,6 +6,7 @@
 pub mod edge_path;
 pub mod hit_test;
 pub mod port_calc;
+pub mod routing;
 
 use serde::{Deserialize, Serialize};
 
@@ -143,6 +144,14 @@ impl RectF {
         }
     }
 
+    /// 两个轴对齐矩形是否重叠（边相切不算重叠）。
+    pub fn intersects(self, other: Self) -> bool {
+        self.left() < other.right()
+            && self.right() > other.left()
+            && self.top() < other.bottom()
+            && self.bottom() > other.top()
+    }
+
     /// Compute the smallest rectangle containing both `self` and `other`.
     pub fn union(self, other: Self) -> Self {
         let left = self.left().min(other.left());
@@ -187,6 +196,29 @@ mod tests {
         assert_eq!(e.left(), 5.0);
         assert_eq!(e.right(), 35.0);
         assert_eq!(e.size, SizeF::new(30.0, 30.0));
+    }
+
+    #[test]
+    fn rect_intersects() {
+        let a = RectF::new(PointF::new(10.0, 10.0), SizeF::new(20.0, 20.0));
+
+        // 重叠：b 与 a 部分相交
+        let overlap = RectF::new(PointF::new(20.0, 20.0), SizeF::new(20.0, 20.0));
+        assert!(a.intersects(overlap));
+        assert!(overlap.intersects(a)); // 对称
+
+        // 相切：b 紧贴 a 右边（边相切不算重叠）
+        let touching = RectF::new(PointF::new(30.0, 10.0), SizeF::new(20.0, 20.0));
+        assert!(!a.intersects(touching));
+
+        // 包含：b 完全在 a 内部
+        let inner = RectF::new(PointF::new(15.0, 15.0), SizeF::new(5.0, 5.0));
+        assert!(a.intersects(inner));
+        assert!(inner.intersects(a));
+
+        // 分离：b 远离 a
+        let separate = RectF::new(PointF::new(100.0, 100.0), SizeF::new(20.0, 20.0));
+        assert!(!a.intersects(separate));
     }
 
     #[test]

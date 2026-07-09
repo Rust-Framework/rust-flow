@@ -265,3 +265,34 @@ pub(crate) fn paint_loop_back_edge(
     paint_polyline(&points, false, true, scale, offset, color, window);
     paint_arrow(&points, false, scale, offset, color, window);
 }
+
+/// 绘制路由边：对 A* 产生的 waypoints 应用圆角后绘制折线 + 箭头。
+///
+/// 路由边由障碍感知 Grid A* 算法计算，waypoints 已经过路径简化
+///（仅保留方向变化的拐点）。本函数按 `edge_type` 决定圆角策略：
+/// - `Bezier`：`round_corners(waypoints, 24.0)` — 更大圆角模拟平滑曲线
+/// - `SmoothStep`：`round_corners(waypoints, 12.0)` — 与普通 SmoothStep 一致
+/// - `Step` / `Straight`：直接使用 waypoints（直角折线 / 简化后的直线）
+///
+/// 路由边始终用折线绘制（`round_corners` 已采样曲线为多点折线），
+/// `is_bezier=false` 确保 `paint_arrow` 用最后两点方向计算箭头。
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn paint_edge_routed(
+    waypoints: &[PointF],
+    edge_type: EdgeType,
+    scale: f32,
+    offset: Point<Pixels>,
+    color: Rgba,
+    window: &mut Window,
+) {
+    if waypoints.len() < 2 {
+        return;
+    }
+    let points = match edge_type {
+        EdgeType::Bezier => round_corners(waypoints, 24.0),
+        EdgeType::SmoothStep => round_corners(waypoints, 12.0),
+        _ => waypoints.to_vec(),
+    };
+    paint_polyline(&points, false, false, scale, offset, color, window);
+    paint_arrow(&points, false, scale, offset, color, window);
+}
