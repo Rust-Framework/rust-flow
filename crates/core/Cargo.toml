@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2021"
 license = "MIT"
 description = "Framework-agnostic workflow graph model, geometry and layout (no GPUI)."
+repository = "https://github.com/Rust-Framework/rust-flow"
 
 [dependencies]
 slotmap = { workspace = true }

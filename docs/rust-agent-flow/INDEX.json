@@ -6,7 +6,7 @@
     "description": "基于 GPUI 与 gpui-component 构建的框架无关流程图设计组件库，提供图灵完备控制流节点（Start/End/Action/Condition/Loop/Variable/Adapter/Agent）、dagre 自动布局、ReactFlow 风格边路径算法、Schema 驱动属性面板与 trait 注入扩展体系，适合构建 Agent 编排、数据管道等可视化设计器。",
     "category": "framework",
     "tags": ["rust", "gpui", "flow-editor", "agent-flow", "reactflow"],
-    "repoUrl": "https://gitcode.com/rf2026/rust-agent-flow",
+    "repoUrl": "https://github.com/Rust-Framework/rust-flow",
     "demoUrl": "",
     "featured": true,
     "sortOrder": 1,

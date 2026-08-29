@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2021"
 license = "MIT"
 description = "Demo application for rust-agent-flow GPUI designer."
+repository = "https://github.com/Rust-Framework/rust-flow"
 
 [[bin]]
 name = "rust-agent-flow-demo"
