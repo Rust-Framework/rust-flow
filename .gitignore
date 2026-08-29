@@ -12,3 +12,11 @@ Cargo.lock
 # Local build/debug artifacts
 *.log
 route_debug*
+
+# IDE / AI agent helpers (do not publish)
+.trae/
+.agents/
+.idea/
+.vscode/
+*.swp
+*.swo

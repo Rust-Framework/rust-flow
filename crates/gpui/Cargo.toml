@@ -5,6 +5,7 @@ edition = "2021"
 license = "MIT"
 description = "GPUI rendering layer for rust-agent-flow."
 repository = "https://github.com/Rust-Framework/rust-flow"
+publish = false
 
 [lib]
 name = "rust_agent_flow_gpui"
