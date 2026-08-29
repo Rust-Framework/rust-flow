@@ -2,6 +2,7 @@
 
 # rust-agent-flow
 
+[![Crates.io Version](https://img.shields.io/crates/v/rust-agent-flow)](https://crates.io/crates/rust-agent-flow)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](/LICENSE)
 
 RustAgentFlow is a **framework-agnostic workflow design component library** built on top of **GPUI** (the UI framework behind the Zed editor) and **gpui-component**. It gives you a ReactFlow-style visual flow designer with a clean separation between a pure graph core and a GPUI rendering layer.
