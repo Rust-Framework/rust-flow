@@ -5,9 +5,34 @@ All notable changes to **rust-agent-flow** are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.1.0] — 2026-08-16 — 首次 crates.io 发布
+## [0.1.0] — 2026-08-16 — 首次 crates.io 发布 · First crates.io release
+
+> **English** · **简体中文**
+
+### English
+
+The framework-agnostic core crate `rust-agent-flow` is released on crates.io for the
+first time.
 
 ### Added
+
+- `FlowGraph` graph model (stable `NodeId` / `EdgeId` slotmap keys)
+- `Viewport` pan + zoom transform math
+- Geometry: edge paths, hit-testing, `port_calc`, obstacle-aware A* routing
+- Layout: `LayoutEngine` trait + `DagreLayout`
+- Schema: `NodeSchema` / `PortSpec` / `FieldSpec` property-panel description model
+
+> The core crate has no GPUI dependency and can be reused by CLI tools or other
+> renderers. The GPUI rendering layer (`rust-agent-flow-gpui`) depends on the zed GPUI
+> git dependency and is not published to crates.io yet.
+
+---
+
+### 简体中文
+
+框架无关的核心 crate `rust-agent-flow` 首次发布到 crates.io。
+
+### 新增
 
 - **首次公开发布**：框架无关的核心 crate `rust-agent-flow` 首次发布到 crates.io。
   - `FlowGraph` 图模型（`NodeId` / `EdgeId` 稳定 slotmap 键）
